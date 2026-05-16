@@ -22,14 +22,28 @@ TTS_PROVIDER = os.getenv("TTS_PROVIDER", "cartesia")    # cartesia | elevenlabs 
 CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "")
 
 # --- Hotkeys ---
-HOTKEY_INVOKE = os.getenv("HOTKEY_INVOKE", "ctrl+u")
+HOTKEY_INVOKE = os.getenv("HOTKEY_INVOKE", "ctrl+e")
 
-# Intent shortcut mapping: ctrl+u then arrow key → query template
+# Intent shortcut mapping: ctrl+u then arrow key
+# `label`  — shown on the on-screen picker overlay
+# `prompt` — the actual instruction sent to the LLM (can be more detailed)
 INTENT_SHORTCUTS = {
-    "up":    "What is this?",
-    "down":  "How do I fix this?",
-    "left":  "Explain this simply.",
-    "right":  "Give me an example.",
+    "up": {
+        "label":  "What is this?",
+        "prompt": "What is this? Give me a clear, plain-English explanation in 2-3 sentences.",
+    },
+    "down": {
+        "label":  "Custom prompt",
+        "prompt": "",   # unused — user types their own
+    },
+    "left": {
+        "label":  "Explain simply",
+        "prompt": "Explain this as simply as possible. Assume I have no technical background whatsoever.",
+    },
+    "right": {
+        "label":  "How do I fix this?",
+        "prompt": "How do I fix this? Give me: 1, what error is this in 1 sentence; 2, concise, actionable steps I can follow right now.",
+   },
 }
 
 # --- Audio ---
@@ -47,6 +61,7 @@ CUTE_MODE = False  # opt-in personality toggle
 SYSTEM_PROMPT_UTILITY = (
     "You are a concise desktop assistant. "
     "Answer in 1-3 short sentences. Be direct and plain. No markdown."
+    ""
 )
 SYSTEM_PROMPT_CUTE = (
     "You are a cheerful, friendly desktop companion. "

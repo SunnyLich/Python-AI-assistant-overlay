@@ -69,23 +69,31 @@ def play_tts_stream(text: str, on_done: callable | None = None):
     """
     Stream TTS for `text` and play it as chunks arrive.
     Non-blocking — runs in a daemon thread.
+    """
+    play_tts_stream_from_chunks(iter([text]), on_done=on_done)
+
+
+def play_tts_stream_from_chunks(text_chunks, on_done: callable | None = None):
+    """
+    Stream TTS from an iterable of text chunks (e.g. live LLM stream) and play.
+    Non-blocking — runs in a daemon thread.
 
     Args:
-        text: The text to synthesize and speak.
+        text_chunks: Iterable[str] of text pieces fed incrementally.
         on_done: Optional callback invoked when playback finishes.
     """
     threading.Thread(
-        target=_stream_and_play, args=(text, on_done), daemon=True
+        target=_stream_and_play_chunks, args=(text_chunks, on_done), daemon=True
     ).start()
 
 
-def _stream_and_play(text: str, on_done: callable | None):
+def _stream_and_play_chunks(text_chunks, on_done: callable | None):
     chunk_q: queue.Queue[bytes | None] = queue.Queue()
 
-    # Producer: fetch TTS chunks
+    # Producer: fetch TTS audio chunks
     def producer():
         try:
-            for chunk in tts_module.stream_audio(text):
+            for chunk in tts_module.stream_audio_from_chunks(text_chunks):
                 chunk_q.put(chunk)
         finally:
             chunk_q.put(None)  # sentinel

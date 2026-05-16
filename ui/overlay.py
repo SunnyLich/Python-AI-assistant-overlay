@@ -24,8 +24,13 @@ ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", 
 
 class OverlaySignals(QObject):
     """Thread-safe signals for updating the overlay from worker threads."""
-    set_state = pyqtSignal(str)          # "idle" | "listening" | "thinking" | "speaking"
-    show_text_popup = pyqtSignal(str)    # full reply text
+    set_state          = pyqtSignal(str)   # "idle" | "listening" | "thinking" | "speaking"
+    show_text_popup    = pyqtSignal(str)   # full reply text
+    show_intent_picker = pyqtSignal()      # show arrow-key intent chooser
+    bubble_thinking    = pyqtSignal()      # show animated dots
+    bubble_chunk       = pyqtSignal(str)   # append streamed text chunk
+    bubble_finish      = pyqtSignal()      # response done, start hide countdown
+    bubble_clear       = pyqtSignal()      # hide immediately
 
 
 class DollOverlay(QMainWindow):
@@ -44,9 +49,17 @@ class DollOverlay(QMainWindow):
         self._build_window()
         self._build_tray()
 
+        # Speech bubble
+        from ui.bubble import SpeechBubble
+        self._bubble = SpeechBubble()
+
         # Connect signals
         signals.set_state.connect(self._on_state_changed)
         signals.show_text_popup.connect(self._on_show_popup)
+        signals.bubble_thinking.connect(self._bubble.start_thinking)
+        signals.bubble_chunk.connect(self._bubble.append_chunk)
+        signals.bubble_finish.connect(self._bubble.finish)
+        signals.bubble_clear.connect(self._bubble.clear)
 
     # ------------------------------------------------------------------
     # Window setup
@@ -79,8 +92,12 @@ class DollOverlay(QMainWindow):
 
         self._tray = QSystemTrayIcon(icon, self)
         menu = QMenu()
+        settings_action = QAction("Settings", self)
+        settings_action.triggered.connect(self._open_settings)
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(QApplication.quit)
+        menu.addAction(settings_action)
+        menu.addSeparator()
         menu.addAction(quit_action)
         self._tray.setContextMenu(menu)
         self._tray.show()
@@ -104,10 +121,17 @@ class DollOverlay(QMainWindow):
         popup = TextPopup(text, parent=None)
         popup.show()
 
+    def _open_settings(self):
+        from ui.settings import open_settings
+        open_settings(parent=self)
+
     # ------------------------------------------------------------------
     # Mouse
     # ------------------------------------------------------------------
 
+    def set_click_handler(self, handler):
+        """Register an external click handler for the doll label."""
+        self._label.mousePressEvent = handler
+
     def _on_click(self, event):
-        """Left click: show full text popup. Could also drag to reposition."""
-        pass  # wired up by main.py after a response is available
+        pass

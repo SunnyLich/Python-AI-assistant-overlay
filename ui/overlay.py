@@ -28,6 +28,7 @@ class OverlaySignals(QObject):
     set_state          = pyqtSignal(str)   # "idle" | "listening" | "thinking" | "speaking"
     show_text_popup    = pyqtSignal(str)   # full reply text
     show_intent_picker = pyqtSignal()      # show arrow-key intent chooser
+    show_snip_overlay  = pyqtSignal()      # show full-screen region selector
     bubble_thinking    = pyqtSignal()      # show animated dots
     bubble_start_reveal = pyqtSignal()     # start word-by-word reveal synced to audio
     bubble_schedule_words = pyqtSignal(list, list)  # (words, start_ms) from Cartesia timestamps

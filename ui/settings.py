@@ -133,6 +133,15 @@ class SettingsDialog(QDialog):
         f.addRow(QLabel("<i>Chat / Elaborate model</i>"), QLabel(""))
         f.addRow("Chat provider", self._fields["CHAT_LLM_PROVIDER"])
         f.addRow("Chat model", self._fields["CHAT_LLM_MODEL"])
+        f.addRow(_sep(), _sep())
+        self._fields["VISION_LLM_PROVIDER"] = self._combo(
+            ["", "anthropic", "openai"]
+        )
+        self._fields["VISION_LLM_MODEL"] = QLineEdit()
+        self._fields["VISION_LLM_MODEL"].setPlaceholderText("e.g. claude-opus-4-5")
+        f.addRow(QLabel("<i>Vision model (screen snip)</i>"), QLabel(""))
+        f.addRow("Vision provider", self._fields["VISION_LLM_PROVIDER"])
+        f.addRow("Vision model", self._fields["VISION_LLM_MODEL"])
         return w
 
     def _tab_tts(self) -> QWidget:
@@ -198,6 +207,7 @@ class SettingsDialog(QDialog):
         self._fields["HOTKEY_CUSTOM_PROMPT_KEY"] = self._kb_special_row("Custom prompt")
         self._fields["HOTKEY_ADD_CONTEXT"]       = self._kb_special_row("Add as prompt")
         self._fields["HOTKEY_CLEAR_CONTEXT"]     = self._kb_special_row("Clear prompt")
+        self._fields["HOTKEY_SNIP"]              = self._kb_special_row("Snip screen region")
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -367,6 +377,9 @@ class SettingsDialog(QDialog):
         _set(self._fields["HOTKEY_CUSTOM_PROMPT_KEY"], self._env.get("HOTKEY_CUSTOM_PROMPT_KEY", cfg.HOTKEY_CUSTOM_PROMPT_KEY))
         _set(self._fields["HOTKEY_ADD_CONTEXT"],       self._env.get("HOTKEY_ADD_CONTEXT",       cfg.HOTKEY_ADD_CONTEXT))
         _set(self._fields["HOTKEY_CLEAR_CONTEXT"],     self._env.get("HOTKEY_CLEAR_CONTEXT",     cfg.HOTKEY_CLEAR_CONTEXT))
+        _set(self._fields["HOTKEY_SNIP"],              self._env.get("HOTKEY_SNIP",              cfg.HOTKEY_SNIP))
+        _set(self._fields["VISION_LLM_PROVIDER"],      self._env.get("VISION_LLM_PROVIDER",      cfg.VISION_LLM_PROVIDER))
+        _set(self._fields["VISION_LLM_MODEL"],         self._env.get("VISION_LLM_MODEL",         cfg.VISION_LLM_MODEL))
 
         count = int(self._env.get("INTENT_COUNT", str(len(cfg.INTENT_ROWS))))
         for i in range(count):
@@ -426,6 +439,9 @@ class SettingsDialog(QDialog):
             "HOTKEY_CUSTOM_PROMPT_KEY": _get(self._fields["HOTKEY_CUSTOM_PROMPT_KEY"]),
             "HOTKEY_ADD_CONTEXT":       _get(self._fields["HOTKEY_ADD_CONTEXT"]),
             "HOTKEY_CLEAR_CONTEXT":     _get(self._fields["HOTKEY_CLEAR_CONTEXT"]),
+            "HOTKEY_SNIP":              _get(self._fields["HOTKEY_SNIP"]),
+            "VISION_LLM_PROVIDER":      _get(self._fields["VISION_LLM_PROVIDER"]),
+            "VISION_LLM_MODEL":         _get(self._fields["VISION_LLM_MODEL"]),
             "INTENT_COUNT":             str(len(self._user_bind_rows)),
             "DOLL_AUTO_HIDE":    str(self._fields["DOLL_AUTO_HIDE"].isChecked()),  # type: ignore
             "CHAT_AUTO_ELABORATE": str(self._fields["CHAT_AUTO_ELABORATE"].isChecked()),  # type: ignore
@@ -439,7 +455,7 @@ class SettingsDialog(QDialog):
         # Key conflict check across all bindings
         all_keys = [
             _get(self._fields[k]).strip().lower()
-            for k in ("HOTKEY_INVOKE", "HOTKEY_CUSTOM_PROMPT_KEY", "HOTKEY_ADD_CONTEXT", "HOTKEY_CLEAR_CONTEXT")
+            for k in ("HOTKEY_INVOKE", "HOTKEY_CUSTOM_PROMPT_KEY", "HOTKEY_ADD_CONTEXT", "HOTKEY_CLEAR_CONTEXT", "HOTKEY_SNIP")
         ] + [_get(r["key"]).strip().lower() for r in self._user_bind_rows]
         non_empty = [k for k in all_keys if k]
         if len(non_empty) != len(set(non_empty)):

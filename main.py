@@ -15,6 +15,7 @@ from core import capture, llm, audio
 from core import tts as tts_module
 from ui.overlay import DollOverlay, OverlaySignals
 from ui.intent_overlay import IntentOverlay
+from ui.snip_overlay import SnipOverlay
 from ui.chat_window import ChatWindow
 
 
@@ -28,10 +29,12 @@ class App:
             on_invoke=self._on_hotkey,
             on_add_context=self._on_add_context,
             on_clear_context=self._on_clear_context,
+            on_snip=self._on_snip_hotkey,
         )
         self._context_buffer: list[str] = []   # accumulated via Alt+Q
         self._last_reply: str = ""
         self._intent_picker: IntentOverlay | None = None
+        self._snip_overlay: SnipOverlay | None = None
         self._chat_window: ChatWindow | None = None
         self._all_conversations: list[list[dict]] = []  # each item = one full Q&A session
         self._overlay_hwnd: int = 0          # cached after first show
@@ -39,6 +42,7 @@ class App:
 
         # Wire signals
         self._signals.show_intent_picker.connect(self._show_intent_picker)
+        self._signals.show_snip_overlay.connect(self._show_snip_overlay)
         self._signals.settings_applied.connect(self._on_settings_applied)
         self._signals.show_last_chat.connect(self._on_show_last_chat)
         self._overlay.set_click_handler(self._on_doll_click)
@@ -73,6 +77,7 @@ class App:
             on_invoke=self._on_hotkey,
             on_add_context=self._on_add_context,
             on_clear_context=self._on_clear_context,
+            on_snip=self._on_snip_hotkey,
         )
         self._hotkeys.start()
         print("[main] Config reloaded and hotkeys re-registered.")
@@ -92,6 +97,53 @@ class App:
         """Alt+W — clear the context buffer."""
         self._context_buffer.clear()
         print("[main] Context buffer cleared.")
+
+    def _on_snip_hotkey(self):
+        """Ctrl+Alt+Q — show the region selector, then the intent picker."""
+        # Steal foreground from the keyboard hook thread (same pattern as _on_hotkey)
+        if self._overlay_hwnd:
+            try:
+                import ctypes
+                user32   = ctypes.windll.user32
+                kernel32 = ctypes.windll.kernel32
+                fg_hwnd  = user32.GetForegroundWindow()
+                fg_tid   = user32.GetWindowThreadProcessId(fg_hwnd, None)
+                our_tid  = kernel32.GetCurrentThreadId()
+                if fg_tid and fg_tid != our_tid:
+                    user32.AttachThreadInput(fg_tid, our_tid, True)
+                user32.SetForegroundWindow(self._overlay_hwnd)
+                if fg_tid and fg_tid != our_tid:
+                    user32.AttachThreadInput(fg_tid, our_tid, False)
+            except Exception:
+                pass
+        self._signals.show_snip_overlay.emit()
+
+    # ------------------------------------------------------------------
+    # Snip overlay (runs on Qt main thread via signal)
+    # ------------------------------------------------------------------
+
+    def _show_snip_overlay(self):
+        if self._snip_overlay is not None:
+            return
+        self._snip_overlay = SnipOverlay()
+        self._snip_overlay.region_selected.connect(self._on_region_selected)
+        self._snip_overlay.cancelled.connect(self._on_snip_cancelled)
+        self._snip_overlay.show()
+
+    def _on_region_selected(self, region: dict):
+        self._snip_overlay = None
+        img = capture.get_screen_snippet(region)
+        screenshot_b64 = capture.image_to_base64(img)
+        self._pending_capture = (None, screenshot_b64)
+
+        audio.play_filler()
+        if config.DOLL_AUTO_HIDE:
+            self._signals.show_doll.emit()
+        self._signals.set_state.emit("listening")
+        self._signals.show_intent_picker.emit()
+
+    def _on_snip_cancelled(self):
+        self._snip_overlay = None
 
     def _on_hotkey(self):
         # 1. Capture FIRST — original app still has focus, so Ctrl+C works.
@@ -215,7 +267,8 @@ class App:
             finally:
                 llm_chunk_q.put(None)
             self._all_conversations.append([
-                {"role": "user",      "content": user_message},
+                {"role": "user", "content": user_message,
+                 **(({"image_base64": screenshot_b64}) if screenshot_b64 else {})},
                 {"role": "assistant", "content": full_text},
             ])
 

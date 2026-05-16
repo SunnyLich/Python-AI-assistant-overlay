@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QStackedWidget, QSplitter,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QPixmap
 
 _W          = 680
 _H          = 520
@@ -171,8 +171,11 @@ class ChatWindow(QWidget):
         self._sidebar_layout.addStretch()
 
     def _make_sidebar_btn(self, idx: int, conv: list[dict]) -> QPushButton:
-        raw = next((m["content"] for m in conv if m["role"] == "user"), f"Conversation {idx+1}")
-        title = raw.strip().replace("\n", " ")
+        first_user = next((m for m in conv if m["role"] == "user"), None)
+        raw = first_user["content"] if first_user else f"Conversation {idx+1}"
+        has_image = bool(first_user and first_user.get("image_base64"))
+        prefix = "📷 " if has_image else ""
+        title = (prefix + raw.strip().replace("\n", " "))
         if len(title) > 42:
             title = title[:42] + "…"
         is_latest = (idx == len(self._conversations) - 1)
@@ -256,7 +259,7 @@ class ChatWindow(QWidget):
         layout.addStretch()
 
         for msg in conv:
-            self._bubble(layout, msg["content"], msg["role"])
+            self._bubble(layout, msg["content"], msg["role"], msg.get("image_base64"))
 
         scroll._msg_layout = layout  # type: ignore[attr-defined]
         scroll.setWidget(container)
@@ -296,7 +299,7 @@ class ChatWindow(QWidget):
 
     # ------------------------------------------------------------------ Bubbles
 
-    def _bubble(self, layout, text: str, role: str) -> QLabel:
+    def _bubble(self, layout, text: str, role: str, image_b64: str | None = None) -> QLabel:
         lbl = QLabel(text)
         lbl.setWordWrap(True)
         lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -316,6 +319,29 @@ class ChatWindow(QWidget):
         wl.setContentsMargins(0, 0, 0, 0)
         wl.setSpacing(2)
         wl.addWidget(role_lbl)
+
+        if image_b64 and role == "user":
+            try:
+                import base64
+                img_bytes = base64.b64decode(image_b64)
+                pixmap = QPixmap()
+                pixmap.loadFromData(img_bytes)
+                if not pixmap.isNull():
+                    thumb = pixmap.scaled(
+                        280, 160,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                    img_lbl = QLabel()
+                    img_lbl.setPixmap(thumb)
+                    img_lbl.setStyleSheet(
+                        "QLabel { background: #3a3a5c; border-radius: 8px; padding: 4px; }"
+                    )
+                    img_lbl.setFixedSize(thumb.width() + 8, thumb.height() + 8)
+                    wl.addWidget(img_lbl)
+            except Exception:
+                pass
+
         wl.addWidget(lbl)
         layout.insertWidget(layout.count() - 1, wrapper)  # before trailing stretch
         return lbl

@@ -12,7 +12,7 @@ import config
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QLabel, QTextEdit, QPushButton, QFrame, QApplication,
-    QSizePolicy, QStackedWidget,
+    QSizePolicy, QStackedWidget, QSplitter,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer
 from PyQt6.QtGui import QFont
@@ -82,16 +82,15 @@ class ChatWindow(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(self._make_title_bar())
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
-        body.addWidget(self._make_sidebar())
-        div = QFrame()
-        div.setFrameShape(QFrame.Shape.VLine)
-        div.setStyleSheet(f"color: {_BORDER};")
-        body.addWidget(div)
-        body.addWidget(self._make_right_panel(), stretch=1)
-        root.addLayout(body, stretch=1)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(1)
+        splitter.setStyleSheet("QSplitter::handle { background: rgba(255,255,255,20); }")
+        splitter.addWidget(self._make_sidebar())
+        splitter.addWidget(self._make_right_panel())
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([185, _W - 185])
+        root.addWidget(splitter, stretch=1)
 
     def _make_title_bar(self) -> QWidget:
         bar = QWidget()
@@ -118,7 +117,7 @@ class ChatWindow(QWidget):
 
     def _make_sidebar(self) -> QWidget:
         sidebar = QWidget()
-        sidebar.setFixedWidth(185)
+        sidebar.setMinimumWidth(100)
         sidebar.setStyleSheet(f"background: {_SIDEBAR_BG};")
         vl = QVBoxLayout(sidebar)
         vl.setContentsMargins(0, 0, 0, 0)
@@ -142,7 +141,7 @@ class ChatWindow(QWidget):
         self._sidebar_layout = QVBoxLayout(self._sidebar_items)
         self._sidebar_layout.setContentsMargins(0, 4, 0, 4)
         self._sidebar_layout.setSpacing(1)
-        self._sidebar_btns: list[QPushButton] = []
+        self._sidebar_btns: list[tuple[int, QPushButton]] = []
         self._rebuild_sidebar()
 
         scroll.setWidget(self._sidebar_items)
@@ -163,10 +162,12 @@ class ChatWindow(QWidget):
             )
             self._sidebar_layout.addWidget(lbl)
         else:
-            for i, conv in enumerate(self._conversations):
-                btn = self._make_sidebar_btn(i, conv)
+            # Newest conversation at the top
+            for i, conv in enumerate(reversed(self._conversations)):
+                real_idx = len(self._conversations) - 1 - i
+                btn = self._make_sidebar_btn(real_idx, conv)
                 self._sidebar_layout.addWidget(btn)
-                self._sidebar_btns.append(btn)
+                self._sidebar_btns.append((real_idx, btn))
         self._sidebar_layout.addStretch()
 
     def _make_sidebar_btn(self, idx: int, conv: list[dict]) -> QPushButton:
@@ -201,9 +202,10 @@ class ChatWindow(QWidget):
         is_latest = (idx == len(self._conversations) - 1)
         self._past_notice.setVisible(not is_latest)
         self._input_frame.setEnabled(is_latest)
-        for i, btn in enumerate(self._sidebar_btns):
-            btn.setChecked(i == idx)
-            btn.setStyleSheet(self._btn_style(i == idx, i == len(self._conversations) - 1))
+        for real_idx, btn in self._sidebar_btns:
+            is_sel = (real_idx == idx)
+            btn.setChecked(is_sel)
+            btn.setStyleSheet(self._btn_style(is_sel, real_idx == len(self._conversations) - 1))
 
     # ------------------------------------------------------------------ Right panel
 

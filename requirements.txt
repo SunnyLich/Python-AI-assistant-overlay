@@ -1,0 +1,26 @@
+# --- Input capture ---
+keyboard>=0.13.5          # global hotkeys
+pyperclip>=1.11.0         # clipboard access
+mss>=10.2.0               # fast screen capture
+Pillow>=12.2.0            # image handling
+
+# --- LLM ---
+openai>=2.37.0            # works with OpenAI and Groq (OpenAI-compatible)
+anthropic>=0.102.0        # Claude
+
+# --- TTS ---
+cartesia[websockets]>=3.0.2  # Cartesia streaming TTS (~75ms TTFT); [websockets] extra required for WebSocket streaming
+# elevenlabs>=1.0.0       # alternative TTS
+
+# --- Audio ---
+sounddevice>=0.5.5        # audio output
+soundfile>=0.13.1         # WAV/audio file decoding
+numpy>=1.26.0             # audio buffer handling
+
+# --- UI ---
+PyQt6>=6.11.0             # overlay window + system tray
+
+# --- Utilities ---
+python-dotenv>=1.2.2      # .env config loading
+pynput>=1.8.2             # mouse/keyboard listener (backup)
+pywin32>=311              # Windows-specific APIs (clipboard, window focus)

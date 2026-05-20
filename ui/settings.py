@@ -248,7 +248,7 @@ class SettingsDialog(QDialog):
         f.setContentsMargins(12, 12, 12, 12)
 
         self._fields["LLM_PROVIDER"] = self._combo(
-            ["groq", "openai", "anthropic"]
+            ["groq", "openai", "anthropic", "chatgpt"]
         )
         self._fields["LLM_MODEL"] = QLineEdit()
         self._fields["GROQ_API_KEY"] = self._password()
@@ -256,14 +256,28 @@ class SettingsDialog(QDialog):
         self._fields["ANTHROPIC_API_KEY"] = self._password()
 
         self._fields["CHAT_LLM_PROVIDER"] = self._combo(
-            ["groq", "openai", "anthropic"]
+            ["groq", "openai", "anthropic", "chatgpt"]
         )
+
+        def _update_model_placeholders():
+            p = self._fields["LLM_PROVIDER"].currentText()
+            hint = _model_hint(p)
+            self._fields["LLM_MODEL"].setPlaceholderText(hint)
+            cp = self._fields["CHAT_LLM_PROVIDER"].currentText()
+            chint = _model_hint(cp) if cp else "Leave blank to use same model as above"
+            self._fields["CHAT_LLM_MODEL"].setPlaceholderText(chint)
+
+        self._fields["LLM_PROVIDER"].currentTextChanged.connect(lambda _: _update_model_placeholders())
+        self._fields["CHAT_LLM_PROVIDER"].currentTextChanged.connect(lambda _: _update_model_placeholders())
         self._fields["CHAT_LLM_MODEL"] = QLineEdit()
         self._fields["CHAT_LLM_MODEL"].setPlaceholderText("Leave blank to use same model as above")
 
         f.addRow("Provider", self._fields["LLM_PROVIDER"])
         f.addRow("Model", self._fields["LLM_MODEL"])
         f.addRow(_sep(), _sep())
+        note = QLabel("<small><i>openai</i> = API key (pay-per-token) &nbsp;|&nbsp; <i>chatgpt</i> = your Pro/Plus subscription</small>")
+        note.setWordWrap(True)
+        f.addRow("", note)
         f.addRow("Groq API key", self._fields["GROQ_API_KEY"])
         f.addRow("OpenAI API key", self._fields["OPENAI_API_KEY"])
         f.addRow("Anthropic API key", self._fields["ANTHROPIC_API_KEY"])
@@ -273,14 +287,136 @@ class SettingsDialog(QDialog):
         f.addRow("Chat model", self._fields["CHAT_LLM_MODEL"])
         f.addRow(_sep(), _sep())
         self._fields["VISION_LLM_PROVIDER"] = self._combo(
-            ["", "anthropic", "openai"]
+            ["", "anthropic", "openai", "chatgpt"]
         )
         self._fields["VISION_LLM_MODEL"] = QLineEdit()
-        self._fields["VISION_LLM_MODEL"].setPlaceholderText("e.g. claude-opus-4-5")
+        self._fields["VISION_LLM_MODEL"].setPlaceholderText("e.g. claude-opus-4-5 / gpt-4o")
         f.addRow(QLabel("<i>Vision model (screen snip)</i>"), QLabel(""))
         f.addRow("Vision provider", self._fields["VISION_LLM_PROVIDER"])
         f.addRow("Vision model", self._fields["VISION_LLM_MODEL"])
+
+        # ---- ChatGPT Pro/Plus OAuth section ----
+        f.addRow(_sep(), _sep())
+        f.addRow(QLabel("<i>ChatGPT Pro/Plus (your subscription)</i>"), QLabel(""))
+
+        self._chatgpt_status_lbl = QLabel()
+        self._chatgpt_status_lbl.setWordWrap(True)
+        self._refresh_chatgpt_status()
+        f.addRow("Status", self._chatgpt_status_lbl)
+
+        cgpt_btn_w = QWidget()
+        cgpt_btn_h = QHBoxLayout(cgpt_btn_w)
+        cgpt_btn_h.setContentsMargins(0, 0, 0, 0)
+        cgpt_btn_h.setSpacing(6)
+        self._cgpt_login_btn    = QPushButton("Sign in (browser)")
+        self._cgpt_device_btn   = QPushButton("Sign in (headless)")
+        self._cgpt_logout_btn   = QPushButton("Sign out")
+        cgpt_btn_h.addWidget(self._cgpt_login_btn)
+        cgpt_btn_h.addWidget(self._cgpt_device_btn)
+        cgpt_btn_h.addWidget(self._cgpt_logout_btn)
+        cgpt_btn_h.addStretch()
+        self._cgpt_login_btn.clicked.connect(self._chatgpt_login_browser)
+        self._cgpt_device_btn.clicked.connect(self._chatgpt_login_device)
+        self._cgpt_logout_btn.clicked.connect(self._chatgpt_logout)
+        f.addRow("", cgpt_btn_w)
+
         return w
+
+    def _refresh_chatgpt_status(self) -> None:
+        try:
+            from core import chatgpt_auth
+            tokens = chatgpt_auth.get_tokens()
+            if tokens:
+                aid = tokens.get("account_id") or ""
+                label = "Logged in" + (f" \u2022 account {aid[:8]}\u2026" if aid else "")
+                self._chatgpt_status_lbl.setText(label)
+                self._chatgpt_status_lbl.setStyleSheet("color: #80c080;")
+            else:
+                self._chatgpt_status_lbl.setText("Not logged in")
+                self._chatgpt_status_lbl.setStyleSheet("color: palette(mid);")
+        except Exception as exc:
+            self._chatgpt_status_lbl.setText(f"Error reading status: {exc}")
+            self._chatgpt_status_lbl.setStyleSheet("color: #c04040;")
+
+    def _chatgpt_login_browser(self) -> None:
+        from core import chatgpt_auth
+        self._chatgpt_status_lbl.setText("Opening browser\u2026 waiting for callback")
+        self._chatgpt_status_lbl.setStyleSheet("color: #c0c040;")
+        self._start_auth_poll()
+
+        def on_success(_tokens):
+            pass  # polling timer will detect the saved tokens
+
+        def on_error(msg):
+            self._auth_poll_error = msg  # picked up by poll tick
+
+        chatgpt_auth.start_browser_login(on_success, on_error)
+
+    def _start_auth_poll(self) -> None:
+        """Start a 1-second main-thread timer that detects when OAuth tokens land."""
+        self._auth_poll_error: str | None = None
+        self._auth_poll_ticks = 0
+        self._auth_poll_timer = QTimer(self)
+        self._auth_poll_timer.setInterval(1000)
+        self._auth_poll_timer.timeout.connect(self._auth_poll_tick)
+        self._auth_poll_timer.start()
+
+    def _auth_poll_tick(self) -> None:
+        # Check if the background thread stored a message
+        if self._auth_poll_error is not None:
+            msg = self._auth_poll_error
+            self._auth_poll_error = None  # clear so we don't re-trigger
+            if msg.startswith("__device_code__"):
+                # Device code info — show it without stopping the poll
+                body = msg[len("__device_code__"):]
+                url, _, code = body.partition("\n")
+                self._chatgpt_status_lbl.setText(f"Go to: {url}\nEnter code: {code}")
+                self._chatgpt_status_lbl.setStyleSheet("color: #80a0ff;")
+                return
+            self._auth_poll_timer.stop()
+            self._chatgpt_status_lbl.setText(f"Error: {msg}")
+            self._chatgpt_status_lbl.setStyleSheet("color: #c04040;")
+            return
+        # Check if tokens have appeared in the keychain
+        try:
+            from core import chatgpt_auth
+            if chatgpt_auth.get_tokens():
+                self._auth_poll_timer.stop()
+                self._refresh_chatgpt_status()
+                return
+        except Exception:
+            pass
+        # Timeout after 5 minutes
+        self._auth_poll_ticks += 1
+        if self._auth_poll_ticks >= 300:
+            self._auth_poll_timer.stop()
+            self._chatgpt_status_lbl.setText("Timed out waiting for login")
+            self._chatgpt_status_lbl.setStyleSheet("color: #c04040;")
+
+    def _chatgpt_login_device(self) -> None:
+        from core import chatgpt_auth
+        self._chatgpt_status_lbl.setText("Starting device auth…")
+        self._chatgpt_status_lbl.setStyleSheet("color: #c0c040;")
+        self._start_auth_poll()
+
+        def on_code(url, user_code):
+            self._auth_poll_error = f"__device_code__{url}\n{user_code}"
+
+        def on_success(_tokens):
+            pass  # polling timer will detect the saved tokens
+
+        def on_error(msg):
+            self._auth_poll_error = msg
+
+        chatgpt_auth.start_device_login(on_code, on_success, on_error)
+
+    def _chatgpt_logout(self) -> None:
+        try:
+            from core import chatgpt_auth
+            chatgpt_auth.clear_tokens()
+        except Exception:
+            pass
+        self._refresh_chatgpt_status()
 
     def _tab_tts(self) -> QWidget:
         w = QWidget()
@@ -723,7 +859,9 @@ class SettingsDialog(QDialog):
         """Save without closing the dialog, then apply changes live."""
         if self._do_save():
             import config
+            from core import llm as _llm
             config.reload()
+            _llm.reset_clients()
             if self._on_apply:
                 self._on_apply()
             self._status_lbl.setText("Applied.")
@@ -732,6 +870,12 @@ class SettingsDialog(QDialog):
     def _save(self):
         """Save and close the dialog."""
         if self._do_save():
+            import config as _cfg
+            from core import llm as _llm
+            _cfg.reload()
+            _llm.reset_clients()
+            if self._on_apply:
+                self._on_apply()
             self.accept()
 
     def _do_save(self) -> bool:
@@ -797,6 +941,18 @@ class SettingsDialog(QDialog):
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
+_MODEL_HINTS: dict[str, str] = {
+    "groq":      "e.g. llama3-8b-8192",
+    "openai":    "e.g. gpt-4o",
+    "anthropic": "e.g. claude-sonnet-4-5",
+    "chatgpt":   "gpt-5.5  |  gpt-5.4  |  gpt-5.4-mini  |  gpt-5.3-codex",
+}
+
+
+def _model_hint(provider: str) -> str:
+    return _MODEL_HINTS.get(provider.lower(), "model name")
+
 
 def _sep() -> QFrame:
     line = QFrame()

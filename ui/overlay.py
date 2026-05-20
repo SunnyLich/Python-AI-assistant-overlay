@@ -268,10 +268,14 @@ class DollOverlay(QMainWindow):
     # ------------------------------------------------------------------
 
     def _show_doll(self):
+        if not hasattr(self, '_icon_hide_timer') or not hasattr(self, '_icon_label'):
+            return
         self._icon_hide_timer.stop()
         self._icon_label.show()
 
     def _hide_doll(self):
+        if not hasattr(self, '_icon_hide_timer'):
+            return
         # Start a backstop timer — the icon will normally be hidden in sync with
         # the bubble via _on_bubble_hidden, but this covers cases where the bubble
         # is never shown (e.g. empty voice transcription).
@@ -279,10 +283,14 @@ class DollOverlay(QMainWindow):
 
     def _on_bubble_hidden(self):
         """Called by SpeechBubble.hideEvent — hides the icon in lockstep with the bubble."""
+        if not hasattr(self, '_icon_hide_timer') or not hasattr(self, '_icon_label'):
+            return
         self._icon_hide_timer.stop()
         self._icon_label.hide()
 
     def _icon_label_clear(self):
+        if not hasattr(self, '_icon_hide_timer') or not hasattr(self, '_icon_label'):
+            return
         self._icon_hide_timer.stop()
         self._icon_label.hide()
 

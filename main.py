@@ -7,8 +7,10 @@ Flow:
   Click doll → show full reply popup
 """
 import sys
+import os
 import threading
 from PyQt6.QtWidgets import QApplication
+os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.screen=false")
 import config
 from core.hotkeys import HotkeyListener
 from core import capture, llm, audio, context_fetcher, stt
@@ -202,13 +204,9 @@ class App:
 
         self._pending_context = context_fetcher.fetch_and_save()
         selected = capture.get_selected_text()
-        screenshot_b64 = None
-        if not selected:
-            if paste_back:
-                return  # nothing selected — nothing to rewrite
-            img = capture.get_screen_snippet()
-            screenshot_b64 = capture.image_to_base64(img)
-        self._pending_capture = (selected, screenshot_b64)
+        # Regular hotkey queries are text-only; visual context comes from the
+        # snip overlay (Ctrl+Alt+Q) only — never auto-capture a screenshot here.
+        self._pending_capture = (selected, None)
         self._pending_caller_idx = caller_idx
         self._pending_paste_target = target_hwnd
 
@@ -342,6 +340,14 @@ class App:
         import pyperclip
 
         selected_text = (capture_data[0] or "") if capture_data else ""
+
+        if not selected_text:
+            print("[main] Rewrite & Paste: no text was selected, aborting.")
+            if gen_id == self._gen_id:
+                self._signals.set_state.emit("idle")
+                if config.DOLL_AUTO_HIDE:
+                    self._signals.hide_doll.emit()
+            return
 
         full_reply = ""
         try:
@@ -577,8 +583,23 @@ class App:
 
 
 def main():
+    # Our clipboard helper (capture.get_selected_text) injects a synthetic Ctrl+C
+    # via keyboard.send("ctrl+c") while the terminal is still the foreground window.
+    # On Windows, this delivers CTRL_C_EVENT to every process in the console group —
+    # including us — which becomes KeyboardInterrupt in the Qt event loop.
+    # Ignore CTRL_C_EVENT at the Win32 level so the app can never be killed this way.
+    # (The tray "Quit" action is the intended exit path.)
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(None, True)
+    except Exception:
+        pass
+
     app = App()
-    app.run()
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        sys.exit(0)
 
 
 if __name__ == "__main__":

@@ -155,6 +155,93 @@ _chat_openai_client = None
 _chat_anthropic_client = None
 _vision_openai_client = None
 _vision_anthropic_client = None
+_codex_client = None
+_chat_codex_client = None
+
+
+def reset_clients() -> None:
+    """Discard all cached API clients so they are rebuilt with the current config."""
+    global _openai_client, _anthropic_client, _chat_openai_client, _chat_anthropic_client
+    global _vision_openai_client, _vision_anthropic_client, _codex_client, _chat_codex_client
+    _openai_client = _anthropic_client = None
+    _chat_openai_client = _chat_anthropic_client = None
+    _vision_openai_client = _vision_anthropic_client = None
+    _codex_client = _chat_codex_client = None
+
+
+# ------------------------------------------------------------------
+# Codex (ChatGPT subscription) — custom httpx transport + client
+# ------------------------------------------------------------------
+
+class _CodexTransport:
+    """
+    httpx-compatible BaseTransport that:
+      • strips the placeholder API-key authorization header
+      • injects ``Authorization: Bearer <access_token>``
+      • adds ``ChatGPT-Account-Id`` and ``originator`` headers
+    Tokens are fetched (and refreshed) lazily on every request.
+    """
+
+    def __init__(self):
+        import httpx
+        self._inner = httpx.HTTPTransport()
+
+    def handle_request(self, request):
+        import httpx
+        from core import chatgpt_auth
+
+        token      = chatgpt_auth.get_valid_access_token()
+        account_id = chatgpt_auth.get_account_id()
+
+        # Rebuild raw headers, dropping the dummy API-key auth header
+        raw: list[tuple[bytes, bytes]] = [
+            (name, value)
+            for name, value in request.headers.raw
+            if name.lower() != b"authorization"
+        ]
+        if token:
+            raw.append((b"authorization", f"Bearer {token}".encode()))
+        if account_id:
+            raw.append((b"chatgpt-account-id", account_id.encode()))
+        raw.append((b"originator", b"opencode"))
+
+        new_req = httpx.Request(
+            method=request.method,
+            url=request.url,
+            headers=raw,
+            content=request.content,
+            extensions=request.extensions,
+        )
+        return self._inner.handle_request(new_req)
+
+    def close(self):
+        self._inner.close()
+
+
+def _get_codex_client():
+    global _codex_client
+    if _codex_client is None:
+        import httpx
+        from openai import OpenAI
+        _codex_client = OpenAI(
+            api_key="chatgpt-oauth-dummy",
+            base_url="https://chatgpt.com/backend-api/codex",
+            http_client=httpx.Client(transport=_CodexTransport()),
+        )
+    return _codex_client
+
+
+def _get_chat_codex_client():
+    global _chat_codex_client
+    if _chat_codex_client is None:
+        import httpx
+        from openai import OpenAI
+        _chat_codex_client = OpenAI(
+            api_key="chatgpt-oauth-dummy",
+            base_url="https://chatgpt.com/backend-api/codex",
+            http_client=httpx.Client(transport=_CodexTransport()),
+        )
+    return _chat_codex_client
 
 
 # ------------------------------------------------------------------
@@ -169,7 +256,15 @@ def _api_key_for(provider: str) -> str:
         return config.OPENAI_API_KEY
     if p == "anthropic":
         return config.ANTHROPIC_API_KEY
+    if p == "chatgpt":
+        return "chatgpt-oauth"   # no static key — auth is via OAuth tokens
     return ""
+
+
+_CHATGPT_SUPPORTED_MODELS = {
+    "gpt-5.5", "gpt-5.4", "gpt-5.4-mini",
+    "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2",
+}
 
 
 def _check_llm_config() -> None:
@@ -178,6 +273,19 @@ def _check_llm_config() -> None:
             "LLM_MODEL is not set in .env. "
             "Add LLM_MODEL=<model> (e.g. llama3-8b-8192 for Groq)."
         )
+    if config.LLM_PROVIDER.lower() == "chatgpt":
+        from core import chatgpt_auth
+        if not chatgpt_auth.get_tokens():
+            raise ValueError(
+                "LLM_PROVIDER is set to 'chatgpt' but you are not logged in. "
+                "Open Settings → LLM and sign in with your ChatGPT account."
+            )
+        if config.LLM_MODEL.lower() not in _CHATGPT_SUPPORTED_MODELS:
+            raise ValueError(
+                f"Model '{config.LLM_MODEL}' is not supported by the ChatGPT Codex endpoint. "
+                f"Use one of: {', '.join(sorted(_CHATGPT_SUPPORTED_MODELS))}"
+            )
+        return
     if not _api_key_for(config.LLM_PROVIDER):
         raise ValueError(
             f"API key for LLM_PROVIDER='{config.LLM_PROVIDER}' is not set in .env. "
@@ -191,6 +299,19 @@ def _check_chat_llm_config() -> None:
             "CHAT_LLM_MODEL is not set in .env. "
             "Add CHAT_LLM_MODEL=<model> or leave unset to inherit LLM_MODEL."
         )
+    if config.CHAT_LLM_PROVIDER.lower() == "chatgpt":
+        from core import chatgpt_auth
+        if not chatgpt_auth.get_tokens():
+            raise ValueError(
+                "CHAT_LLM_PROVIDER is set to 'chatgpt' but you are not logged in. "
+                "Open Settings → LLM and sign in with your ChatGPT account."
+            )
+        if config.CHAT_LLM_MODEL.lower() not in _CHATGPT_SUPPORTED_MODELS:
+            raise ValueError(
+                f"Model '{config.CHAT_LLM_MODEL}' is not supported by the ChatGPT Codex endpoint. "
+                f"Use one of: {', '.join(sorted(_CHATGPT_SUPPORTED_MODELS))}"
+            )
+        return
     if not _api_key_for(config.CHAT_LLM_PROVIDER):
         raise ValueError(
             f"API key for CHAT_LLM_PROVIDER='{config.CHAT_LLM_PROVIDER}' is not set in .env. "
@@ -208,8 +329,16 @@ def _check_vision_config() -> None:
     if not config.VISION_LLM_PROVIDER:
         raise ValueError(
             "VISION_LLM_PROVIDER is not set in .env. "
-            "Add VISION_LLM_PROVIDER=anthropic (or openai) alongside VISION_LLM_MODEL."
+            "Add VISION_LLM_PROVIDER=anthropic (or openai or chatgpt) alongside VISION_LLM_MODEL."
         )
+    if config.VISION_LLM_PROVIDER.lower() == "chatgpt":
+        from core import chatgpt_auth
+        if not chatgpt_auth.get_tokens():
+            raise ValueError(
+                "VISION_LLM_PROVIDER is set to 'chatgpt' but you are not logged in. "
+                "Open Settings → LLM and sign in with your ChatGPT account."
+            )
+        return
     if not _api_key_for(config.VISION_LLM_PROVIDER):
         raise ValueError(
             f"API key for VISION_LLM_PROVIDER='{config.VISION_LLM_PROVIDER}' is not set in .env. "
@@ -338,6 +467,8 @@ def stream_response(
             yield from _stream_openai_compat(user_message, image_base64, model, _get_vision_openai_client())
         elif provider == "anthropic":
             yield from _stream_anthropic(user_message, image_base64, model, _get_vision_anthropic_client())
+        elif provider == "chatgpt":
+            yield from _stream_codex_vision(user_message, image_base64, model, _get_codex_client())
         else:
             raise ValueError(f"Unknown VISION_LLM_PROVIDER: {provider}")
     else:
@@ -348,6 +479,8 @@ def stream_response(
         elif provider == "anthropic":
             tool_model = config.TOOL_LLM_MODEL if use_tools else config.LLM_MODEL
             yield from _stream_anthropic(user_message, None, tool_model, _get_anthropic_client(), ambient_context, memory_context, use_tools)
+        elif provider == "chatgpt":
+            yield from _stream_codex(user_message, config.LLM_MODEL, _get_codex_client(), ambient_context, memory_context)
         else:
             raise ValueError(f"Unknown LLM_PROVIDER: {provider}")
 
@@ -377,6 +510,67 @@ def _stream_openai_compat(
             delta = chunk.choices[0].delta.content
             if delta:
                 yield delta
+
+
+# ------------------------------------------------------------------
+# Codex (ChatGPT subscription) — Responses API streaming
+# ------------------------------------------------------------------
+
+def _build_codex_text(user_message: str, ambient_context: str = "", memory_context: str = "") -> str:
+    """Prepend context into a single text block for the Codex endpoint."""
+    parts = []
+    if memory_context:
+        parts.append(memory_context)
+    if ambient_context:
+        parts.append(f"---\n{ambient_context}")
+    parts.append(user_message)
+    return "\n\n".join(parts)
+
+
+def _stream_codex(
+    user_message: str,
+    model: str,
+    client,
+    ambient_context: str = "",
+    memory_context: str = "",
+) -> Generator[str, None, None]:
+    """Stream a response via the Codex endpoint using the Responses API."""
+    text = _build_codex_text(user_message, ambient_context, memory_context)
+    with client.responses.stream(
+        model=model,
+        input=[{"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}],
+        instructions=config.get_system_prompt(),
+        store=False,
+    ) as stream:
+        for event in stream:
+            if getattr(event, 'type', '') == 'response.output_text.delta':
+                delta = getattr(event, 'delta', '')
+                if delta:
+                    yield delta
+
+
+def _stream_codex_vision(
+    user_message: str,
+    image_base64: str,
+    model: str,
+    client,
+) -> Generator[str, None, None]:
+    """Stream a vision response via the Codex endpoint (Responses API with image input)."""
+    input_content = [
+        {"type": "input_text",  "text": user_message},
+        {"type": "input_image", "image_url": f"data:image/png;base64,{image_base64}"},
+    ]
+    with client.responses.stream(
+        model=model,
+        input=[{"type": "message", "role": "user", "content": input_content}],
+        instructions=config.get_system_prompt(),
+        store=False,
+    ) as stream:
+        for event in stream:
+            if getattr(event, 'type', '') == 'response.output_text.delta':
+                delta = getattr(event, 'delta', '')
+                if delta:
+                    yield delta
 
 
 def _build_openai_messages(
@@ -655,5 +849,28 @@ def stream_response_with_history(
             return
 
         yield from _run_anthropic_tool_loop(client, turns, final, tool_model, system, max_tokens=1024)
+    elif provider == "chatgpt":
+        # For the chat history path, extract the last user message and use Responses API.
+        # The full history is packed into a single user turn with prior turns prefixed.
+        system_msg = next((m["content"] for m in messages if m["role"] == "system"), "")
+        turns = [m for m in messages if m["role"] != "system"]
+        # Build a text representation of prior context for the model
+        last_user = turns[-1]["content"] if turns else ""
+        history_prefix = ""
+        for m in turns[:-1]:
+            label = "User" if m["role"] == "user" else "Assistant"
+            history_prefix += f"{label}: {m['content']}\n"
+        full_input = (history_prefix + last_user) if history_prefix else last_user
+        with _get_chat_codex_client().responses.stream(
+            model=config.CHAT_LLM_MODEL,
+            input=[{"type": "message", "role": "user", "content": [{"type": "input_text", "text": full_input}]}],
+            instructions=system_msg,
+            store=False,
+        ) as stream:
+            for event in stream:
+                if getattr(event, 'type', '') == 'response.output_text.delta':
+                    delta = getattr(event, 'delta', '')
+                    if delta:
+                        yield delta
     else:
         raise ValueError(f"Unknown chat LLM provider: {provider}")

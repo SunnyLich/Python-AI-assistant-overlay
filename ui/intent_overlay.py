@@ -179,6 +179,9 @@ class IntentOverlay(QWidget):
         self._input_line.show()
         self._input_line.setFocus()
         self.update()
+        # The key that triggered custom mode (e.g. 'S') propagates to Qt
+        # because suppress=False on the hook.  Clear after Qt drains pending events.
+        QTimer.singleShot(0, self._input_line.clear)
 
     def _fire_custom(self):
         text = self._input_line.text().strip()
@@ -187,7 +190,8 @@ class IntentOverlay(QWidget):
         self._handled = True
         self._unhook()
         self._timer.stop()
-        self.intent_chosen.emit(config.HOTKEY_CUSTOM_PROMPT_KEY, text)
+        custom_row = next(r for r in self._rows if r["is_custom"])
+        self.intent_chosen.emit(custom_row["glyph"], text)
         self.close()
 
     def _on_raw_key(self, name: str):

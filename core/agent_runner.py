@@ -22,6 +22,7 @@ from typing import Callable, Iterable, Protocol, Sequence
 
 LogCallback = Callable[[str], None]
 ModelCallback = Callable[[str], str]
+ApprovalCallback = Callable[[dict], bool]
 
 
 class AgentTaskLike(Protocol):
@@ -53,6 +54,27 @@ class ScopeViolation(ValueError):
 
 class PermissionDenied(PermissionError):
     """Raised when task permissions do not allow a requested operation."""
+
+
+class AgentCancelled(RuntimeError):
+    """Raised when the user cancels a running agent task."""
+
+
+class AgentRunControl:
+    """Thread-safe cancellation token for a running agent task."""
+
+    def __init__(self):
+        self._cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+
+    def is_cancelled(self) -> bool:
+        return self._cancelled.is_set()
+
+    def raise_if_cancelled(self) -> None:
+        if self.is_cancelled():
+            raise AgentCancelled("Agent task was cancelled by the user.")
 
 
 @dataclass(frozen=True)
@@ -182,8 +204,20 @@ class AgentToolbox:
     _BASE_COMMAND_ALLOWLIST: tuple[tuple[str, ...], ...] = (
         ("python", "-m", "py_compile"),
         ("python", "-m", "unittest"),
+        ("python", "-m", "pytest"),
+        ("python", "-m", "ruff"),
+        ("python", "-m", "mypy"),
         ("pytest",),
+        ("ruff",),
+        ("mypy",),
         ("rg",),
+        ("node", "--check"),
+    )
+    _PROJECT_COMMAND_ALLOWLIST: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+        (("npm", "test"), ("package.json",)),
+        (("npm", "run", "build"), ("package.json",)),
+        (("cargo", "test"), ("Cargo.toml",)),
+        (("go", "test"), ("go.mod",)),
     )
     _GIT_COMMAND_ALLOWLIST: tuple[tuple[str, ...], ...] = (
         ("git", "status"),
@@ -196,10 +230,14 @@ class AgentToolbox:
         permissions: AgentPermissions,
         *,
         log: LogCallback | None = None,
+        approval_callback: ApprovalCallback | None = None,
+        require_approval: bool = False,
     ):
         self.workspace = workspace
         self.permissions = permissions
         self._log = log
+        self._approval_callback = approval_callback
+        self._require_approval = require_approval
 
     def list_files(self, *, limit: int = 300) -> ToolResult:
         files = self.workspace.list_files(limit=limit)
@@ -212,6 +250,7 @@ class AgentToolbox:
     def create_file(self, path: str, content: str) -> ToolResult:
         if not self.permissions.allow_file_create:
             raise PermissionDenied("Creating files is disabled for this task.")
+        self._approve("create_file", {"path": path, "chars": len(content)})
         self.workspace.write_text(path, content, create=True, edit=False)
         return self._result("create_file", True, self.workspace.relative(path))
 
@@ -222,6 +261,7 @@ class AgentToolbox:
             raise PermissionDenied("Editing files is disabled for this task.")
         if not exists and not self.permissions.allow_file_create:
             raise PermissionDenied("Creating files is disabled for this task.")
+        self._approve("write_file", {"path": path, "exists": exists, "chars": len(content)})
         self.workspace.write_text(
             path,
             content,
@@ -231,6 +271,7 @@ class AgentToolbox:
         return self._result("write_file", True, self.workspace.relative(path))
 
     def patch_file(self, path: str, old: str, new: str) -> ToolResult:
+        self._approve("patch_file", {"path": path, "old_chars": len(old), "new_chars": len(new)})
         count = self.workspace.patch_text(
             path,
             old,
@@ -240,17 +281,20 @@ class AgentToolbox:
         return self._result("patch_file", True, f"{self.workspace.relative(path)} patched", {"replacements": count})
 
     def delete_file(self, path: str) -> ToolResult:
+        self._approve("delete_file", {"path": path})
         self.workspace.delete_file(path, delete=self.permissions.allow_file_delete)
         return self._result("delete_file", True, self.workspace.relative(path))
 
     def run_command(self, args: Sequence[str], *, timeout_seconds: int = 30) -> ToolResult:
-        if not self.permissions.allow_shell:
-            raise PermissionDenied("Shell commands are disabled for this task.")
         clean_args = [str(arg) for arg in args if str(arg)]
         if not clean_args:
             raise ValueError("Command cannot be empty.")
+        if not self.permissions.allow_shell and not self._is_read_only_git_command(clean_args):
+            raise PermissionDenied("Shell commands are disabled for this task.")
         if not self._is_command_allowed(clean_args):
             raise PermissionDenied(f"Command is not allowlisted: {' '.join(clean_args)}")
+        if not self._is_read_only_git_command(clean_args):
+            self._approve("run_command", {"args": clean_args})
         completed = subprocess.run(
             clean_args,
             cwd=str(self.workspace.root),
@@ -279,7 +323,54 @@ class AgentToolbox:
         for prefix in allowed:
             if lowered[: len(prefix)] == list(prefix):
                 return True
+        for prefix, required_files in self._PROJECT_COMMAND_ALLOWLIST:
+            if lowered[: len(prefix)] != list(prefix):
+                continue
+            if all((self.workspace.root / required).exists() for required in required_files):
+                return True
         return False
+
+    def verification_commands(self) -> list[list[str]]:
+        commands = [
+            ["python", "-m", "unittest"],
+            ["python", "-m", "pytest"],
+            ["pytest"],
+            ["python", "-m", "ruff", "check", "."],
+            ["ruff", "check", "."],
+            ["python", "-m", "mypy", "."],
+            ["mypy", "."],
+        ]
+        if (self.workspace.root / "package.json").exists():
+            commands.extend([["npm", "test"], ["npm", "run", "build"]])
+        if (self.workspace.root / "Cargo.toml").exists():
+            commands.append(["cargo", "test"])
+        if (self.workspace.root / "go.mod").exists():
+            commands.append(["go", "test", "./..."])
+        return [cmd for cmd in commands if self._is_command_allowed(cmd)]
+
+    def git_status(self) -> ToolResult:
+        if not self.permissions.allow_git:
+            raise PermissionDenied("Git is disabled for this task.")
+        return self.run_command(["git", "status", "--short"])
+
+    def git_diff(self) -> ToolResult:
+        if not self.permissions.allow_git:
+            raise PermissionDenied("Git is disabled for this task.")
+        return self.run_command(["git", "diff", "--", "."])
+
+    @staticmethod
+    def _is_read_only_git_command(args: list[str]) -> bool:
+        lowered = [arg.lower() for arg in args]
+        return lowered[:2] in (["git", "status"], ["git", "diff"])
+
+    def _approve(self, action: str, details: dict) -> None:
+        if not self._require_approval:
+            return
+        if self._approval_callback is None:
+            raise PermissionDenied(f"Approval required for {action}, but no approval UI is available.")
+        request = {"action": action, "details": details}
+        if not self._approval_callback(request):
+            raise PermissionDenied(f"User declined {action}.")
 
     def _result(
         self,
@@ -302,10 +393,14 @@ class AgentTaskRunner:
         log_root: str | Path | None = None,
         *,
         model_callback: ModelCallback | None = None,
+        approval_callback: ApprovalCallback | None = None,
+        control: AgentRunControl | None = None,
     ):
         repo_root = Path(__file__).resolve().parents[1]
         self.log_root = Path(log_root) if log_root else repo_root / "memory" / "agent_runs"
         self._model_callback = model_callback
+        self._approval_callback = approval_callback
+        self._control = control or AgentRunControl()
 
     def start(self, spec: AgentTaskLike, on_log: LogCallback | None = None) -> threading.Thread:
         thread = threading.Thread(target=self.run, args=(spec, on_log), daemon=True)
@@ -315,6 +410,7 @@ class AgentTaskRunner:
     def run(self, spec: AgentTaskLike, on_log: LogCallback | None = None) -> Path:
         run_dir = self._make_run_dir(spec.title)
         log_path = run_dir / "run.log"
+        verbose_path = run_dir / "verbose.log"
 
         def log(message: str) -> None:
             stamped = f"[{datetime.now().strftime('%H:%M:%S')}] {message}"
@@ -324,15 +420,32 @@ class AgentTaskRunner:
             if on_log:
                 on_log(stamped)
 
+        def verbose(label: str, payload) -> None:  # noqa: ANN001
+            stamped = f"\n[{datetime.now().strftime('%H:%M:%S')}] {label}\n"
+            text = payload if isinstance(payload, str) else json.dumps(payload, indent=2, ensure_ascii=False)
+            with verbose_path.open("a", encoding="utf-8") as f:
+                f.write(stamped)
+                f.write(self._truncate(text, 60_000))
+                f.write("\n")
+
         try:
             log("agent run started")
+            self._control.raise_if_cancelled()
+            verbose("task spec", self._spec_dict(spec))
             workspace = ScopedWorkspace(
                 spec.scope_folder,
                 allowed_globs=spec.allowed_file_globs,
                 blocked_globs=spec.blocked_file_globs,
             )
             permissions = AgentPermissions.from_spec(spec)
-            tools = AgentToolbox(workspace, permissions, log=log)
+            require_approval = "ask" in spec.approval_policy.lower()
+            tools = AgentToolbox(
+                workspace,
+                permissions,
+                log=log,
+                approval_callback=self._approval_callback,
+                require_approval=require_approval,
+            )
             self._write_json(run_dir / "task.json", self._spec_dict(spec))
             self._write_json(run_dir / "permissions.json", asdict(permissions))
             log(f"scope: {workspace.root}")
@@ -341,19 +454,30 @@ class AgentTaskRunner:
             files_result = tools.list_files()
             files = files_result.data if isinstance(files_result.data, list) else []
             self._write_json(run_dir / "files.json", files)
+            verbose("visible files", files)
             log(f"inventory complete: {len(files)} file(s) visible")
+            verify_commands = tools.verification_commands() if permissions.allow_shell else []
+            self._write_json(run_dir / "verification_commands.json", verify_commands)
+            verbose("allowed verification commands", verify_commands)
 
-            final, turns = self._run_agent_loop(spec, tools, files, log)
+            final, turns = self._run_agent_loop(spec, tools, files, verify_commands, log, verbose)
             (run_dir / "turns.json").write_text(
                 json.dumps(turns, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
+            self._write_diff_artifacts(run_dir, tools, permissions, log, verbose)
             (run_dir / "final.md").write_text(final, encoding="utf-8")
+            verbose("final report", final)
             log("final report written")
             log(f"run artifacts: {run_dir}")
             log("agent run finished")
+        except AgentCancelled as exc:
+            log(str(exc))
+            (run_dir / "final.md").write_text(str(exc), encoding="utf-8")
+            log("agent run cancelled")
         except Exception as exc:
             log(f"ERROR: {exc}")
+            verbose("error traceback", traceback.format_exc())
             (run_dir / "error.txt").write_text(traceback.format_exc(), encoding="utf-8")
             log("agent run failed")
         return run_dir
@@ -363,19 +487,26 @@ class AgentTaskRunner:
         spec: AgentTaskLike,
         tools: AgentToolbox,
         files: list[str],
+        verify_commands: list[list[str]],
         log: LogCallback,
+        verbose: Callable[[str, object], None] | None = None,
     ) -> tuple[str, list[dict]]:
-        prompt = self._build_agent_prompt(spec, files)
+        prompt = self._build_agent_prompt(spec, files, verify_commands)
         turns: list[dict] = []
         tool_context = ""
         max_turns = max(1, int(spec.max_turns))
 
         for turn_idx in range(max_turns):
+            self._control.raise_if_cancelled()
             log(f"agent turn {turn_idx + 1}/{max_turns}")
             model_input = prompt
             if tool_context:
                 model_input += "\n\nPrevious tool results:\n" + tool_context
+            if verbose:
+                verbose(f"turn {turn_idx + 1} model input", model_input)
             response_text = self._call_model(model_input, log)
+            if verbose:
+                verbose(f"turn {turn_idx + 1} model response", response_text)
             turn: dict = {
                 "turn": turn_idx + 1,
                 "model_response": response_text,
@@ -387,7 +518,21 @@ class AgentTaskRunner:
                 parsed = self._parse_agent_response(response_text)
             except ValueError as exc:
                 log(f"agent response parse failed: {exc}")
-                return f"Agent stopped because the model returned invalid JSON.\n\n{exc}", turns
+                repaired = self._repair_agent_response(response_text, log, verbose)
+                if repaired is None:
+                    return f"Agent stopped because the model returned invalid JSON.\n\n{exc}", turns
+                response_text = repaired
+                turn["model_response_repaired"] = repaired
+                try:
+                    parsed = self._parse_agent_response(repaired)
+                except ValueError as repair_exc:
+                    log(f"agent response repair failed: {repair_exc}")
+                    return f"Agent stopped because JSON repair failed.\n\n{repair_exc}", turns
+            if verbose:
+                verbose(f"turn {turn_idx + 1} parsed response", parsed)
+            thought = str(parsed.get("thought") or "").strip()
+            if thought:
+                log(f"agent thought: {thought}")
             final = str(parsed.get("final") or "").strip()
             calls = parsed.get("tool_calls") or []
             if final and not calls:
@@ -400,8 +545,16 @@ class AgentTaskRunner:
 
             results: list[dict] = []
             for call in calls:
+                self._control.raise_if_cancelled()
+                if isinstance(call, dict):
+                    tool_name = str(call.get("tool") or "unknown")
+                    log(f"tool call: {tool_name}")
+                if verbose:
+                    verbose(f"turn {turn_idx + 1} tool call", call)
                 result = self._execute_tool_call(tools, call)
                 result_dict = asdict(result)
+                if verbose:
+                    verbose(f"turn {turn_idx + 1} tool result", result_dict)
                 results.append(result_dict)
                 turn["tool_results"].append(result_dict)
             tool_context = json.dumps(results, indent=2, ensure_ascii=False)
@@ -409,7 +562,13 @@ class AgentTaskRunner:
         log("agent reached turn limit")
         return "Agent stopped after reaching the configured turn limit.", turns
 
-    def _build_agent_prompt(self, spec: AgentTaskLike, files: list[str]) -> str:
+    def _build_agent_prompt(
+        self,
+        spec: AgentTaskLike,
+        files: list[str],
+        verify_commands: list[list[str]] | None = None,
+    ) -> str:
+        verify_commands = verify_commands or []
         prompt = (
             "You are an autonomous coding agent running inside a strictly scoped "
             "desktop assistant. You may only use the JSON tool protocol below. "
@@ -424,7 +583,9 @@ class AgentTaskRunner:
             '    {"tool": "create_file", "args": {"path": "relative/path.py", "content": "file content"}},\n'
             '    {"tool": "write_file", "args": {"path": "relative/path.py", "content": "file content"}},\n'
             '    {"tool": "delete_file", "args": {"path": "relative/path.py"}},\n'
-            '    {"tool": "run_command", "args": {"args": ["python", "-m", "py_compile", "relative/path.py"], "timeout_seconds": 30}}\n'
+            '    {"tool": "run_command", "args": {"args": ["python", "-m", "py_compile", "relative/path.py"], "timeout_seconds": 30}},\n'
+            '    {"tool": "git_status", "args": {}},\n'
+            '    {"tool": "git_diff", "args": {}}\n'
             "  ],\n"
             '  "final": null\n'
             "}\n\n"
@@ -439,11 +600,18 @@ class AgentTaskRunner:
             f"Capabilities: shell={spec.allow_shell}, network={spec.allow_network}, "
             f"git={spec.allow_git}, create={spec.allow_file_create}, "
             f"edit={spec.allow_file_edit}, delete={spec.allow_file_delete}\n\n"
+            "Allowed verification commands:\n"
+            + (
+                "\n".join("- " + " ".join(cmd) for cmd in verify_commands)
+                if verify_commands else "- (none)"
+            )
+            + "\n\n"
             "Visible files:\n" + "\n".join(f"- {f}" for f in files[:200])
         )
         return prompt
 
     def _call_model(self, prompt: str, log: LogCallback) -> str:
+        self._control.raise_if_cancelled()
         if self._model_callback is not None:
             return self._model_callback(prompt)
         try:
@@ -461,6 +629,28 @@ class AgentTaskRunner:
                 "tool_calls": [],
                 "final": f"Agent could not contact the model.\n\nError: {exc}",
             })
+
+    def _repair_agent_response(
+        self,
+        bad_response: str,
+        log: LogCallback,
+        verbose: Callable[[str, object], None] | None = None,
+    ) -> str | None:
+        repair_prompt = (
+            "Convert the following text into valid JSON for the agent protocol. "
+            "Return only the JSON object. Preserve intended tool calls and final text.\n\n"
+            "Bad response:\n"
+            + bad_response
+        )
+        log("requesting JSON repair")
+        repaired = self._call_model(repair_prompt, log)
+        if verbose:
+            verbose("JSON repair response", repaired)
+        try:
+            self._parse_agent_response(repaired)
+        except ValueError:
+            return None
+        return repaired
 
     @staticmethod
     def _parse_agent_response(response_text: str) -> dict:
@@ -510,9 +700,35 @@ class AgentTaskRunner:
                     [str(part) for part in command_args],
                     timeout_seconds=int(args.get("timeout_seconds", 30)),
                 )
+            if tool == "git_status":
+                return tools.git_status()
+            if tool == "git_diff":
+                return tools.git_diff()
             return ToolResult(tool or "invalid", False, f"Unknown tool: {tool!r}")
         except Exception as exc:
             return ToolResult(tool or "invalid", False, str(exc))
+
+    def _write_diff_artifacts(
+        self,
+        run_dir: Path,
+        tools: AgentToolbox,
+        permissions: AgentPermissions,
+        log: LogCallback,
+        verbose: Callable[[str, object], None] | None = None,
+    ) -> None:
+        if not permissions.allow_git:
+            return
+        status = tools.git_status()
+        diff = tools.git_diff()
+        self._write_json(run_dir / "git_status.json", asdict(status))
+        self._write_json(run_dir / "git_diff.json", asdict(diff))
+        if verbose:
+            verbose("git status", asdict(status))
+            verbose("git diff", asdict(diff))
+        if diff.ok and isinstance(diff.data, dict):
+            patch = str(diff.data.get("stdout", ""))
+            (run_dir / "diff.patch").write_text(patch, encoding="utf-8")
+            log("git diff artifact written")
 
     def _make_run_dir(self, title: str) -> Path:
         safe_title = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in title.lower())
@@ -525,6 +741,12 @@ class AgentTaskRunner:
     @staticmethod
     def _write_json(path: Path, data) -> None:
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    @staticmethod
+    def _truncate(text: str, max_chars: int) -> str:
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars] + f"\n... [truncated {len(text) - max_chars} chars]"
 
     @staticmethod
     def _spec_dict(spec: AgentTaskLike) -> dict:

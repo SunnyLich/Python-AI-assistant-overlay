@@ -420,7 +420,7 @@ class MemoryManager:
                     query_texts=[text],
                     n_results=min(3, count),
                     where={"archived": {"$eq": False}},
-                    include=["documents", "metadatas", "ids", "distances"],
+                    include=["documents", "metadatas", "distances"],
                 )
                 ids: list[str] = results.get("ids", [[]])[0]
                 dists: list[float] = results.get("distances", [[]])[0]
@@ -494,7 +494,7 @@ class MemoryManager:
         try:
             results = self._collection.get(
                 where={"archived": {"$eq": False}},
-                include=["documents", "metadatas", "ids"],
+                include=["documents", "metadatas"],
             )
             facts: list[dict] = []
             for doc, meta, fid in zip(

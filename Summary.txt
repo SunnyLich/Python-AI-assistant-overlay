@@ -1,4 +1,4 @@
-AI Assistant Overlay — Summary
+Wisp — Summary
 Product concept
 A small persistent dolltoyicon on the desktop, not a window. Invoked by hotkey, delivers a short verbal answer plus inline text, then disappears. Click the icon for the full text reply. Cloud-based LLM. Windows-first (Raycast is Mac-only — real gap). Utility-first positioning, not companion-first.
 Target user

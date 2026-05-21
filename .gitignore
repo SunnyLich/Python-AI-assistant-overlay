@@ -3,8 +3,7 @@ private/
 doll/
 
 # Memory (vector store + fallback JSON — contains personal user data)
-memory/chroma/
-memory/facts_fallback.json
+memory/
 # keep memory/.gitkeep so the folder is tracked
 
 # Python

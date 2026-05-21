@@ -110,6 +110,7 @@ class DollOverlay(QMainWindow):
         signals.bubble_listening.connect(self._bubble.show_listening)
         signals.bubble_thinking.connect(self._bubble.start_thinking)
         signals.bubble_start_reveal.connect(self._bubble.start_word_reveal)
+        signals.bubble_schedule_words.connect(self._bubble.schedule_words)
         signals.bubble_chunk.connect(self._bubble.append_chunk)
         signals.bubble_finish.connect(self._bubble.finish)
         signals.bubble_clear.connect(self._bubble.clear)
@@ -181,9 +182,10 @@ class DollOverlay(QMainWindow):
             menu.addAction(tuner_action)
             menu.addSeparator()
 
-        from ui.agent_task_mockup import make_agent_task_action
+        from ui.agent_task_mockup import make_agent_history_action, make_agent_task_action
 
         menu.addAction(make_agent_task_action(self, parent=self))
+        menu.addAction(make_agent_history_action(self, parent=self))
         menu.addSeparator()
 
         new_chat_action = QAction("New chat", self)

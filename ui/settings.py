@@ -777,6 +777,12 @@ class SettingsDialog(QDialog):
         self._fields["BUBBLE_WIDTH"].setPlaceholderText("e.g. 340")
         self._fields["BUBBLE_LINES"] = QLineEdit()
         self._fields["BUBBLE_LINES"].setPlaceholderText("e.g. 2")
+        self._fields["BUBBLE_COLOR"] = QLineEdit()
+        self._fields["BUBBLE_COLOR"].setPlaceholderText("e.g. #1c1c24dc")
+        self._fields["BUBBLE_TEXT_COLOR"] = QLineEdit()
+        self._fields["BUBBLE_TEXT_COLOR"].setPlaceholderText("e.g. #e6e6e6")
+        self._fields["BUBBLE_READ_WORD_COLOR"] = QLineEdit()
+        self._fields["BUBBLE_READ_WORD_COLOR"].setPlaceholderText("e.g. #4da3ff")
         self._fields["BUBBLE_REVEAL_WPM"] = QLineEdit()
         self._fields["BUBBLE_REVEAL_WPM"].setPlaceholderText("e.g. 170")
         self._fields["BUBBLE_HOLD_REVEAL_WPM"] = QLineEdit()
@@ -793,6 +799,9 @@ class SettingsDialog(QDialog):
         f.addRow("Doll icon size (px)", self._fields["DOLL_SIZE"])
         f.addRow("Bubble width (px)", self._fields["BUBBLE_WIDTH"])
         f.addRow("Bubble lines", self._fields["BUBBLE_LINES"])
+        f.addRow("Bubble color", self._fields["BUBBLE_COLOR"])
+        f.addRow("Bubble text color", self._fields["BUBBLE_TEXT_COLOR"])
+        f.addRow("Read word color", self._fields["BUBBLE_READ_WORD_COLOR"])
         f.addRow("Bubble text speed (WPM)", self._fields["BUBBLE_REVEAL_WPM"])
         f.addRow("Bubble hold speed (WPM)", self._fields["BUBBLE_HOLD_REVEAL_WPM"])
         f.addRow("TTS speed", self._fields["TTS_PLAYBACK_RATE"])
@@ -883,6 +892,9 @@ class SettingsDialog(QDialog):
         _set(self._fields["DOLL_SIZE"],    self._env.get("DOLL_SIZE",    str(cfg.DOLL_SIZE)))
         _set(self._fields["BUBBLE_WIDTH"], self._env.get("BUBBLE_WIDTH", str(cfg.BUBBLE_WIDTH)))
         _set(self._fields["BUBBLE_LINES"], self._env.get("BUBBLE_LINES", str(cfg.BUBBLE_LINES)))
+        _set(self._fields["BUBBLE_COLOR"], self._env.get("BUBBLE_COLOR", cfg.BUBBLE_COLOR))
+        _set(self._fields["BUBBLE_TEXT_COLOR"], self._env.get("BUBBLE_TEXT_COLOR", cfg.BUBBLE_TEXT_COLOR))
+        _set(self._fields["BUBBLE_READ_WORD_COLOR"], self._env.get("BUBBLE_READ_WORD_COLOR", cfg.BUBBLE_READ_WORD_COLOR))
         _set(self._fields["BUBBLE_REVEAL_WPM"], self._env.get("BUBBLE_REVEAL_WPM", str(cfg.BUBBLE_REVEAL_WPM)))
         _set(self._fields["BUBBLE_HOLD_REVEAL_WPM"], self._env.get("BUBBLE_HOLD_REVEAL_WPM", str(cfg.BUBBLE_HOLD_REVEAL_WPM)))
         _set(self._fields["TTS_PLAYBACK_RATE"], self._env.get("TTS_PLAYBACK_RATE", str(cfg.TTS_PLAYBACK_RATE)))
@@ -949,6 +961,9 @@ class SettingsDialog(QDialog):
             "DOLL_SIZE":    _get(self._fields["DOLL_SIZE"]),
             "BUBBLE_WIDTH": _get(self._fields["BUBBLE_WIDTH"]),
             "BUBBLE_LINES": _get(self._fields["BUBBLE_LINES"]),
+            "BUBBLE_COLOR": _get(self._fields["BUBBLE_COLOR"]),
+            "BUBBLE_TEXT_COLOR": _get(self._fields["BUBBLE_TEXT_COLOR"]),
+            "BUBBLE_READ_WORD_COLOR": _get(self._fields["BUBBLE_READ_WORD_COLOR"]),
             "BUBBLE_REVEAL_WPM": _get(self._fields["BUBBLE_REVEAL_WPM"]),
             "BUBBLE_HOLD_REVEAL_WPM": _get(self._fields["BUBBLE_HOLD_REVEAL_WPM"]),
             "TTS_PLAYBACK_RATE": _get(self._fields["TTS_PLAYBACK_RATE"]),

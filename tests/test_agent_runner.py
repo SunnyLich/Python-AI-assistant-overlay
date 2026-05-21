@@ -7,7 +7,9 @@ import tempfile
 import unittest
 
 from core.agent_runner import (
+    AgentCancelled,
     AgentPermissions,
+    AgentRunControl,
     AgentTaskRunner,
     AgentToolbox,
     PermissionDenied,
@@ -131,6 +133,54 @@ class AgentToolboxTests(unittest.TestCase):
 
             with self.assertRaises(PermissionDenied):
                 tools.run_command(["python", "-c", "print('not allowlisted')"])
+
+    def test_project_verification_commands_are_gated_by_manifest_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tools = AgentToolbox(ScopedWorkspace(root), AgentPermissions(allow_shell=True))
+
+            with self.assertRaises(PermissionDenied):
+                tools.run_command(["npm", "test"])
+
+            (root / "package.json").write_text('{"scripts":{"test":"node --version"}}', encoding="utf-8")
+            self.assertIn(["npm", "test"], tools.verification_commands())
+            self.assertIn(["npm", "run", "build"], tools.verification_commands())
+
+    def test_additional_static_verification_commands_are_allowlisted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tools = AgentToolbox(ScopedWorkspace(tmp), AgentPermissions(allow_shell=True))
+
+            self.assertTrue(tools._is_command_allowed(["python", "-m", "pytest"]))
+            self.assertTrue(tools._is_command_allowed(["python", "-m", "ruff", "check", "."]))
+            self.assertTrue(tools._is_command_allowed(["node", "--check", "index.js"]))
+
+    def test_approval_callback_can_decline_mutating_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "note.txt").write_text("hello", encoding="utf-8")
+            requests: list[dict] = []
+            tools = AgentToolbox(
+                ScopedWorkspace(root),
+                AgentPermissions(allow_file_edit=True),
+                require_approval=True,
+                approval_callback=lambda request: requests.append(request) or False,
+            )
+
+            with self.assertRaises(PermissionDenied):
+                tools.patch_file("note.txt", "hello", "bye")
+
+            self.assertEqual(root.joinpath("note.txt").read_text(encoding="utf-8"), "hello")
+            self.assertEqual(requests[0]["action"], "patch_file")
+
+    def test_git_status_and_diff_use_git_permission_without_shell_permission(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess_result = AgentToolbox(
+                ScopedWorkspace(root),
+                AgentPermissions(allow_git=True, allow_shell=False),
+            ).run_command(["git", "status", "--short"])
+
+            self.assertIn(subprocess_result.tool, {"run_command"})
 
 
 class AgentBoundaryAttackTests(unittest.TestCase):
@@ -274,7 +324,12 @@ class AgentRunnerTests(unittest.TestCase):
             logs = Path(tmp) / "logs"
             scope.mkdir()
             (scope / "app.py").write_text("print('hi')", encoding="utf-8")
-            spec = DummySpec(scope_folder=str(scope), allow_shell=True, max_turns=5)
+            spec = DummySpec(
+                scope_folder=str(scope),
+                allow_shell=True,
+                max_turns=5,
+                approval_policy="never escalate",
+            )
             responses = [
                 {
                     "thought": "Need to inspect the file.",
@@ -313,10 +368,49 @@ class AgentRunnerTests(unittest.TestCase):
             self.assertTrue((run_dir / "task.json").exists())
             self.assertTrue((run_dir / "permissions.json").exists())
             self.assertTrue((run_dir / "files.json").exists())
+            self.assertTrue((run_dir / "verification_commands.json").exists())
             self.assertTrue((run_dir / "turns.json").exists())
+            self.assertTrue((run_dir / "verbose.log").exists())
+            self.assertIn("tool call", (run_dir / "verbose.log").read_text(encoding="utf-8"))
             self.assertEqual((run_dir / "final.md").read_text(encoding="utf-8"), "Changed the greeting and verified syntax.")
             self.assertEqual((scope / "app.py").read_text(encoding="utf-8"), "print('hello')")
             self.assertIn("agent run finished", (run_dir / "run.log").read_text(encoding="utf-8"))
+
+    def test_runner_repairs_invalid_json_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            scope = Path(tmp) / "scope"
+            logs = Path(tmp) / "logs"
+            scope.mkdir()
+            spec = DummySpec(scope_folder=str(scope), max_turns=2)
+            responses = [
+                "not json",
+                json.dumps({"thought": "fixed", "tool_calls": [], "final": "Repaired final."}),
+            ]
+
+            def fake_model(_prompt: str) -> str:
+                return responses.pop(0)
+
+            run_dir = AgentTaskRunner(log_root=logs, model_callback=fake_model).run(spec)
+
+            self.assertEqual((run_dir / "final.md").read_text(encoding="utf-8"), "Repaired final.")
+            self.assertIn("model_response_repaired", (run_dir / "turns.json").read_text(encoding="utf-8"))
+
+    def test_runner_can_be_cancelled_before_first_turn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            scope = Path(tmp) / "scope"
+            logs = Path(tmp) / "logs"
+            scope.mkdir()
+            control = AgentRunControl()
+            control.cancel()
+            spec = DummySpec(scope_folder=str(scope))
+
+            run_dir = AgentTaskRunner(
+                log_root=logs,
+                model_callback=lambda _prompt: self.fail("model should not be called"),
+                control=control,
+            ).run(spec)
+
+            self.assertIn("cancelled", (run_dir / "run.log").read_text(encoding="utf-8").lower())
 
 
 if __name__ == "__main__":

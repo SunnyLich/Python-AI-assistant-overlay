@@ -1,5 +1,5 @@
 """
-main.py — Entry point for the AI Assistant Overlay.
+main.py — Entry point for Wisp.
 
 Flow:
   Ctrl+E → IntentOverlay appears (WASD picker)
@@ -28,7 +28,7 @@ def _configure_windows_app_identity() -> None:
     try:
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "Sunny.AIAssistantOverlay"
+            "Sunny.Wisp"
         )
     except Exception:
         pass
@@ -87,8 +87,8 @@ class App:
     def __init__(self):
         _configure_windows_app_identity()
         self._qt = QApplication(sys.argv)
-        self._qt.setApplicationName("AI Assistant Overlay")
-        self._qt.setApplicationDisplayName("AI Assistant Overlay")
+        self._qt.setApplicationName("Wisp")
+        self._qt.setApplicationDisplayName("Wisp")
         self._qt.setQuitOnLastWindowClosed(False)  # chat/settings closing must not exit the app
         self._signals = OverlaySignals()
         self._overlay = DollOverlay(self._signals)
@@ -143,7 +143,7 @@ class App:
             self._overlay.show()
         self._overlay_hwnd = int(self._overlay.winId())  # safe: Qt main thread
         self._hotkeys.start()
-        print(f"[main] AI Assistant Overlay running. Callers: {[c['hotkey'] for c in config.CALLER_ROWS]}")
+        print(f"[main] Wisp running. Callers: {[c['hotkey'] for c in config.CALLER_ROWS]}")
         sys.exit(self._qt.exec())
 
     # ------------------------------------------------------------------
@@ -563,7 +563,8 @@ class App:
 
         def on_word_timestamps(words, start_ms):
             # Real word timings from Cartesia — drives precise bubble sync.
-            self._signals.bubble_schedule_words.emit(words, start_ms)
+            if gen_id == self._gen_id:
+                self._signals.bubble_schedule_words.emit(words, start_ms)
 
         def tts_consumer():
             if config.TTS_PROVIDER.lower() == "none":

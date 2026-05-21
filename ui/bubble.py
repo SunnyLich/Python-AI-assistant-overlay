@@ -7,15 +7,13 @@ Auto-hides a few seconds after the response finishes.
 """
 from __future__ import annotations
 from PyQt6.QtWidgets import QWidget, QApplication
-from PyQt6.QtCore import Qt, QTimer, QRect, QElapsedTimer
+from PyQt6.QtCore import Qt, QTimer, QElapsedTimer
 from PyQt6.QtGui import (
     QPainter, QColor, QFont, QFontMetrics,
     QBrush, QPen, QPainterPath,
 )
 import config
 
-_BG           = QColor(28, 28, 36, 220)
-_TEXT         = QColor(230, 230, 230)
 _DOTS_COLOR   = QColor(140, 140, 165)
 _PAD          = 12
 _LINE_GAP     = 5
@@ -27,6 +25,22 @@ _DOLL_W       = 80
 _DOLL_H       = 80
 _DOLL_MARGIN  = 20
 _HIDE_DELAY    = 8_000   # ms after finish() before hiding
+
+
+def _color(value: str, fallback: QColor) -> QColor:
+    raw = (value or "").strip()
+    if raw.startswith("#") and len(raw) == 9:
+        try:
+            return QColor(
+                int(raw[1:3], 16),
+                int(raw[3:5], 16),
+                int(raw[5:7], 16),
+                int(raw[7:9], 16),
+            )
+        except ValueError:
+            return QColor(fallback)
+    qcolor = QColor(raw)
+    return qcolor if qcolor.isValid() else QColor(fallback)
 
 
 class SpeechBubble(QWidget):
@@ -48,23 +62,28 @@ class SpeechBubble(QWidget):
         self._bold_fm = QFontMetrics(self._bold_font)
         self._space_w = self._fm.horizontalAdvance(" ")
         self._line_h = self._fm.height() + _LINE_GAP
+        self._bubble_color = _color(config.BUBBLE_COLOR, QColor(28, 28, 36, 220))
+        self._text_color = _color(config.BUBBLE_TEXT_COLOR, QColor(230, 230, 230))
+        self._read_word_color = _color(config.BUBBLE_READ_WORD_COLOR, QColor(77, 163, 255))
 
         self._full_text = ""
         self._lines: list[str] = []
-        self._line_segments: list[list[tuple[str, bool]]] = []
+        self._line_segments: list[list[tuple[str, bool, int | None]]] = []
         self._thinking = False
         self._dot_count = 1
         self._last_chunk_ended_with_space = True  # guards mid-word chunk merging
 
-        # Word-reveal mode (syncs text display to audio playback speed)
+        # Read-position mode (syncs highlighting to audio playback speed)
         self._reveal_mode = False
         self._finishing = False   # True after finish() while WPM timer still draining words
         self._pending_words: list[str] = []
         self._revealed_count = 0
         self._timestamp_mode = False      # True = driven by Cartesia timestamps
+        self._audio_started = False       # True after first PCM chunk reaches playback
         self._audio_elapsed = QElapsedTimer()  # measures ms since audio start
         self._pre_audio_timestamps: list[tuple] = []  # batches that arrived before audio start
         self._speed_boosting = False
+        self._highlight_generation = 0
 
         # Derive size from config
         screen = QApplication.primaryScreen().availableGeometry()
@@ -125,6 +144,9 @@ class SpeechBubble(QWidget):
         self._text_w = self._bubble_w - _PAD * 2
         self._bubble_h = _PAD * 2 + self._line_h * config.BUBBLE_LINES - _LINE_GAP
         self.setFixedSize(self._bubble_w + _TAIL_W, self._bubble_h)
+        self._bubble_color = _color(config.BUBBLE_COLOR, QColor(28, 28, 36, 220))
+        self._text_color = _color(config.BUBBLE_TEXT_COLOR, QColor(230, 230, 230))
+        self._read_word_color = _color(config.BUBBLE_READ_WORD_COLOR, QColor(77, 163, 255))
         self._apply_reveal_speed()
         if self._full_text:
             self._rewrap()
@@ -165,12 +187,14 @@ class SpeechBubble(QWidget):
     def show_listening(self):
         """Show a static mic indicator while the user holds F9."""
         self._full_text = ""
+        self._highlight_generation += 1
         self._lines = ["\u25cf Recording — release to send"]
-        self._line_segments = [[("Recording - release to send", False)]]
+        self._line_segments = [[("Recording - release to send", False, None)]]
         self._thinking = False
         self._pending_words = []
         self._revealed_count = 0
         self._reveal_mode = False
+        self._audio_started = False
         self._pre_audio_timestamps = []
         self._reveal_timer.stop()
         self._dot_timer.stop()
@@ -182,6 +206,7 @@ class SpeechBubble(QWidget):
     def start_thinking(self):
         """Show animated dots while waiting for the first LLM token."""
         self._full_text = ""
+        self._highlight_generation += 1
         self._lines = []
         self._line_segments = []
         self._thinking = True
@@ -190,6 +215,7 @@ class SpeechBubble(QWidget):
         self._pending_words = []
         self._revealed_count = 0
         self._reveal_mode = False
+        self._audio_started = False
         self._pre_audio_timestamps = []
         self._reveal_timer.stop()
         self._hide_timer.stop()
@@ -202,13 +228,15 @@ class SpeechBubble(QWidget):
         """Start revealing buffered words at speech rate (called when audio begins)."""
         self._thinking = False
         self._dot_timer.stop()
+        self._audio_started = True
+        self._highlight_generation += 1
         self._audio_elapsed.start()   # t=0 for timestamp scheduling
         if not self._reveal_mode:
             # Reveal not yet started (e.g. very fast first chunk) — start fresh.
             self._reveal_mode = True
             self._timestamp_mode = False
             self._revealed_count = 0
-            self._full_text = ""
+            self._full_text = " ".join(self._pending_words)
             self._lines = []
             self._line_segments = []
             self._apply_reveal_speed()
@@ -218,6 +246,7 @@ class SpeechBubble(QWidget):
         for words, start_ms in self._pre_audio_timestamps:
             self.schedule_words(words, start_ms)
         self._pre_audio_timestamps = []
+        self._rewrap()
         self.show()
         self.update()
 
@@ -226,26 +255,32 @@ class SpeechBubble(QWidget):
         Cartesia timestamp-driven reveal. Cancels the WPM fallback timer and
         schedules each word to appear at its exact spoken time.
         """
-        if not self._reveal_mode:
-            # Audio hasn't started yet — buffer for later
+        if not self._audio_started:
+            # Timestamps can arrive before the first PCM chunk is audible.
+            # Buffer them so word styling is anchored to playback, not TTS generation.
             self._pre_audio_timestamps.append((words, start_ms))
             return
         if not self._timestamp_mode:
             # First timestamp batch: switch modes and cancel the fallback timer.
             self._reveal_timer.stop()
             self._timestamp_mode = True
-            self._full_text = ""
+            self._revealed_count = 0
             self._lines = []
         elapsed = self._audio_elapsed.elapsed()
+        playback_rate = self._current_tts_rate()
+        generation = self._highlight_generation
         for word, t_ms in zip(words, start_ms):
-            delay = max(0, t_ms - elapsed)
-            QTimer.singleShot(delay, lambda w=word: self._show_word(w))
+            delay = max(0, int(t_ms / playback_rate - elapsed))
+            QTimer.singleShot(delay, lambda w=word, g=generation: self._advance_highlight(w, g))
 
-    def _show_word(self, word: str):
-        if self._full_text:
-            self._full_text += " " + word
-        else:
-            self._full_text = word
+    def _advance_highlight(self, word: str | None = None, generation: int | None = None):
+        if generation is not None and generation != self._highlight_generation:
+            return
+        if word and self._revealed_count >= len(self._pending_words):
+            self._pending_words.append(word)
+            self._full_text = " ".join(self._pending_words)
+        if self._revealed_count < len(self._pending_words):
+            self._revealed_count += 1
         self._rewrap()
         self.update()
 
@@ -266,6 +301,7 @@ class SpeechBubble(QWidget):
                 self._pending_words[-1] += new_words[0]
                 new_words = new_words[1:]
             self._pending_words.extend(new_words)
+            self._full_text = " ".join(self._pending_words)
         self._last_chunk_ended_with_space = chunk[-1].isspace()
         # Kick off WPM reveal on first token so words always appear gradually,
         # even when TTS=none.  start_word_reveal() / schedule_words() will take
@@ -274,6 +310,10 @@ class SpeechBubble(QWidget):
             self._reveal_mode = True
             self._apply_reveal_speed()
             self._reveal_timer.start()
+        self._rewrap()
+        self.show()
+        self.raise_()
+        self.update()
 
     def finish(self):
         """Called when TTS playback finishes; reveals remaining words then hides."""
@@ -304,8 +344,10 @@ class SpeechBubble(QWidget):
         self._reveal_mode = False
         self._finishing = False
         self._timestamp_mode = False
+        self._audio_started = False
         self._last_chunk_ended_with_space = True
         self._speed_boosting = False
+        self._highlight_generation += 1
         self._pending_words = []
         self._revealed_count = 0
         self._pre_audio_timestamps = []
@@ -328,6 +370,13 @@ class SpeechBubble(QWidget):
             return max(1, int(getattr(config, "BUBBLE_HOLD_REVEAL_WPM", 480)))
         return max(1, int(getattr(config, "BUBBLE_REVEAL_WPM", 170)))
 
+    def _current_tts_rate(self) -> float:
+        if self._speed_boosting:
+            rate = getattr(config, "TTS_HOLD_PLAYBACK_RATE", 1.35)
+        else:
+            rate = getattr(config, "TTS_PLAYBACK_RATE", 1.0)
+        return max(0.25, min(4.0, float(rate)))
+
     def _apply_reveal_speed(self):
         self._reveal_timer.setInterval(max(1, int(60_000 / self._current_reveal_wpm())))
 
@@ -341,10 +390,7 @@ class SpeechBubble(QWidget):
 
     def _reveal_next_word(self):
         if self._revealed_count < len(self._pending_words):
-            self._revealed_count += 1
-            self._full_text = " ".join(self._pending_words[:self._revealed_count])
-            self._rewrap()
-            self.update()
+            self._advance_highlight()
         if self._finishing and self._revealed_count >= len(self._pending_words):
             self._reveal_timer.stop()
             self._finishing = False
@@ -352,27 +398,40 @@ class SpeechBubble(QWidget):
         # Timer keeps running until finish() is called (which sets _finishing)
 
     def _rewrap(self):
-        """Word-wrap _full_text to _text_w; keep only the last BUBBLE_LINES lines."""
+        """Word-wrap _full_text and scroll the visible window to the read position."""
         words = self._markdown_words(self._full_text)
-        lines: list[list[tuple[str, bool]]] = []
-        current: list[tuple[str, bool]] = []
+        lines: list[list[tuple[str, bool, int]]] = []
+        current: list[tuple[str, bool, int]] = []
         current_w = 0
-        for word, bold in words:
+        for word_idx, (word, bold) in enumerate(words):
             fm = self._bold_fm if bold else self._fm
             word_w = fm.horizontalAdvance(word)
             extra_space = self._space_w if current else 0
             if current and current_w + extra_space + word_w > self._text_w:
                 lines.append(current)
-                current = [(word, bold)]
+                current = [(word, bold, word_idx)]
                 current_w = word_w
             else:
-                current.append((word, bold))
+                current.append((word, bold, word_idx))
                 current_w += extra_space + word_w
         if current:
             lines.append(current)
-        visible = lines[-config.BUBBLE_LINES:]
+        visible_lines = max(1, config.BUBBLE_LINES)
+        if not lines:
+            visible = []
+        elif self._revealed_count <= 0:
+            visible = lines[:visible_lines]
+        else:
+            target_idx = min(self._revealed_count - 1, len(words) - 1)
+            target_line = 0
+            for line_idx, line in enumerate(lines):
+                if any(word_idx == target_idx for _word, _bold, word_idx in line):
+                    target_line = line_idx
+                    break
+            start_line = max(0, target_line - visible_lines + 1)
+            visible = lines[start_line:start_line + visible_lines]
         self._line_segments = visible
-        self._lines = [" ".join(word for word, _bold in line) for line in visible]
+        self._lines = [" ".join(word for word, _bold, _idx in line) for line in visible]
 
     @staticmethod
     def _markdown_words(text: str) -> list[tuple[str, bool]]:
@@ -411,7 +470,7 @@ class SpeechBubble(QWidget):
         path.lineTo(self._bubble_w,            mid_y + _TAIL_H // 2)
         path.closeSubpath()
 
-        p.setBrush(QBrush(_BG))
+        p.setBrush(QBrush(self._bubble_color))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawPath(path)
 
@@ -423,22 +482,25 @@ class SpeechBubble(QWidget):
             p.drawText(0, 0, self._bubble_w, self._bubble_h,
                        Qt.AlignmentFlag.AlignCenter, dots)
         else:
-            p.setPen(QPen(_TEXT))
+            p.setPen(QPen(self._text_color))
             y = _PAD
             if not self._line_segments and self._lines:
-                self._line_segments = [[(line, False)] for line in self._lines]
+                self._line_segments = [[(line, False, None)] for line in self._lines]
             for line in self._line_segments:
                 x = _PAD
-                for idx, (word, bold) in enumerate(line):
+                for idx, (word, bold, word_idx) in enumerate(line):
                     if idx:
                         x += self._space_w
-                    font = self._bold_font if bold else self._font
-                    fm = self._bold_fm if bold else self._fm
+                    is_read = word_idx is not None and word_idx < self._revealed_count
+                    font = self._bold_font if (bold or is_read) else self._font
+                    fm = self._bold_fm if (bold or is_read) else self._fm
+                    word_w = fm.horizontalAdvance(word)
                     p.setFont(font)
+                    p.setPen(QPen(self._read_word_color if is_read else self._text_color))
                     p.drawText(x, y, self._text_w - (x - _PAD), self._line_h,
                                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                                word)
-                    x += fm.horizontalAdvance(word)
+                    x += word_w
                 p.setFont(self._font)
                 y += self._line_h
 

@@ -113,6 +113,9 @@ CALLER_ROWS: list[dict] = _load_caller_rows()
 # --- UI sizes ---
 BUBBLE_WIDTH      = int(os.getenv("BUBBLE_WIDTH",      "340"))  # px wide (not including tail)
 BUBBLE_LINES      = int(os.getenv("BUBBLE_LINES",      "2"))    # max lines shown at once
+BUBBLE_COLOR      = os.getenv("BUBBLE_COLOR",      "#1c1c24dc") # bubble fill, #RRGGBB or #RRGGBBAA
+BUBBLE_TEXT_COLOR = os.getenv("BUBBLE_TEXT_COLOR", "#e6e6e6")   # unread/default text color
+BUBBLE_READ_WORD_COLOR = os.getenv("BUBBLE_READ_WORD_COLOR", "#4da3ff") # read/current word color
 DOLL_SIZE         = int(os.getenv("DOLL_SIZE",         "80"))   # doll icon size px (square, sprite fallback)
 VRM_WIDTH         = int(os.getenv("VRM_WIDTH",         "200"))  # VRM overlay width px
 VRM_HEIGHT        = int(os.getenv("VRM_HEIGHT",        "300"))  # VRM overlay height px
@@ -171,7 +174,8 @@ def reload() -> None:
     global HOTKEY_ADD_CONTEXT, HOTKEY_CLEAR_CONTEXT, HOTKEY_SNIP
     global HOTKEY_VOICE, STT_MODEL, STT_COMPUTE_TYPE, STT_LANGUAGE
     global CALLER_ROWS
-    global BUBBLE_WIDTH, BUBBLE_LINES, DOLL_SIZE, BUBBLE_REVEAL_WPM, BUBBLE_HOLD_REVEAL_WPM
+    global BUBBLE_WIDTH, BUBBLE_LINES, BUBBLE_COLOR, BUBBLE_TEXT_COLOR, BUBBLE_READ_WORD_COLOR
+    global DOLL_SIZE, BUBBLE_REVEAL_WPM, BUBBLE_HOLD_REVEAL_WPM
     global TTS_PLAYBACK_RATE, TTS_HOLD_PLAYBACK_RATE
     global SYSTEM_PROMPT_UTILITY
     global MEMORY_LLM_PROVIDER, MEMORY_LLM_MODEL
@@ -213,6 +217,9 @@ def reload() -> None:
 
     BUBBLE_WIDTH      = int(os.getenv("BUBBLE_WIDTH",      "340"))
     BUBBLE_LINES      = int(os.getenv("BUBBLE_LINES",      "2"))
+    BUBBLE_COLOR      = os.getenv("BUBBLE_COLOR",      "#1c1c24dc")
+    BUBBLE_TEXT_COLOR = os.getenv("BUBBLE_TEXT_COLOR", "#e6e6e6")
+    BUBBLE_READ_WORD_COLOR = os.getenv("BUBBLE_READ_WORD_COLOR", "#4da3ff")
     DOLL_SIZE         = int(os.getenv("DOLL_SIZE",         "80"))
     VRM_WIDTH         = int(os.getenv("VRM_WIDTH",         "200"))
     VRM_HEIGHT        = int(os.getenv("VRM_HEIGHT",        "300"))

@@ -19,9 +19,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
+import json
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QAction, QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -36,8 +37,12 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QListWidget,
+    QListWidgetItem,
     QScrollArea,
+    QSplitter,
     QSpinBox,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -47,6 +52,8 @@ from ui.window_utils import fit_window_to_screen
 
 TaskSubmitCallback = Callable[["AgentTaskSpec"], None]
 _agent_run_windows: list["AgentRunWindow"] = []
+_agent_history_windows: list["AgentRunHistoryWindow"] = []
+_diff_windows: list["DiffViewer"] = []
 
 
 @dataclass(frozen=True)
@@ -111,6 +118,23 @@ def make_agent_task_action(
     action = QAction("Start agent task...", owner)
     action.triggered.connect(lambda: open_agent_task_dialog(parent or owner, on_submit))
     return action
+
+
+def make_agent_history_action(owner: QWidget, parent: QWidget | None = None) -> QAction:
+    """Create the tray QAction for browsing previous agent runs."""
+    action = QAction("Agent task history...", owner)
+    action.triggered.connect(lambda: open_agent_history(parent or owner))
+    return action
+
+
+def open_agent_history(parent: QWidget | None = None) -> None:
+    window = AgentRunHistoryWindow(parent=parent)
+    _agent_history_windows.append(window)
+    window.destroyed.connect(
+        lambda _obj=None, w=window: _agent_history_windows.remove(w)
+        if w in _agent_history_windows else None
+    )
+    window.show()
 
 
 def open_agent_task_dialog(
@@ -285,7 +309,17 @@ class AgentTaskDialog(QDialog):
         form.setSpacing(10)
 
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["gpt-5.3-codex", "gpt-5.4", "gpt-5.4-mini"])
+        self.model_combo.setEditable(True)
+        self.model_combo.addItems(
+            [
+                "gpt-5.3-codex",
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "claude-sonnet-4-5",
+                "claude-opus-4-5",
+            ]
+        )
+        self.model_combo.lineEdit().setPlaceholderText("Type any model name...")
 
         self.reasoning_combo = QComboBox()
         self.reasoning_combo.addItems(["medium", "high", "low", "xhigh"])
@@ -427,6 +461,9 @@ class AgentTaskDialog(QDialog):
             raise ValueError("Add a task title.")
         if not objective:
             raise ValueError("Describe the task objective.")
+        model = self.model_combo.currentText().strip()
+        if not model:
+            raise ValueError("Add a model name.")
 
         scope = resolve_scope_folder(self.scope_edit.text().strip())
         return AgentTaskSpec(
@@ -435,7 +472,7 @@ class AgentTaskDialog(QDialog):
             scope_folder=str(scope),
             sandbox_mode=self.sandbox_combo.currentText(),
             approval_policy=self.approval_combo.currentText(),
-            model=self.model_combo.currentText(),
+            model=model,
             reasoning_effort=self.reasoning_combo.currentText(),
             max_runtime_minutes=self.runtime_minutes.value(),
             max_turns=self.max_turns.value(),
@@ -471,11 +508,14 @@ class AgentRunWindow(QDialog):
 
     log_line = pyqtSignal(str)
     finished = pyqtSignal(str)
+    approval_requested = pyqtSignal(dict, object)
 
     def __init__(self, spec: AgentTaskSpec, parent: QWidget | None = None):
         super().__init__(parent)
         self._spec = spec
         self._thread = None
+        self._control = None
+        self._run_dir: str | None = None
         self.setWindowTitle(f"Agent Task - {spec.title}")
         self.setMinimumSize(620, 420)
         self.setWindowFlags(
@@ -490,22 +530,67 @@ class AgentRunWindow(QDialog):
         title.setTextFormat(Qt.TextFormat.RichText)
         root.addWidget(title)
 
+        self.approval_panel = QFrame()
+        self.approval_panel.setStyleSheet(
+            "QFrame { background: #2b2b3a; border: 1px solid #555577; border-radius: 6px; }"
+            "QLabel { color: #eeeeff; background: transparent; }"
+        )
+        approval_layout = QHBoxLayout(self.approval_panel)
+        approval_layout.setContentsMargins(10, 8, 10, 8)
+        self.approval_label = QLabel()
+        self.approval_label.setWordWrap(True)
+        approve_btn = QPushButton("Approve")
+        deny_btn = QPushButton("Decline")
+        approve_btn.clicked.connect(lambda: self._finish_approval(True))
+        deny_btn.clicked.connect(lambda: self._finish_approval(False))
+        approval_layout.addWidget(self.approval_label, stretch=1)
+        approval_layout.addWidget(approve_btn)
+        approval_layout.addWidget(deny_btn)
+        self.approval_panel.hide()
+        self._pending_approval = None
+        root.addWidget(self.approval_panel)
+
+        self.tabs = QTabWidget()
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        root.addWidget(self.log_view, stretch=1)
+        self.trace_view = QTextEdit()
+        self.trace_view.setReadOnly(True)
+        self.trace_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.final_view = QTextEdit()
+        self.final_view.setReadOnly(True)
+        self.final_view.setPlaceholderText("Final report appears here when the task finishes.")
+        self.tabs.addTab(self.log_view, "Live Log")
+        self.tabs.addTab(self.trace_view, "Model Trace")
+        self.tabs.addTab(self.final_view, "Final Report")
+        root.addWidget(self.tabs, stretch=1)
 
         row = QHBoxLayout()
         self.status_lbl = QLabel("Starting...")
+        self.diff_btn = QPushButton("View Diff")
+        self.diff_btn.setEnabled(False)
+        self.diff_btn.clicked.connect(self._open_diff)
+        self.open_logs_btn = QPushButton("Open Logs")
+        self.open_logs_btn.setEnabled(False)
+        self.open_logs_btn.clicked.connect(self._open_log_folder)
+        self.open_scope_btn = QPushButton("Open Scope Folder")
+        self.open_scope_btn.clicked.connect(self._open_scope_folder)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self._cancel_run)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
         row.addWidget(self.status_lbl)
         row.addStretch()
+        row.addWidget(self.diff_btn)
+        row.addWidget(self.open_logs_btn)
+        row.addWidget(self.open_scope_btn)
+        row.addWidget(self.cancel_btn)
         row.addWidget(close_btn)
         root.addLayout(row)
 
         self.log_line.connect(self._append_log)
         self.finished.connect(self._on_finished)
+        self.approval_requested.connect(self._show_approval)
         fit_window_to_screen(self, preferred_width=700, preferred_height=500)
 
     def showEvent(self, event):  # noqa: N802
@@ -514,9 +599,13 @@ class AgentRunWindow(QDialog):
             self._start_runner()
 
     def _start_runner(self) -> None:
-        from core.agent_runner import AgentTaskRunner
+        from core.agent_runner import AgentRunControl, AgentTaskRunner
 
-        runner = AgentTaskRunner()
+        self._control = AgentRunControl()
+        runner = AgentTaskRunner(
+            approval_callback=self._request_approval,
+            control=self._control,
+        )
 
         def run_and_finish():
             run_dir = runner.run(self._spec, self.log_line.emit)
@@ -527,8 +616,200 @@ class AgentRunWindow(QDialog):
         self._thread = threading.Thread(target=run_and_finish, daemon=True)
         self._thread.start()
 
+    def _request_approval(self, request: dict) -> bool:
+        import threading
+
+        event = threading.Event()
+        state = {"event": event, "approved": False}
+        self.approval_requested.emit(request, state)
+        event.wait()
+        return bool(state["approved"])
+
     def _append_log(self, line: str) -> None:
         self.log_view.append(line)
 
     def _on_finished(self, run_dir: str) -> None:
+        self._run_dir = run_dir
         self.status_lbl.setText(f"Finished. Log: {run_dir}")
+        self.cancel_btn.setEnabled(False)
+        self.open_logs_btn.setEnabled(True)
+        self.diff_btn.setEnabled((Path(run_dir) / "diff.patch").exists())
+        self._load_finished_artifacts(Path(run_dir))
+
+    def _load_finished_artifacts(self, run_dir: Path) -> None:
+        trace_path = run_dir / "verbose.log"
+        final_path = run_dir / "final.md"
+        if trace_path.exists():
+            self.trace_view.setPlainText(trace_path.read_text(encoding="utf-8", errors="replace"))
+        if final_path.exists():
+            self.final_view.setPlainText(final_path.read_text(encoding="utf-8", errors="replace"))
+
+    def _show_approval(self, request: dict, state: object) -> None:
+        details = request.get("details", {})
+        detail_text = ", ".join(f"{k}={v}" for k, v in details.items())
+        self._pending_approval = state
+        self.approval_label.setText(f"Agent requests: {request.get('action')}\n{detail_text}")
+        self.approval_panel.show()
+        self.raise_()
+
+    def _finish_approval(self, approved: bool) -> None:
+        if not self._pending_approval:
+            return
+        self._pending_approval["approved"] = approved
+        self._pending_approval["event"].set()
+        self._pending_approval = None
+        self.approval_panel.hide()
+
+    def _cancel_run(self) -> None:
+        if self._control is not None:
+            self._control.cancel()
+        self.status_lbl.setText("Cancelling...")
+        self.cancel_btn.setEnabled(False)
+
+    def _open_log_folder(self) -> None:
+        if self._run_dir:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self._run_dir))
+
+    def _open_scope_folder(self) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self._spec.scope_folder))
+
+    def _open_diff(self) -> None:
+        if not self._run_dir:
+            return
+        path = Path(self._run_dir) / "diff.patch"
+        if path.exists():
+            viewer = DiffViewer(path, parent=self)
+            _diff_windows.append(viewer)
+            viewer.destroyed.connect(lambda _obj=None, w=viewer: _diff_windows.remove(w) if w in _diff_windows else None)
+            viewer.show()
+
+
+class DiffViewer(QDialog):
+    def __init__(self, diff_path: Path, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Agent Diff")
+        self.setMinimumSize(760, 520)
+        layout = QVBoxLayout(self)
+        viewer = QTextEdit()
+        viewer.setReadOnly(True)
+        viewer.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        viewer.setPlainText(diff_path.read_text(encoding="utf-8", errors="replace"))
+        layout.addWidget(viewer)
+        fit_window_to_screen(self, preferred_width=820, preferred_height=620)
+
+
+class AgentRunHistoryWindow(QDialog):
+    """Browse previous agent task runs without starting a new task."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._runs_root = Path(__file__).resolve().parents[1] / "memory" / "agent_runs"
+        self._current_run: Path | None = None
+        self.setWindowTitle("Agent Task History")
+        self.setMinimumSize(820, 520)
+        self.setWindowFlags(
+            self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
+        )
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.run_list = QListWidget()
+        self.run_list.currentItemChanged.connect(self._load_selected_run)
+        splitter.addWidget(self.run_list)
+
+        self.tabs = QTabWidget()
+        self.summary_view = QTextEdit()
+        self.log_view = QTextEdit()
+        self.trace_view = QTextEdit()
+        self.diff_view = QTextEdit()
+        for view in (self.summary_view, self.log_view, self.trace_view, self.diff_view):
+            view.setReadOnly(True)
+        self.log_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.trace_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.diff_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.tabs.addTab(self.summary_view, "Summary")
+        self.tabs.addTab(self.log_view, "Run Log")
+        self.tabs.addTab(self.trace_view, "Model Trace")
+        self.tabs.addTab(self.diff_view, "Diff")
+        splitter.addWidget(self.tabs)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 3)
+        root.addWidget(splitter, stretch=1)
+
+        row = QHBoxLayout()
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self._load_runs)
+        open_logs_btn = QPushButton("Open Logs")
+        open_logs_btn.clicked.connect(self._open_current_run)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        row.addStretch()
+        row.addWidget(refresh_btn)
+        row.addWidget(open_logs_btn)
+        row.addWidget(close_btn)
+        root.addLayout(row)
+
+        self._load_runs()
+        fit_window_to_screen(self, preferred_width=900, preferred_height=620)
+
+    def _load_runs(self) -> None:
+        self.run_list.clear()
+        self._runs_root.mkdir(parents=True, exist_ok=True)
+        runs = sorted(
+            (path for path in self._runs_root.iterdir() if path.is_dir()),
+            key=lambda path: path.name,
+            reverse=True,
+        )
+        for run_dir in runs:
+            item = QListWidgetItem(self._display_name(run_dir))
+            item.setData(Qt.ItemDataRole.UserRole, str(run_dir))
+            self.run_list.addItem(item)
+        if self.run_list.count():
+            self.run_list.setCurrentRow(0)
+        else:
+            self._clear_views("No agent task runs yet.")
+
+    def _load_selected_run(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
+        if current is None:
+            return
+        run_dir = Path(current.data(Qt.ItemDataRole.UserRole))
+        self._current_run = run_dir
+        self.summary_view.setPlainText(self._summary_text(run_dir))
+        self.log_view.setPlainText(self._read_text(run_dir / "run.log"))
+        self.trace_view.setPlainText(self._read_text(run_dir / "verbose.log"))
+        self.diff_view.setPlainText(self._read_text(run_dir / "diff.patch") or "(no diff artifact)")
+
+    def _open_current_run(self) -> None:
+        if self._current_run:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._current_run)))
+
+    def _clear_views(self, text: str) -> None:
+        for view in (self.summary_view, self.log_view, self.trace_view, self.diff_view):
+            view.setPlainText(text)
+
+    def _summary_text(self, run_dir: Path) -> str:
+        task = self._read_text(run_dir / "task.json")
+        final = self._read_text(run_dir / "final.md") or "(no final report)"
+        return f"Run folder:\n{run_dir}\n\nFinal report:\n{final}\n\nTask spec:\n{task or '(missing task.json)'}"
+
+    @staticmethod
+    def _read_text(path: Path) -> str:
+        if not path.exists():
+            return ""
+        return path.read_text(encoding="utf-8", errors="replace")
+
+    @staticmethod
+    def _display_name(run_dir: Path) -> str:
+        task_path = run_dir / "task.json"
+        if task_path.exists():
+            try:
+                task = json.loads(task_path.read_text(encoding="utf-8"))
+                title = str(task.get("title") or "").strip()
+                if title:
+                    return f"{run_dir.name[:15]}  {title}"
+            except Exception:
+                pass
+        return run_dir.name

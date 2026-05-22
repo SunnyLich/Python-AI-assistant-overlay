@@ -3,23 +3,26 @@ config.py — Central configuration loaded from .env
 """
 import os
 from dotenv import load_dotenv
+from core import secret_store
 
 load_dotenv()
 
 # --- API Keys ---
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+GROQ_API_KEY = secret_store.get_secret("GROQ_API_KEY")
+OPENAI_API_KEY = secret_store.get_secret("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = secret_store.get_secret("ANTHROPIC_API_KEY")
+CARTESIA_API_KEY = secret_store.get_secret("CARTESIA_API_KEY")
+ELEVENLABS_API_KEY = secret_store.get_secret("ELEVENLABS_API_KEY")
 
 # --- LLM ---
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")       # groq | openai | anthropic
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")       # groq | openai | anthropic | chatgpt | copilot
 LLM_MODEL = os.getenv("LLM_MODEL", "llama3-8b-8192")
+LLM_FALLBACKS = os.getenv("LLM_FALLBACKS", "")
 
 # --- Chat / elaborate LLM (defaults to same as above) ---
 CHAT_LLM_PROVIDER = os.getenv("CHAT_LLM_PROVIDER", LLM_PROVIDER)
 CHAT_LLM_MODEL    = os.getenv("CHAT_LLM_MODEL",    LLM_MODEL)
+CHAT_LLM_FALLBACKS = os.getenv("CHAT_LLM_FALLBACKS", "")
 
 # --- Tool-capable LLM (used when web_search / get_context tools are active) ---
 # Haiku does not invoke web_search_20250305; Sonnet does. Defaults to Sonnet so tools
@@ -30,6 +33,7 @@ TOOL_LLM_MODEL = os.getenv("TOOL_LLM_MODEL", "claude-sonnet-4-5")
 # Leave empty to get a helpful error when snip is used without configuration.
 VISION_LLM_PROVIDER = os.getenv("VISION_LLM_PROVIDER", "")   # e.g. anthropic | openai
 VISION_LLM_MODEL    = os.getenv("VISION_LLM_MODEL",    "")   # e.g. claude-opus-4-5
+VISION_LLM_FALLBACKS = os.getenv("VISION_LLM_FALLBACKS", "")
 
 # --- TTS ---
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "cartesia")    # cartesia | elevenlabs | none
@@ -39,12 +43,21 @@ CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "")
 DOLL_AUTO_HIDE = os.getenv("DOLL_AUTO_HIDE", "true").lower() == "true"  # hide doll when idle
 CHAT_AUTO_ELABORATE = os.getenv("CHAT_AUTO_ELABORATE", "true").lower() == "true"  # auto-send elaborate prompt on chat open
 CHAT_ELABORATE_PROMPT = os.getenv("CHAT_ELABORATE_PROMPT", "Please elaborate on that.")
+GITHUB_DEFAULT_CLIENT_ID = os.getenv("GITHUB_DEFAULT_CLIENT_ID", "")
+GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", GITHUB_DEFAULT_CLIENT_ID)
+GITHUB_OAUTH_SCOPES = os.getenv("GITHUB_OAUTH_SCOPES", "repo read:user user:email")
+COPILOT_CLI_URL = os.getenv("COPILOT_CLI_URL", "")
+COPILOT_CLI_PATH = os.getenv("COPILOT_CLI_PATH", "")
 
 # --- Hotkeys ---
 HOTKEY_ADD_CONTEXT   = os.getenv("HOTKEY_ADD_CONTEXT",   "alt+q")       # add selected text to context buffer
 HOTKEY_CLEAR_CONTEXT = os.getenv("HOTKEY_CLEAR_CONTEXT", "alt+w")       # clear context buffer
 HOTKEY_SNIP          = os.getenv("HOTKEY_SNIP",          "ctrl+alt+q")  # draw screen region → intent picker
 HOTKEY_VOICE         = os.getenv("HOTKEY_VOICE",         "f9")          # push-to-talk voice input
+
+SNIP_CONTEXT_AMBIENT = os.getenv("SNIP_CONTEXT_AMBIENT", "true").lower() == "true"
+SNIP_CONTEXT_DOCUMENTS = os.getenv("SNIP_CONTEXT_DOCUMENTS", "false").lower() == "true"
+SNIP_CONTEXT_TOOLS = os.getenv("SNIP_CONTEXT_TOOLS", "false").lower() == "true"
 
 # --- STT (Speech-to-Text) ---
 STT_MODEL        = os.getenv("STT_MODEL",        "base")   # tiny | base | small | medium | large-v3
@@ -60,6 +73,10 @@ _CALLER_DEFAULTS: list[dict] = [
         "label": "General",
         "paste_back": False,
         "custom_key": "s",
+        "context_ambient": True,
+        "context_documents": True,
+        "context_tools": True,
+        "context_screenshot": False,
         "intents": [
             {"key": "w", "label": "What is this?",      "prompt": "What is this? Give me a clear, plain-English explanation in 2-3 sentences."},
             {"key": "a", "label": "Explain simply",     "prompt": "Explain this as simply as possible. Assume I have no technical background whatsoever."},
@@ -71,6 +88,10 @@ _CALLER_DEFAULTS: list[dict] = [
         "label": "Rewrite & Paste",
         "paste_back": True,
         "custom_key": "s",
+        "context_ambient": True,
+        "context_documents": False,
+        "context_tools": False,
+        "context_screenshot": False,
         "intents": [
             {"key": "w", "label": "Fix grammar",   "prompt": "Fix the grammar and spelling of the following text. Output ONLY the corrected text."},
             {"key": "a", "label": "Simplify",      "prompt": "Simplify the following text for a general audience. Output ONLY the simplified text."},
@@ -103,12 +124,26 @@ def _load_caller_rows() -> list[dict]:
             "label":      os.getenv(f"CALLER_{n}_LABEL",      default.get("label", "")),
             "paste_back": os.getenv(f"CALLER_{n}_PASTE_BACK", str(default.get("paste_back", False))).lower() == "true",
             "custom_key": os.getenv(f"CALLER_{n}_CUSTOM_KEY", default.get("custom_key", "s")),
+            "context_ambient": os.getenv(f"CALLER_{n}_CONTEXT_AMBIENT", str(default.get("context_ambient", True))).lower() == "true",
+            "context_documents": os.getenv(f"CALLER_{n}_CONTEXT_DOCUMENTS", str(default.get("context_documents", True))).lower() == "true",
+            "context_tools": os.getenv(f"CALLER_{n}_CONTEXT_TOOLS", str(default.get("context_tools", True))).lower() == "true",
+            "context_screenshot": os.getenv(f"CALLER_{n}_CONTEXT_SCREENSHOT", str(default.get("context_screenshot", False))).lower() == "true",
             "intents":    intents,
         })
     return rows
 
 
 CALLER_ROWS: list[dict] = _load_caller_rows()
+
+# --- Context budgets ---
+CONTEXT_BROWSER_MAX_CHARS = int(os.getenv("CONTEXT_BROWSER_MAX_CHARS", "4000"))
+CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS = int(os.getenv("CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS", "8000"))
+CONTEXT_TOOL_DOCUMENT_MAX_CHARS = int(os.getenv("CONTEXT_TOOL_DOCUMENT_MAX_CHARS", "50000"))
+TOOL_PLUGIN_DIR = os.getenv(
+    "TOOL_PLUGIN_DIR",
+    os.path.join(os.path.dirname(__file__), "tools", "installed"),
+)
+TOOL_GIT_ROOT = os.getenv("TOOL_GIT_ROOT", os.path.dirname(__file__))
 
 # --- UI sizes ---
 BUBBLE_WIDTH      = int(os.getenv("BUBBLE_WIDTH",      "340"))  # px wide (not including tail)
@@ -167,11 +202,16 @@ def reload() -> None:
     """
     global GROQ_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY
     global CARTESIA_API_KEY, ELEVENLABS_API_KEY
-    global LLM_PROVIDER, LLM_MODEL, CHAT_LLM_PROVIDER, CHAT_LLM_MODEL, TOOL_LLM_MODEL
-    global VISION_LLM_PROVIDER, VISION_LLM_MODEL
+    global LLM_PROVIDER, LLM_MODEL, LLM_FALLBACKS
+    global CHAT_LLM_PROVIDER, CHAT_LLM_MODEL, CHAT_LLM_FALLBACKS, TOOL_LLM_MODEL
+    global VISION_LLM_PROVIDER, VISION_LLM_MODEL, VISION_LLM_FALLBACKS
     global TTS_PROVIDER, CARTESIA_VOICE_ID
     global DOLL_AUTO_HIDE, CHAT_AUTO_ELABORATE, CHAT_ELABORATE_PROMPT
+    global GITHUB_DEFAULT_CLIENT_ID, GITHUB_CLIENT_ID, GITHUB_OAUTH_SCOPES
     global HOTKEY_ADD_CONTEXT, HOTKEY_CLEAR_CONTEXT, HOTKEY_SNIP
+    global SNIP_CONTEXT_AMBIENT, SNIP_CONTEXT_DOCUMENTS, SNIP_CONTEXT_TOOLS
+    global CONTEXT_BROWSER_MAX_CHARS, CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS, CONTEXT_TOOL_DOCUMENT_MAX_CHARS
+    global TOOL_PLUGIN_DIR, TOOL_GIT_ROOT
     global HOTKEY_VOICE, STT_MODEL, STT_COMPUTE_TYPE, STT_LANGUAGE
     global CALLER_ROWS
     global BUBBLE_WIDTH, BUBBLE_LINES, BUBBLE_COLOR, BUBBLE_TEXT_COLOR, BUBBLE_READ_WORD_COLOR
@@ -179,23 +219,35 @@ def reload() -> None:
     global TTS_PLAYBACK_RATE, TTS_HOLD_PLAYBACK_RATE
     global SYSTEM_PROMPT_UTILITY
     global MEMORY_LLM_PROVIDER, MEMORY_LLM_MODEL
+    global COPILOT_CLI_URL, COPILOT_CLI_PATH
     global MEMORY_CONSOLIDATION_INTERVAL, MEMORY_TOP_K, MEMORY_STM_TOKEN_BUDGET
 
     load_dotenv(override=True)   # push .env values back into os.environ
 
-    GROQ_API_KEY      = os.getenv("GROQ_API_KEY", "")
-    OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY", "")
-    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-    CARTESIA_API_KEY  = os.getenv("CARTESIA_API_KEY", "")
-    ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+    GROQ_API_KEY      = secret_store.get_secret("GROQ_API_KEY")
+    OPENAI_API_KEY    = secret_store.get_secret("OPENAI_API_KEY")
+    ANTHROPIC_API_KEY = secret_store.get_secret("ANTHROPIC_API_KEY")
+    CARTESIA_API_KEY  = secret_store.get_secret("CARTESIA_API_KEY")
+    ELEVENLABS_API_KEY = secret_store.get_secret("ELEVENLABS_API_KEY")
 
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")
     LLM_MODEL    = os.getenv("LLM_MODEL", "llama3-8b-8192")
+    LLM_FALLBACKS = os.getenv("LLM_FALLBACKS", "")
     CHAT_LLM_PROVIDER = os.getenv("CHAT_LLM_PROVIDER", LLM_PROVIDER)
     CHAT_LLM_MODEL    = os.getenv("CHAT_LLM_MODEL",    LLM_MODEL)
+    CHAT_LLM_FALLBACKS = os.getenv("CHAT_LLM_FALLBACKS", "")
     TOOL_LLM_MODEL    = os.getenv("TOOL_LLM_MODEL",    "claude-sonnet-4-5")
     VISION_LLM_PROVIDER = os.getenv("VISION_LLM_PROVIDER", "")
     VISION_LLM_MODEL    = os.getenv("VISION_LLM_MODEL",    "")
+    VISION_LLM_FALLBACKS = os.getenv("VISION_LLM_FALLBACKS", "")
+    CONTEXT_BROWSER_MAX_CHARS = int(os.getenv("CONTEXT_BROWSER_MAX_CHARS", "4000"))
+    CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS = int(os.getenv("CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS", "8000"))
+    CONTEXT_TOOL_DOCUMENT_MAX_CHARS = int(os.getenv("CONTEXT_TOOL_DOCUMENT_MAX_CHARS", "50000"))
+    TOOL_PLUGIN_DIR = os.getenv(
+        "TOOL_PLUGIN_DIR",
+        os.path.join(os.path.dirname(__file__), "tools", "installed"),
+    )
+    TOOL_GIT_ROOT = os.getenv("TOOL_GIT_ROOT", os.path.dirname(__file__))
 
     TTS_PROVIDER      = os.getenv("TTS_PROVIDER", "cartesia")
     CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "")
@@ -203,10 +255,18 @@ def reload() -> None:
     DOLL_AUTO_HIDE        = os.getenv("DOLL_AUTO_HIDE", "true").lower() == "true"
     CHAT_AUTO_ELABORATE   = os.getenv("CHAT_AUTO_ELABORATE", "true").lower() == "true"
     CHAT_ELABORATE_PROMPT = os.getenv("CHAT_ELABORATE_PROMPT", "Please elaborate on that.")
+    GITHUB_DEFAULT_CLIENT_ID = os.getenv("GITHUB_DEFAULT_CLIENT_ID", "")
+    GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", GITHUB_DEFAULT_CLIENT_ID)
+    GITHUB_OAUTH_SCOPES = os.getenv("GITHUB_OAUTH_SCOPES", "repo read:user user:email")
+    COPILOT_CLI_URL = os.getenv("COPILOT_CLI_URL", "")
+    COPILOT_CLI_PATH = os.getenv("COPILOT_CLI_PATH", "")
 
     HOTKEY_ADD_CONTEXT       = os.getenv("HOTKEY_ADD_CONTEXT",   "alt+q")
     HOTKEY_CLEAR_CONTEXT     = os.getenv("HOTKEY_CLEAR_CONTEXT", "alt+w")
     HOTKEY_SNIP              = os.getenv("HOTKEY_SNIP",          "ctrl+alt+q")
+    SNIP_CONTEXT_AMBIENT = os.getenv("SNIP_CONTEXT_AMBIENT", "true").lower() == "true"
+    SNIP_CONTEXT_DOCUMENTS = os.getenv("SNIP_CONTEXT_DOCUMENTS", "false").lower() == "true"
+    SNIP_CONTEXT_TOOLS = os.getenv("SNIP_CONTEXT_TOOLS", "false").lower() == "true"
     HOTKEY_VOICE             = os.getenv("HOTKEY_VOICE",         "f9")
     STT_MODEL        = os.getenv("STT_MODEL",        "base")
     STT_COMPUTE_TYPE = os.getenv("STT_COMPUTE_TYPE", "int8")

@@ -108,10 +108,12 @@ class App:
         self._intent_picker: IntentOverlay | None = None
         self._snip_overlay: SnipOverlay | None = None
         self._chat_window: ChatWindow | None = None
+        self._memory_viewer = None
         self._all_conversations: list[dict] = []  # each item = {"messages": [...], "context": str}
         self._overlay_hwnd: int = 0          # cached after first show
         self._pending_capture: tuple | None = None  # (selected_text, screenshot_b64)
         self._pending_caller_idx: int = 0    # which CALLER_ROWS entry triggered the current picker
+        self._pending_context_policy: dict | None = None
         self._pending_paste_target: int = 0  # HWND to paste into (0 = no paste)
         self._pending_intent_target: int = 0 # HWND whose monitor should host the picker
         self._gen_id: int = 0                # incremented on each new query; stale workers skip bubble signals
@@ -234,10 +236,13 @@ class App:
 
         self._pending_context = context_fetcher.fetch_and_save()
         selected = capture.get_selected_text()
-        # Regular hotkey queries are text-only; visual context comes from the
-        # snip overlay (Ctrl+Alt+Q) only — never auto-capture a screenshot here.
-        self._pending_capture = (selected, None)
+        screenshot_b64 = None
+        if caller.get("context_screenshot") and not selected:
+            img = capture.get_screen_snippet()
+            screenshot_b64 = capture.image_to_base64(img)
+        self._pending_capture = (selected, screenshot_b64)
         self._pending_caller_idx = caller_idx
+        self._pending_context_policy = caller
         self._pending_paste_target = target_hwnd
         self._pending_intent_target = fg_hwnd
 
@@ -266,6 +271,11 @@ class App:
         screenshot_b64 = capture.image_to_base64(img)
         self._pending_capture = (None, screenshot_b64)
         self._pending_caller_idx = 0
+        self._pending_context_policy = {
+            "context_ambient": config.SNIP_CONTEXT_AMBIENT,
+            "context_documents": config.SNIP_CONTEXT_DOCUMENTS,
+            "context_tools": config.SNIP_CONTEXT_TOOLS,
+        }
         self._pending_paste_target = 0
 
         audio.play_filler()
@@ -276,6 +286,7 @@ class App:
 
     def _on_snip_cancelled(self):
         self._snip_overlay = None
+        self._pending_context_policy = None
 
     # ------------------------------------------------------------------
     # Voice push-to-talk (runs in keyboard listener thread)
@@ -312,7 +323,7 @@ class App:
         with self._gen_id_lock:
             self._gen_id += 1
             gen_id = self._gen_id
-        self._query_and_speak(text, (None, None), gen_id)
+        self._query_and_speak(text, (None, None), gen_id=gen_id)
 
     # ------------------------------------------------------------------
     # Intent picker (runs on Qt main thread via signal)
@@ -340,6 +351,8 @@ class App:
         capture_data = self._pending_capture
         self._pending_capture = None
         caller_idx   = self._pending_caller_idx
+        context_policy = self._pending_context_policy
+        self._pending_context_policy = None
         target_hwnd  = self._pending_paste_target
         self._pending_paste_target = 0
         self._pending_intent_target = 0
@@ -357,12 +370,13 @@ class App:
         else:
             threading.Thread(
                 target=self._query_and_speak,
-                args=(prompt, capture_data, gen_id),
+                args=(prompt, capture_data, context_policy or caller, gen_id),
                 daemon=True,
             ).start()
 
     def _on_intent_cancelled(self):
         self._intent_picker = None
+        self._pending_context_policy = None
         self._pending_paste_target = 0
         self._pending_intent_target = 0
         self._signals.set_state.emit("idle")
@@ -445,8 +459,9 @@ class App:
     # LLM + TTS pipeline (worker thread)
     # ------------------------------------------------------------------
 
-    def _query_and_speak(self, intent_prompt: str, capture_data: tuple | None, gen_id: int = 0):
+    def _query_and_speak(self, intent_prompt: str, capture_data: tuple | None, caller: dict | None = None, gen_id: int = 0):
         import queue
+        caller = caller or {}
 
         # Use pre-captured input from hotkey time (original app still had focus then).
         if capture_data:
@@ -461,7 +476,11 @@ class App:
         # Ambient context captured at hotkey time
         snap = self._pending_context
         self._pending_context = None
-        ambient_ctx = context_fetcher.format_context_for_prompt(snap) if snap else ""
+        ambient_ctx = (
+            context_fetcher.format_context_for_prompt(snap)
+            if snap and caller.get("context_ambient", True)
+            else ""
+        )
 
         # Build final message — intent prompt only; context goes into the system
         # prompt so it is sent exactly once and not repeated in every follow-up turn.
@@ -483,7 +502,7 @@ class App:
         # Proactively read the active document (if any) so the model has full context
         # without needing a tool round-trip.  Only for text queries — vision queries
         # already have a screenshot as context.
-        if not screenshot_b64:
+        if not screenshot_b64 and caller.get("context_documents", True):
             doc_text = llm.read_active_document_for_context()
             if doc_text and not doc_text.startswith(("Could not", "File type", "Failed to")):
                 ambient_ctx = (
@@ -522,7 +541,7 @@ class App:
                     screenshot_b64,
                     ambient_context=ambient_ctx,
                     memory_context=memory_context,
-                    use_tools=not screenshot_b64,   # tools only for text queries; vision handles itself
+                    use_tools=(not screenshot_b64 and caller.get("context_tools", True)),
                 ):
                     full_text += chunk
                     llm_chunk_q.put(chunk)
@@ -642,8 +661,15 @@ class App:
 
     def _open_memory_viewer(self) -> None:
         from ui.memory_viewer import MemoryViewer
-        viewer = MemoryViewer(self._memory)
-        viewer.exec()
+        if self._memory_viewer is not None:
+            self._memory_viewer.raise_()
+            self._memory_viewer.activateWindow()
+            return
+        self._memory_viewer = MemoryViewer(self._memory, parent=None)
+        self._memory_viewer.destroyed.connect(lambda: setattr(self, "_memory_viewer", None))
+        self._memory_viewer.show()
+        self._memory_viewer.raise_()
+        self._memory_viewer.activateWindow()
 
 
 def main():

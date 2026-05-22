@@ -144,8 +144,9 @@ class DollOverlay(QMainWindow):
         self._icon_label.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
+            | Qt.WindowType.Window
         )
+        self._icon_label.setWindowTitle("AI Assistant Doll")
         self._icon_label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._icon_label.setFixedSize(sz, sz)
         self._icon_label.move(x, y)

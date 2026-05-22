@@ -226,13 +226,16 @@ _PRIVATE_PREFIXES = ("192.168.", "10.", "172.16.", "172.17.", "172.18.",
                      "172.29.", "172.30.", "172.31.")
 
 
-def _fetch_browser_content(url: str, max_chars: int = 4000) -> str:
+def _fetch_browser_content(url: str, max_chars: int | None = None) -> str:
     """
     Fetch the plain text of a public web page.
     Skips non-HTTP, localhost, and private-network URLs.
     JavaScript-heavy SPAs will return minimal content (only static HTML).
     All output is passed through the sensitive-data redactor.
     """
+    if max_chars is None:
+        max_chars = config.CONTEXT_BROWSER_MAX_CHARS
+
     if not url:
         return ""
     if not url.startswith(("http://", "https://")):

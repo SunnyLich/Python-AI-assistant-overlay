@@ -11,43 +11,12 @@ calls, eliminating handshake overhead from every request.
 """
 from __future__ import annotations
 import config
+from pathlib import Path
+from core import secret_store
+from core.tool_registry import ToolRegistry, ToolSpec
 from typing import Generator
 
-# ------------------------------------------------------------------
-# Context tools — offered to Claude during hotkey-triggered queries.
-# web_search is a built-in Anthropic server-side tool (no client code needed).
-# get_context is user-defined: we execute it and return the result.
-# ------------------------------------------------------------------
-
-_CONTEXT_TOOLS: list[dict] = [
-    {
-        "type": "web_search_20250305",
-        "name": "web_search",
-        "max_uses": 2,
-    },
-    {
-        "name": "get_context",
-        "description": (
-            "Retrieve additional context the user can see. "
-            "Pass a URL to fetch a web page; omit it to read open local "
-            "documents from supported apps "
-            "(Word, Excel, PowerPoint, PDF, LibreOffice, Notepad, etc.)."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": (
-                        "A web page URL (http:// or https://) to fetch. "
-                        "Omit this field to read open local documents instead."
-                    ),
-                }
-            },
-            "required": [],
-        },
-    },
-]
+_TOOL_REGISTRY = ToolRegistry()
 
 
 def _log_context(
@@ -82,13 +51,19 @@ def _log_context(
     print(f"[llm {ts}] Context — {reason}:\n  {body}")
 
 
-_AMBIENT_DOCUMENT_MAX_CHARS = 8000
-_TOOL_DOCUMENT_MAX_CHARS = 50000
+def _ambient_document_max_chars() -> int:
+    return config.CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS
 
 
-def _read_document_file(path: str, max_chars: int = _AMBIENT_DOCUMENT_MAX_CHARS) -> str:
+def _tool_document_max_chars() -> int:
+    return config.CONTEXT_TOOL_DOCUMENT_MAX_CHARS
+
+
+def _read_document_file(path: str, max_chars: int | None = None) -> str:
     """Read a local document file and return its plain text."""
     import os
+    if max_chars is None:
+        max_chars = _ambient_document_max_chars()
     ext = os.path.splitext(path)[1].lower()
     try:
         if ext == ".docx":
@@ -156,11 +131,13 @@ def _read_document_file(path: str, max_chars: int = _AMBIENT_DOCUMENT_MAX_CHARS)
 
 def _read_document_paths(
     paths: list[str],
-    max_chars_per_doc: int = _AMBIENT_DOCUMENT_MAX_CHARS,
+    max_chars_per_doc: int | None = None,
 ) -> str:
     """Read multiple local document files and join readable results."""
     import os
 
+    if max_chars_per_doc is None:
+        max_chars_per_doc = _ambient_document_max_chars()
     parts: list[str] = []
     for path in paths:
         text = _read_document_file(path, max_chars=max_chars_per_doc)
@@ -169,30 +146,193 @@ def _read_document_paths(
     return "\n\n".join(parts)
 
 
-def _execute_context_tool(name: str, inputs: dict) -> str:
-    """Execute a user-defined context tool and return a plain-text result."""
-    if name == "get_context":
-        url = inputs.get("url", "").strip()
-        if url:
-            from core.context_fetcher import fetch_browser_content_for_tool
-            result = fetch_browser_content_for_tool(url)
-            _log_context(
-                f"tool: get_context (browser) — {url!r}",
-                result or "",
-            )
-            return result or f"Could not fetch content from {url!r}."
-        else:
-            from core.context_fetcher import get_all_open_document_paths
+def _execute_get_context(inputs: dict) -> str:
+    """Built-in context tool: fetch a browser page or open document text."""
+    url = inputs.get("url", "").strip()
+    if url:
+        from core.context_fetcher import fetch_browser_content_for_tool
+        result = fetch_browser_content_for_tool(url)
+        _log_context(
+            f"tool: get_context (browser) — {url!r}",
+            result or "",
+        )
+        return result or f"Could not fetch content from {url!r}."
 
-            paths = get_all_open_document_paths()
-            if not paths:
-                return "Could not determine any open document paths from supported app windows."
+    from core.context_fetcher import get_all_open_document_paths
 
-            text = _read_document_paths(paths, max_chars_per_doc=_TOOL_DOCUMENT_MAX_CHARS)
-            if text:
-                return text
-            return "Open document windows were detected, but none of their file types were readable."
-    return f"Unknown tool: {name!r}"
+    paths = get_all_open_document_paths()
+    if not paths:
+        return "Could not determine any open document paths from supported app windows."
+
+    text = _read_document_paths(paths, max_chars_per_doc=_tool_document_max_chars())
+    if text:
+        return text
+    return "Open document windows were detected, but none of their file types were readable."
+
+
+def _execute_git_status(inputs: dict) -> str:
+    cwd = inputs.get("cwd") or config.TOOL_GIT_ROOT
+    return _run_read_only_command(["git", "status", "--short"], cwd=cwd)
+
+
+def _execute_git_diff(inputs: dict) -> str:
+    cwd = inputs.get("cwd") or config.TOOL_GIT_ROOT
+    return _run_read_only_command(["git", "diff", "--", "."], cwd=cwd)
+
+
+def _run_read_only_command(args: list[str], cwd: str) -> str:
+    import subprocess
+    from pathlib import Path
+
+    root = Path(cwd or ".").expanduser().resolve()
+    completed = subprocess.run(
+        args,
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    output = (completed.stdout or completed.stderr or "").strip()
+    return output[:12000] or f"{' '.join(args)} returned no output."
+
+
+def _execute_github_repo(inputs: dict) -> str:
+    repo = str(inputs.get("repo") or "").strip()
+    if not repo:
+        return "Missing repo. Use owner/name."
+    return _github_get_json(f"https://api.github.com/repos/{repo}")
+
+
+def _execute_github_issue(inputs: dict) -> str:
+    repo = str(inputs.get("repo") or "").strip()
+    number = str(inputs.get("number") or "").strip()
+    if not repo or not number:
+        return "Missing repo or number."
+    return _github_get_json(f"https://api.github.com/repos/{repo}/issues/{number}")
+
+
+def _github_get_json(url: str) -> str:
+    import json
+    import urllib.request
+    from core import github_auth
+
+    token = github_auth.get_valid_access_token()
+    if not token:
+        return "GitHub OAuth is not configured. Sign in from Settings."
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "python-ai-overlay",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read())
+    return json.dumps(data, indent=2, ensure_ascii=False)[:12000]
+
+
+def _register_builtin_tools() -> None:
+    _TOOL_REGISTRY.register_builtin(
+        ToolSpec(
+            name="web_search",
+            description="Search the web for current information.",
+            input_schema={"type": "object", "properties": {}, "required": []},
+            server_schema={
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 2,
+            },
+        )
+    )
+    _TOOL_REGISTRY.register_builtin(
+        ToolSpec(
+            name="get_context",
+            description=(
+                "Retrieve additional context the user can see. "
+                "Pass a URL to fetch a web page; omit it to read open local "
+                "documents from supported apps "
+                "(Word, Excel, PowerPoint, PDF, LibreOffice, Notepad, etc.)."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": (
+                            "A web page URL (http:// or https://) to fetch. "
+                            "Omit this field to read open local documents instead."
+                        ),
+                    }
+                },
+                "required": [],
+            },
+            executor=_execute_get_context,
+        )
+    )
+    _TOOL_REGISTRY.register_builtin(
+        ToolSpec(
+            name="git_status",
+            description="Return read-only git status for the configured local repository.",
+            input_schema={
+                "type": "object",
+                "properties": {"cwd": {"type": "string", "description": "Optional local repo path."}},
+                "required": [],
+            },
+            executor=_execute_git_status,
+        )
+    )
+    _TOOL_REGISTRY.register_builtin(
+        ToolSpec(
+            name="git_diff",
+            description="Return read-only git diff for the configured local repository.",
+            input_schema={
+                "type": "object",
+                "properties": {"cwd": {"type": "string", "description": "Optional local repo path."}},
+                "required": [],
+            },
+            executor=_execute_git_diff,
+        )
+    )
+    _TOOL_REGISTRY.register_builtin(
+        ToolSpec(
+            name="github_repo",
+            description="Fetch GitHub repository metadata using the signed-in GitHub OAuth account.",
+            input_schema={
+                "type": "object",
+                "properties": {"repo": {"type": "string", "description": "Repository in owner/name form."}},
+                "required": ["repo"],
+            },
+            executor=_execute_github_repo,
+        )
+    )
+    _TOOL_REGISTRY.register_builtin(
+        ToolSpec(
+            name="github_issue",
+            description="Fetch a GitHub issue or pull request by repository and number.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository in owner/name form."},
+                    "number": {"type": "integer", "description": "Issue or pull request number."},
+                },
+                "required": ["repo", "number"],
+            },
+            executor=_execute_github_issue,
+        )
+    )
+
+
+def _get_tool_schemas() -> list[dict]:
+    return _TOOL_REGISTRY.schemas(include_server_tools=True)
+
+
+def _execute_model_tool(name: str, inputs: dict) -> str:
+    return _TOOL_REGISTRY.execute(name, inputs)
+
+
+_register_builtin_tools()
 
 
 def read_active_document_for_context() -> str:
@@ -231,6 +371,8 @@ def reset_clients() -> None:
     _chat_openai_client = _chat_anthropic_client = None
     _vision_openai_client = _vision_anthropic_client = None
     _codex_client = _chat_codex_client = None
+    _TOOL_REGISTRY.plugin_dir = Path(config.TOOL_PLUGIN_DIR)
+    _TOOL_REGISTRY.refresh()
 
 
 # ------------------------------------------------------------------
@@ -314,7 +456,76 @@ def _api_key_for(provider: str) -> str:
         return config.ANTHROPIC_API_KEY
     if p == "chatgpt":
         return "chatgpt-oauth"   # no static key — auth is via OAuth tokens
+    if p == "copilot":
+        return "copilot-token"    # stored in OS keychain
     return ""
+
+
+def _credential_source_for_provider(provider: str) -> str:
+    p = provider.lower()
+    if p == "groq":
+        return secret_store.secret_source("GROQ_API_KEY")
+    if p == "openai":
+        return secret_store.secret_source("OPENAI_API_KEY")
+    if p == "anthropic":
+        return secret_store.secret_source("ANTHROPIC_API_KEY")
+    if p == "chatgpt":
+        return "chatgpt-oauth"
+    if p == "copilot":
+        return "copilot-keychain"
+    return "none"
+
+
+def _log_model_route(kind: str, provider: str, model: str, use_tools: bool = False) -> None:
+    import time
+
+    ts = time.strftime("%H:%M:%S")
+    tool_note = " tools=on" if use_tools else ""
+    print(
+        f"[llm {ts}] Route ({kind}): provider={provider or '[unset]'} "
+        f"model={model or '[unset]'} credential={_credential_source_for_provider(provider)}{tool_note}"
+    )
+
+
+def _parse_model_fallbacks(raw: str) -> list[tuple[str, str]]:
+    """Parse provider:model fallback lines from settings."""
+    routes: list[tuple[str, str]] = []
+    for part in raw.replace(";", "\n").splitlines():
+        item = part.strip()
+        if not item or item.startswith("#"):
+            continue
+        if ":" not in item:
+            continue
+        provider, model = item.split(":", 1)
+        provider = provider.strip().lower()
+        model = model.strip()
+        if provider and model:
+            routes.append((provider, model))
+    return routes
+
+
+def _route_candidates(provider: str, model: str, fallback_raw: str) -> list[tuple[str, str]]:
+    routes: list[tuple[str, str]] = []
+    if provider and model:
+        routes.append((provider.lower(), model))
+    for candidate in _parse_model_fallbacks(fallback_raw):
+        if candidate not in routes:
+            routes.append(candidate)
+    return routes
+
+
+def _dynamic_openai_client(provider: str):
+    from openai import OpenAI
+
+    if provider == "groq":
+        return OpenAI(api_key=config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+    return OpenAI(api_key=config.OPENAI_API_KEY)
+
+
+def _dynamic_anthropic_client():
+    import anthropic
+
+    return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
 
 _CHATGPT_SUPPORTED_MODELS = {
@@ -342,10 +553,18 @@ def _check_llm_config() -> None:
                 f"Use one of: {', '.join(sorted(_CHATGPT_SUPPORTED_MODELS))}"
             )
         return
+    if config.LLM_PROVIDER.lower() == "copilot":
+        from core import copilot_auth
+        if not copilot_auth.get_token():
+            raise ValueError(
+                "LLM_PROVIDER is set to 'copilot' but no GitHub Copilot token is stored. "
+                "Open Settings -> LLM and save a GitHub Copilot token."
+            )
+        return
     if not _api_key_for(config.LLM_PROVIDER):
         raise ValueError(
-            f"API key for LLM_PROVIDER='{config.LLM_PROVIDER}' is not set in .env. "
-            "Add the matching *_API_KEY variable."
+            f"API key for LLM_PROVIDER='{config.LLM_PROVIDER}' is not configured. "
+            "Add the matching key in Settings so it can be stored in the OS keychain."
         )
 
 
@@ -368,10 +587,18 @@ def _check_chat_llm_config() -> None:
                 f"Use one of: {', '.join(sorted(_CHATGPT_SUPPORTED_MODELS))}"
             )
         return
+    if config.CHAT_LLM_PROVIDER.lower() == "copilot":
+        from core import copilot_auth
+        if not copilot_auth.get_token():
+            raise ValueError(
+                "CHAT_LLM_PROVIDER is set to 'copilot' but no GitHub Copilot token is stored. "
+                "Open Settings -> LLM and save a GitHub Copilot token."
+            )
+        return
     if not _api_key_for(config.CHAT_LLM_PROVIDER):
         raise ValueError(
-            f"API key for CHAT_LLM_PROVIDER='{config.CHAT_LLM_PROVIDER}' is not set in .env. "
-            "Add the matching *_API_KEY variable."
+            f"API key for CHAT_LLM_PROVIDER='{config.CHAT_LLM_PROVIDER}' is not configured. "
+            "Add the matching key in Settings so it can be stored in the OS keychain."
         )
 
 
@@ -397,9 +624,31 @@ def _check_vision_config() -> None:
         return
     if not _api_key_for(config.VISION_LLM_PROVIDER):
         raise ValueError(
-            f"API key for VISION_LLM_PROVIDER='{config.VISION_LLM_PROVIDER}' is not set in .env. "
-            "Add the matching *_API_KEY variable."
+            f"API key for VISION_LLM_PROVIDER='{config.VISION_LLM_PROVIDER}' is not configured. "
+            "Add the matching key in Settings so it can be stored in the OS keychain."
         )
+
+
+def _check_route_config(provider: str, model: str, route_name: str) -> None:
+    if not provider or not model:
+        raise ValueError(f"{route_name} route is missing provider or model.")
+    if provider == "chatgpt":
+        from core import chatgpt_auth
+        if not chatgpt_auth.get_tokens():
+            raise ValueError(f"{route_name} route uses chatgpt but you are not logged in.")
+        if model.lower() not in _CHATGPT_SUPPORTED_MODELS:
+            raise ValueError(
+                f"Model '{model}' is not supported by the ChatGPT Codex endpoint. "
+                f"Use one of: {', '.join(sorted(_CHATGPT_SUPPORTED_MODELS))}"
+            )
+        return
+    if provider == "copilot":
+        from core import copilot_auth
+        if not copilot_auth.get_token():
+            raise ValueError(f"{route_name} route uses copilot but no GitHub Copilot token is stored.")
+        return
+    if not _api_key_for(provider):
+        raise ValueError(f"{route_name} route uses {provider!r}, but its API key is not configured.")
 
 
 def _get_openai_client():
@@ -518,29 +767,130 @@ def stream_response(
         )
 
     if image_base64:
-        _check_vision_config()
-        provider = config.VISION_LLM_PROVIDER.lower()
-        model    = config.VISION_LLM_MODEL
+        candidates = _route_candidates(
+            config.VISION_LLM_PROVIDER,
+            config.VISION_LLM_MODEL,
+            config.VISION_LLM_FALLBACKS,
+        )
+        yield from _stream_with_fallbacks(
+            "vision",
+            candidates,
+            lambda provider, model: _stream_single_response_route(
+                provider,
+                model,
+                user_message,
+                image_base64,
+                ambient_context,
+                memory_context,
+                use_tools=False,
+                route_name="VISION_LLM",
+            ),
+        )
+    else:
+        candidates = _route_candidates(config.LLM_PROVIDER, config.LLM_MODEL, config.LLM_FALLBACKS)
+        yield from _stream_with_fallbacks(
+            "query",
+            candidates,
+            lambda provider, model: _stream_single_response_route(
+                provider,
+                model,
+                user_message,
+                None,
+                ambient_context,
+                memory_context,
+                use_tools=use_tools,
+                route_name="LLM",
+            ),
+        )
+
+
+def _stream_with_fallbacks(
+    kind: str,
+    candidates: list[tuple[str, str]],
+    factory,
+) -> Generator[str, None, None]:
+    last_exc: Exception | None = None
+    for idx, (provider, model) in enumerate(candidates):
+        emitted = False
+        try:
+            for chunk in factory(provider, model):
+                emitted = True
+                yield chunk
+            return
+        except Exception as exc:
+            last_exc = exc
+            import time
+
+            ts = time.strftime("%H:%M:%S")
+            if emitted:
+                print(f"[llm {ts}] Route ({kind}) failed after streaming; not falling back: {exc}")
+                raise
+            if idx < len(candidates) - 1:
+                print(f"[llm {ts}] Route ({kind}) failed before output; trying fallback: {exc}")
+                continue
+            print(f"[llm {ts}] Route ({kind}) failed; no fallback left: {exc}")
+            raise
+    if last_exc:
+        raise last_exc
+    raise ValueError(f"No {kind} model routes configured.")
+
+
+def _stream_single_response_route(
+    provider: str,
+    model: str,
+    user_message: str,
+    image_base64: str | None,
+    ambient_context: str,
+    memory_context: str,
+    use_tools: bool,
+    route_name: str,
+) -> Generator[str, None, None]:
+    _check_route_config(provider, model, route_name)
+    effective_model = config.TOOL_LLM_MODEL if provider == "anthropic" and use_tools else model
+    _log_model_route("vision" if image_base64 else "query", provider, effective_model, use_tools=use_tools)
+    if image_base64:
         if provider in ("groq", "openai"):
-            yield from _stream_openai_compat(user_message, image_base64, model, _get_vision_openai_client())
+            yield from _stream_openai_compat(user_message, image_base64, model, _dynamic_openai_client(provider))
         elif provider == "anthropic":
-            yield from _stream_anthropic(user_message, image_base64, model, _get_vision_anthropic_client())
+            yield from _stream_anthropic(user_message, image_base64, model, _dynamic_anthropic_client())
         elif provider == "chatgpt":
             yield from _stream_codex_vision(user_message, image_base64, model, _get_codex_client())
         else:
-            raise ValueError(f"Unknown VISION_LLM_PROVIDER: {provider}")
+            raise ValueError(f"Unknown vision provider: {provider}")
+        return
+    if provider in ("groq", "openai"):
+        yield from _stream_openai_compat(user_message, None, model, _dynamic_openai_client(provider), ambient_context, memory_context)
+    elif provider == "anthropic":
+        yield from _stream_anthropic(user_message, None, effective_model, _dynamic_anthropic_client(), ambient_context, memory_context, use_tools)
+    elif provider == "chatgpt":
+        yield from _stream_codex(user_message, model, _get_codex_client(), ambient_context, memory_context, use_tools)
+    elif provider == "copilot":
+        yield from _stream_copilot(user_message, model, ambient_context, memory_context, use_tools)
     else:
-        _check_llm_config()
-        provider = config.LLM_PROVIDER.lower()
-        if provider in ("groq", "openai"):
-            yield from _stream_openai_compat(user_message, None, config.LLM_MODEL, _get_openai_client(), ambient_context, memory_context)
-        elif provider == "anthropic":
-            tool_model = config.TOOL_LLM_MODEL if use_tools else config.LLM_MODEL
-            yield from _stream_anthropic(user_message, None, tool_model, _get_anthropic_client(), ambient_context, memory_context, use_tools)
-        elif provider == "chatgpt":
-            yield from _stream_codex(user_message, config.LLM_MODEL, _get_codex_client(), ambient_context, memory_context, use_tools)
-        else:
-            raise ValueError(f"Unknown LLM_PROVIDER: {provider}")
+        raise ValueError(f"Unknown LLM provider: {provider}")
+
+
+def _stream_copilot(
+    user_message: str,
+    model: str,
+    ambient_context: str = "",
+    memory_context: str = "",
+    use_tools: bool = False,
+) -> Generator[str, None, None]:
+    from core import copilot_client
+
+    parts = []
+    if memory_context:
+        parts.append(memory_context)
+    if ambient_context:
+        parts.append("Context:\n" + ambient_context)
+    system = "\n\n".join(parts)
+    yield from copilot_client.stream(
+        user_message,
+        model,
+        system=system,
+        allow_tools=use_tools,
+    )
 
 
 # ------------------------------------------------------------------
@@ -690,7 +1040,7 @@ def _run_anthropic_tool_loop(
         tool_results = []
         for block in final.content:
             if getattr(block, "type", "") == "tool_use":
-                result = _execute_context_tool(block.name, block.input or {})
+                result = _execute_model_tool(block.name, block.input or {})
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
@@ -704,7 +1054,7 @@ def _run_anthropic_tool_loop(
             max_tokens=max_tokens,
             system=system,
             messages=messages,
-            tools=_CONTEXT_TOOLS,
+            tools=_get_tool_schemas(),
         )
         for block in response.content:
             if getattr(block, "type", "") == "text":
@@ -769,7 +1119,7 @@ def _stream_anthropic(
         max_tokens=512,
         system=system,
         messages=messages,
-        tools=_CONTEXT_TOOLS,
+        tools=_get_tool_schemas(),
     ) as stream:
         for text in stream.text_stream:
             yield text
@@ -810,13 +1160,22 @@ def stream_rewrite(selected_text: str, intent_prompt: str = "Rewrite or fix the 
     import time
     ts = time.strftime("%H:%M:%S")
     print(f"[llm {ts}] Rewrite request ({len(selected_text)} chars) — {intent_prompt[:60]!r}")
-    _check_llm_config()
     user_message = f"{intent_prompt}:\n\n{selected_text}"
-    provider = config.LLM_PROVIDER.lower()
+    candidates = _route_candidates(config.LLM_PROVIDER, config.LLM_MODEL, config.LLM_FALLBACKS)
+    yield from _stream_with_fallbacks(
+        "rewrite",
+        candidates,
+        lambda provider, model: _stream_single_rewrite_route(provider, model, user_message),
+    )
+
+
+def _stream_single_rewrite_route(provider: str, model: str, user_message: str) -> Generator[str, None, None]:
+    _check_route_config(provider, model, "LLM")
+    _log_model_route("rewrite", provider, model, use_tools=False)
     if provider in ("groq", "openai"):
-        client = _get_openai_client()
+        client = _dynamic_openai_client(provider)
         with client.chat.completions.create(
-            model=config.LLM_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": _REWRITE_SYSTEM_PROMPT},
                 {"role": "user",   "content": user_message},
@@ -830,9 +1189,9 @@ def stream_rewrite(selected_text: str, intent_prompt: str = "Rewrite or fix the 
                 if delta:
                     yield delta
     elif provider == "anthropic":
-        client = _get_anthropic_client()
+        client = _dynamic_anthropic_client()
         with client.messages.stream(
-            model=config.LLM_MODEL,
+            model=model,
             max_tokens=1024,
             system=_REWRITE_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_message}],
@@ -840,8 +1199,27 @@ def stream_rewrite(selected_text: str, intent_prompt: str = "Rewrite or fix the 
         ) as stream:
             for text in stream.text_stream:
                 yield text
+    elif provider == "copilot":
+        from core import copilot_client
+        yield from copilot_client.stream(
+            user_message,
+            model,
+            system=_REWRITE_SYSTEM_PROMPT,
+        )
+    elif provider == "chatgpt":
+        with _get_codex_client().responses.stream(
+            model=model,
+            input=[{"type": "message", "role": "user", "content": [{"type": "input_text", "text": user_message}]}],
+            instructions=_REWRITE_SYSTEM_PROMPT,
+            store=False,
+        ) as stream:
+            for event in stream:
+                if getattr(event, 'type', '') == 'response.output_text.delta':
+                    delta = getattr(event, 'delta', '')
+                    if delta:
+                        yield delta
     else:
-        raise ValueError(f"Unknown LLM_PROVIDER: {provider}")
+        raise ValueError(f"Unknown rewrite provider: {provider}")
 
 
 # ------------------------------------------------------------------
@@ -861,9 +1239,6 @@ def stream_response_with_history(
         memory_context:  Pre-formatted LTM facts from core.memory — appended to
                          the system message so the model is aware of user facts.
     """
-    _check_chat_llm_config()
-    provider = config.CHAT_LLM_PROVIDER.lower()
-
     # Inject memory context into the system message (or prepend one)
     if memory_context:
         sys_idx = next(
@@ -877,10 +1252,25 @@ def stream_response_with_history(
             }
         else:
             messages = [{"role": "system", "content": memory_context}] + list(messages)
+    candidates = _route_candidates(
+        config.CHAT_LLM_PROVIDER,
+        config.CHAT_LLM_MODEL,
+        config.CHAT_LLM_FALLBACKS,
+    )
+    yield from _stream_with_fallbacks(
+        "chat",
+        candidates,
+        lambda provider, model: _stream_single_history_route(provider, model, messages),
+    )
+
+
+def _stream_single_history_route(provider: str, model: str, messages: list) -> Generator[str, None, None]:
+    _check_route_config(provider, model, "CHAT_LLM")
+    _log_model_route("chat", provider, model, use_tools=(provider == "anthropic"))
     if provider in ("groq", "openai"):
-        client = _get_chat_openai_client()
+        client = _dynamic_openai_client(provider)
         with client.chat.completions.create(
-            model=config.CHAT_LLM_MODEL,
+            model=model,
             messages=messages,
             stream=True,
             max_tokens=1024,
@@ -891,22 +1281,20 @@ def stream_response_with_history(
                 if delta:
                     yield delta
     elif provider == "anthropic":
-        client = _get_chat_anthropic_client()
+        client = _dynamic_anthropic_client()
         system = next((m["content"] for m in messages if m["role"] == "system"), "")
         _VALID_KEYS = {"role", "content"}
         turns = [
             {k: v for k, v in m.items() if k in _VALID_KEYS}
             for m in messages if m["role"] != "system"
         ]
-        # Use TOOL_LLM_MODEL (Sonnet) — Haiku ignores web_search_20250305.
-        tool_model = config.TOOL_LLM_MODEL
         # Tool-enabled loop — stream first round, block only if a tool is actually called.
         with client.messages.stream(
-            model=tool_model,
+            model=model,
             max_tokens=1024,
             system=system,
             messages=turns,
-            tools=_CONTEXT_TOOLS,
+            tools=_get_tool_schemas(),
         ) as stream:
             for text in stream.text_stream:
                 yield text
@@ -915,7 +1303,7 @@ def stream_response_with_history(
         if final.stop_reason != "tool_use":
             return
 
-        yield from _run_anthropic_tool_loop(client, turns, final, tool_model, system, max_tokens=1024)
+        yield from _run_anthropic_tool_loop(client, turns, final, model, system, max_tokens=1024)
     elif provider == "chatgpt":
         # For the chat history path, extract the last user message and use Responses API.
         # The full history is packed into a single user turn with prior turns prefixed.
@@ -929,7 +1317,7 @@ def stream_response_with_history(
             history_prefix += f"{label}: {m['content']}\n"
         full_input = (history_prefix + last_user) if history_prefix else last_user
         with _get_chat_codex_client().responses.stream(
-            model=config.CHAT_LLM_MODEL,
+            model=model,
             input=[{"type": "message", "role": "user", "content": [{"type": "input_text", "text": full_input}]}],
             instructions=system_msg,
             store=False,
@@ -939,5 +1327,20 @@ def stream_response_with_history(
                     delta = getattr(event, 'delta', '')
                     if delta:
                         yield delta
+    elif provider == "copilot":
+        from core import copilot_client
+
+        system_msg = next((m["content"] for m in messages if m["role"] == "system"), "")
+        turns = [m for m in messages if m["role"] != "system"]
+        full_input = ""
+        for m in turns:
+            label = "User" if m["role"] == "user" else "Assistant"
+            full_input += f"{label}: {m['content']}\n"
+        yield from copilot_client.stream(
+            full_input.strip(),
+            model,
+            system=system_msg,
+            session_id="wisp-chat",
+        )
     else:
         raise ValueError(f"Unknown chat LLM provider: {provider}")

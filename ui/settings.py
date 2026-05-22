@@ -12,11 +12,12 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QLineEdit, QTextEdit, QComboBox, QCheckBox,
     QPushButton, QTabWidget, QWidget, QFrame, QMessageBox,
-    QSizePolicy,
+    QScrollArea, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
 from dotenv import dotenv_values
+from core import secret_store
 from ui.window_utils import fit_window_to_screen
 
 ENV_PATH = Path(__file__).parent.parent / ".env"
@@ -174,7 +175,8 @@ def _format_env_value(value: str) -> str:
     return value
 
 
-def _write_env(vals: dict[str, str]):
+def _write_env(vals: dict[str, str], remove_keys: set[str] | None = None):
+    remove_keys = remove_keys or set()
     lines = []
     if ENV_PATH.exists():
         raw = ENV_PATH.read_text(encoding="utf-8").splitlines()
@@ -183,7 +185,9 @@ def _write_env(vals: dict[str, str]):
             stripped = line.strip()
             if stripped and not stripped.startswith("#") and "=" in stripped:
                 k = stripped.split("=", 1)[0].strip()
-                if k in vals:
+                if k in remove_keys:
+                    continue
+                elif k in vals:
                     lines.append(f"{k}={_format_env_value(vals[k])}")
                     written.add(k)
                 else:
@@ -213,6 +217,31 @@ class SettingsDialog(QDialog):
         self._build_ui()
         self._load_values()
         fit_window_to_screen(self, preferred_width=620, preferred_height=620)
+
+    def _save_api_keys_to_keychain(self) -> bool:
+        labels = {
+            "GROQ_API_KEY": "Groq",
+            "OPENAI_API_KEY": "OpenAI",
+            "ANTHROPIC_API_KEY": "Anthropic",
+            "CARTESIA_API_KEY": "Cartesia",
+            "ELEVENLABS_API_KEY": "ElevenLabs",
+        }
+        try:
+            secret_store.migrate_env_secrets(self._env)
+            for name in secret_store.API_KEY_NAMES:
+                value = _get(self._fields[name]).strip()
+                if value:
+                    secret_store.set_secret(name, value)
+                    self._fields[name].clear()  # type: ignore[attr-defined]
+                    self._fields[name].setPlaceholderText(f"{labels[name]} key stored in OS keychain")  # type: ignore[attr-defined]
+            return True
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Keychain error",
+                f"Could not save API keys to the OS keychain:\n{exc}",
+            )
+            return False
 
     # ------------------------------------------------------------------
     # UI construction
@@ -263,21 +292,32 @@ class SettingsDialog(QDialog):
         root.addLayout(btn_row)
 
     def _tab_llm(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
         w = QWidget()
         f = QFormLayout(w)
         f.setSpacing(10)
         f.setContentsMargins(12, 12, 12, 12)
 
         self._fields["LLM_PROVIDER"] = self._combo(
-            ["groq", "openai", "anthropic", "chatgpt"]
+            ["groq", "openai", "anthropic", "chatgpt", "copilot"]
         )
         self._fields["LLM_MODEL"] = QLineEdit()
+        self._fallback_rows: dict[str, list[dict]] = {
+            "LLM_FALLBACKS": [],
+            "CHAT_LLM_FALLBACKS": [],
+            "VISION_LLM_FALLBACKS": [],
+        }
         self._fields["GROQ_API_KEY"] = self._password()
         self._fields["OPENAI_API_KEY"] = self._password()
         self._fields["ANTHROPIC_API_KEY"] = self._password()
+        self._fields["GROQ_API_KEY"].setPlaceholderText("Stored in OS keychain")
+        self._fields["OPENAI_API_KEY"].setPlaceholderText("Stored in OS keychain")
+        self._fields["ANTHROPIC_API_KEY"].setPlaceholderText("Stored in OS keychain")
 
         self._fields["CHAT_LLM_PROVIDER"] = self._combo(
-            ["groq", "openai", "anthropic", "chatgpt"]
+            ["groq", "openai", "anthropic", "chatgpt", "copilot"]
         )
 
         def _update_model_placeholders():
@@ -295,10 +335,14 @@ class SettingsDialog(QDialog):
 
         f.addRow("Provider", self._fields["LLM_PROVIDER"])
         f.addRow("Model", self._fields["LLM_MODEL"])
+        self._add_fallback_editor(f, "Fallback priority", "LLM_FALLBACKS")
         f.addRow(_sep(), _sep())
         note = QLabel("<small><i>openai</i> = API key (pay-per-token) &nbsp;|&nbsp; <i>chatgpt</i> = your Pro/Plus subscription</small>")
         note.setWordWrap(True)
         f.addRow("", note)
+        key_note = QLabel("<small>API keys are saved to the OS keychain. Leave blank to keep the stored key.</small>")
+        key_note.setWordWrap(True)
+        f.addRow("", key_note)
         f.addRow("Groq API key", self._fields["GROQ_API_KEY"])
         f.addRow("OpenAI API key", self._fields["OPENAI_API_KEY"])
         f.addRow("Anthropic API key", self._fields["ANTHROPIC_API_KEY"])
@@ -306,6 +350,7 @@ class SettingsDialog(QDialog):
         f.addRow(QLabel("<i>Chat / Elaborate model</i>"), QLabel(""))
         f.addRow("Chat provider", self._fields["CHAT_LLM_PROVIDER"])
         f.addRow("Chat model", self._fields["CHAT_LLM_MODEL"])
+        self._add_fallback_editor(f, "Chat fallback priority", "CHAT_LLM_FALLBACKS")
         f.addRow(_sep(), _sep())
         self._fields["VISION_LLM_PROVIDER"] = self._combo(
             ["", "anthropic", "openai", "chatgpt"]
@@ -315,6 +360,7 @@ class SettingsDialog(QDialog):
         f.addRow(QLabel("<i>Vision model (screen snip)</i>"), QLabel(""))
         f.addRow("Vision provider", self._fields["VISION_LLM_PROVIDER"])
         f.addRow("Vision model", self._fields["VISION_LLM_MODEL"])
+        self._add_fallback_editor(f, "Vision fallback priority", "VISION_LLM_FALLBACKS", providers=["", "anthropic", "openai", "chatgpt"])
 
         # ---- ChatGPT Pro/Plus OAuth section ----
         f.addRow(_sep(), _sep())
@@ -341,7 +387,77 @@ class SettingsDialog(QDialog):
         self._cgpt_logout_btn.clicked.connect(self._chatgpt_logout)
         f.addRow("", cgpt_btn_w)
 
-        return w
+        # ---- GitHub OAuth section ----
+        f.addRow(_sep(), _sep())
+        f.addRow(
+            _desc_label(
+                "GitHub OAuth",
+                "Sign in opens GitHub in your browser. Client ID is bundled; override only for development.",
+            ),
+            QLabel(""),
+        )
+        self._fields["GITHUB_CLIENT_ID"] = QLineEdit()
+        self._fields["GITHUB_CLIENT_ID"].setPlaceholderText("Optional custom OAuth app client ID")
+        self._fields["GITHUB_OAUTH_SCOPES"] = QLineEdit()
+        self._fields["GITHUB_OAUTH_SCOPES"].setPlaceholderText("e.g. repo read:user user:email")
+        f.addRow("Custom client ID", self._fields["GITHUB_CLIENT_ID"])
+        f.addRow("GitHub scopes", self._fields["GITHUB_OAUTH_SCOPES"])
+
+        self._github_status_lbl = QLabel()
+        self._github_status_lbl.setWordWrap(True)
+        self._refresh_github_status()
+        f.addRow("Status", self._github_status_lbl)
+
+        github_btn_w = QWidget()
+        github_btn_h = QHBoxLayout(github_btn_w)
+        github_btn_h.setContentsMargins(0, 0, 0, 0)
+        github_btn_h.setSpacing(6)
+        self._github_login_btn = QPushButton("Sign in")
+        self._github_logout_btn = QPushButton("Sign out")
+        github_btn_h.addWidget(self._github_login_btn)
+        github_btn_h.addWidget(self._github_logout_btn)
+        github_btn_h.addStretch()
+        self._github_login_btn.clicked.connect(self._github_login_device)
+        self._github_logout_btn.clicked.connect(self._github_logout)
+        f.addRow("", github_btn_w)
+
+        # ---- GitHub Copilot token section ----
+        f.addRow(_sep(), _sep())
+        f.addRow(
+            _desc_label(
+                "GitHub Copilot token",
+                "Use a fine-grained PAT with Copilot Requests: Read-only. Stored only in the OS keychain.",
+            ),
+            QLabel(""),
+        )
+
+        self._copilot_token_edit = self._password()
+        self._copilot_token_edit.setPlaceholderText("github_pat_... (not saved to .env)")
+        f.addRow("Token", self._copilot_token_edit)
+
+        self._copilot_status_lbl = QLabel()
+        self._copilot_status_lbl.setWordWrap(True)
+        self._refresh_copilot_status()
+        f.addRow("Status", self._copilot_status_lbl)
+
+        copilot_btn_w = QWidget()
+        copilot_btn_h = QHBoxLayout(copilot_btn_w)
+        copilot_btn_h.setContentsMargins(0, 0, 0, 0)
+        copilot_btn_h.setSpacing(6)
+        self._copilot_save_btn = QPushButton("Save token")
+        self._copilot_test_btn = QPushButton("Test token / SDK")
+        self._copilot_clear_btn = QPushButton("Clear token")
+        copilot_btn_h.addWidget(self._copilot_save_btn)
+        copilot_btn_h.addWidget(self._copilot_test_btn)
+        copilot_btn_h.addWidget(self._copilot_clear_btn)
+        copilot_btn_h.addStretch()
+        self._copilot_save_btn.clicked.connect(self._copilot_save_token)
+        self._copilot_test_btn.clicked.connect(self._copilot_test_token)
+        self._copilot_clear_btn.clicked.connect(self._copilot_clear_token)
+        f.addRow("", copilot_btn_w)
+
+        scroll.setWidget(w)
+        return scroll
 
     def _refresh_chatgpt_status(self) -> None:
         try:
@@ -439,6 +555,147 @@ class SettingsDialog(QDialog):
             pass
         self._refresh_chatgpt_status()
 
+    def _refresh_github_status(self) -> None:
+        try:
+            from core import github_auth
+            tokens = github_auth.get_tokens()
+            if tokens:
+                login = (tokens.get("user") or {}).get("login") or ""
+                scopes = tokens.get("scope") or ""
+                label = "Logged in" + (f" as {login}" if login else "")
+                if scopes:
+                    label += f"\nScopes: {scopes}"
+                self._github_status_lbl.setText(label)
+                self._github_status_lbl.setStyleSheet("color: #80c080;")
+            else:
+                self._github_status_lbl.setText("Not logged in")
+                self._github_status_lbl.setStyleSheet("color: palette(mid);")
+        except Exception as exc:
+            self._github_status_lbl.setText(f"Error reading status: {exc}")
+            self._github_status_lbl.setStyleSheet("color: #c04040;")
+
+    def _github_login_device(self) -> None:
+        import webbrowser
+        import config as cfg
+        from core import github_auth
+
+        override_client_id = _get(self._fields["GITHUB_CLIENT_ID"]).strip()
+        cfg.GITHUB_CLIENT_ID = override_client_id or getattr(cfg, "GITHUB_DEFAULT_CLIENT_ID", "")
+        cfg.GITHUB_OAUTH_SCOPES = _get(self._fields["GITHUB_OAUTH_SCOPES"]).strip()
+        if not cfg.GITHUB_CLIENT_ID:
+            self._github_status_lbl.setText("No bundled GitHub OAuth client ID is configured yet.")
+            self._github_status_lbl.setStyleSheet("color: #c04040;")
+            return
+
+        self._github_status_lbl.setText("Starting GitHub device auth...")
+        self._github_status_lbl.setStyleSheet("color: #c0c040;")
+        self._start_github_auth_poll()
+
+        def on_code(url, user_code):
+            self._github_auth_poll_message = f"__device_code__{url}\n{user_code}"
+            try:
+                webbrowser.open(url)
+            except Exception:
+                pass
+
+        def on_success(_tokens):
+            pass
+
+        def on_error(msg):
+            self._github_auth_poll_message = msg
+
+        github_auth.start_device_login(on_code, on_success, on_error)
+
+    def _start_github_auth_poll(self) -> None:
+        self._github_auth_poll_message: str | None = None
+        self._github_auth_poll_ticks = 0
+        self._github_auth_poll_timer = QTimer(self)
+        self._github_auth_poll_timer.setInterval(1000)
+        self._github_auth_poll_timer.timeout.connect(self._github_auth_poll_tick)
+        self._github_auth_poll_timer.start()
+
+    def _github_auth_poll_tick(self) -> None:
+        if self._github_auth_poll_message is not None:
+            msg = self._github_auth_poll_message
+            self._github_auth_poll_message = None
+            if msg.startswith("__device_code__"):
+                body = msg[len("__device_code__"):]
+                url, _, code = body.partition("\n")
+                self._github_status_lbl.setText(f"Go to: {url}\nEnter code: {code}")
+                self._github_status_lbl.setStyleSheet("color: #80a0ff;")
+                return
+            self._github_auth_poll_timer.stop()
+            self._github_status_lbl.setText(f"Error: {msg}")
+            self._github_status_lbl.setStyleSheet("color: #c04040;")
+            return
+        try:
+            from core import github_auth
+            if github_auth.get_tokens():
+                self._github_auth_poll_timer.stop()
+                self._refresh_github_status()
+                return
+        except Exception:
+            pass
+        self._github_auth_poll_ticks += 1
+        if self._github_auth_poll_ticks >= 900:
+            self._github_auth_poll_timer.stop()
+            self._github_status_lbl.setText("Timed out waiting for GitHub login")
+            self._github_status_lbl.setStyleSheet("color: #c04040;")
+
+    def _github_logout(self) -> None:
+        try:
+            from core import github_auth
+            github_auth.clear_tokens()
+        except Exception:
+            pass
+        self._refresh_github_status()
+
+    def _refresh_copilot_status(self) -> None:
+        try:
+            from core import copilot_auth
+            stored, message = copilot_auth.token_status()
+            self._copilot_status_lbl.setText(message)
+            self._copilot_status_lbl.setStyleSheet(
+                "color: #80c080;" if stored else "color: palette(mid);"
+            )
+        except Exception as exc:
+            self._copilot_status_lbl.setText(f"Keychain error: {exc}")
+            self._copilot_status_lbl.setStyleSheet("color: #c04040;")
+
+    def _copilot_save_token(self) -> None:
+        try:
+            from core import copilot_auth
+            copilot_auth.save_token(self._copilot_token_edit.text())
+            self._copilot_token_edit.clear()
+            self._refresh_copilot_status()
+        except Exception as exc:
+            self._copilot_status_lbl.setText(str(exc))
+            self._copilot_status_lbl.setStyleSheet("color: #c04040;")
+            QMessageBox.warning(self, "GitHub Copilot token", str(exc))
+
+    def _copilot_clear_token(self) -> None:
+        try:
+            from core import copilot_auth
+            copilot_auth.clear_token()
+            self._copilot_token_edit.clear()
+            self._refresh_copilot_status()
+        except Exception as exc:
+            self._copilot_status_lbl.setText(str(exc))
+            self._copilot_status_lbl.setStyleSheet("color: #c04040;")
+            QMessageBox.warning(self, "GitHub Copilot token", str(exc))
+
+    def _copilot_test_token(self) -> None:
+        try:
+            from core import copilot_client
+            ok, message = copilot_client.test_copilot_token()
+            self._copilot_status_lbl.setText(message)
+            self._copilot_status_lbl.setStyleSheet(
+                "color: #80c080;" if ok else "color: #c04040;"
+            )
+        except Exception as exc:
+            self._copilot_status_lbl.setText(f"Test failed: {exc}")
+            self._copilot_status_lbl.setStyleSheet("color: #c04040;")
+
     def _tab_tts(self) -> QWidget:
         w = QWidget()
         f = QFormLayout(w)
@@ -449,12 +706,17 @@ class SettingsDialog(QDialog):
             ["cartesia", "elevenlabs", "none"]
         )
         self._fields["CARTESIA_API_KEY"] = self._password()
+        self._fields["CARTESIA_API_KEY"].setPlaceholderText("Stored in OS keychain")
         self._fields["CARTESIA_VOICE_ID"] = QLineEdit()
         self._fields["CARTESIA_VOICE_ID"].setPlaceholderText("e.g. a0e99841-438c-4a64-b679-ae501e7d6091")
         self._fields["ELEVENLABS_API_KEY"] = self._password()
+        self._fields["ELEVENLABS_API_KEY"].setPlaceholderText("Stored in OS keychain")
 
         f.addRow("Provider", self._fields["TTS_PROVIDER"])
         f.addRow(_sep(), _sep())
+        tts_key_note = QLabel("<small>API keys are saved to the OS keychain. Leave blank to keep the stored key.</small>")
+        tts_key_note.setWordWrap(True)
+        f.addRow("", tts_key_note)
         f.addRow("Cartesia API key", self._fields["CARTESIA_API_KEY"])
         f.addRow("Cartesia Voice ID", self._fields["CARTESIA_VOICE_ID"])
         f.addRow(_sep(), _sep())
@@ -488,6 +750,21 @@ class SettingsDialog(QDialog):
         # Caller hotkeys section
         self._keybinds_layout.addWidget(QLabel("<b>Caller Hotkeys</b>"))
 
+        limits_frame = QFrame()
+        limits_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        limits_layout = QFormLayout(limits_frame)
+        limits_layout.setContentsMargins(8, 6, 8, 6)
+        limits_layout.setSpacing(6)
+        self._fields["CONTEXT_BROWSER_MAX_CHARS"] = QLineEdit()
+        self._fields["CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS"] = QLineEdit()
+        self._fields["CONTEXT_TOOL_DOCUMENT_MAX_CHARS"] = QLineEdit()
+        self._fields["TOOL_PLUGIN_DIR"] = QLineEdit()
+        limits_layout.addRow("Browser fetch chars", self._fields["CONTEXT_BROWSER_MAX_CHARS"])
+        limits_layout.addRow("Auto document chars", self._fields["CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS"])
+        limits_layout.addRow("Tool document chars", self._fields["CONTEXT_TOOL_DOCUMENT_MAX_CHARS"])
+        limits_layout.addRow("Tool plugin folder", self._fields["TOOL_PLUGIN_DIR"])
+        self._keybinds_layout.addWidget(limits_frame)
+
         self._callers_container = QWidget()
         self._callers_vlayout = QVBoxLayout(self._callers_container)
         self._callers_vlayout.setSpacing(8)
@@ -514,6 +791,21 @@ class SettingsDialog(QDialog):
         self._fields["HOTKEY_ADD_CONTEXT"]   = self._kb_special_row("Add selection as context")
         self._fields["HOTKEY_CLEAR_CONTEXT"] = self._kb_special_row("Clear context")
         self._fields["HOTKEY_SNIP"]          = self._kb_special_row("Snip screen region")
+
+        snip_ctx = QWidget()
+        snip_h = QHBoxLayout(snip_ctx)
+        snip_h.setContentsMargins(0, 2, 0, 2)
+        snip_h.setSpacing(10)
+        self._fields["SNIP_CONTEXT_AMBIENT"] = QCheckBox("Ambient")
+        self._fields["SNIP_CONTEXT_DOCUMENTS"] = QCheckBox("Open docs")
+        self._fields["SNIP_CONTEXT_TOOLS"] = QCheckBox("Tools")
+        snip_h.addSpacing(128)
+        snip_h.addWidget(QLabel("Snip context:"))
+        snip_h.addWidget(self._fields["SNIP_CONTEXT_AMBIENT"])
+        snip_h.addWidget(self._fields["SNIP_CONTEXT_DOCUMENTS"])
+        snip_h.addWidget(self._fields["SNIP_CONTEXT_TOOLS"])
+        snip_h.addStretch()
+        self._keybinds_layout.addWidget(snip_ctx)
 
         self._keybinds_layout.addStretch()
 
@@ -548,6 +840,10 @@ class SettingsDialog(QDialog):
         label: str = "",
         paste_back: bool = False,
         custom_key: str = "s",
+        context_ambient: bool = True,
+        context_documents: bool = True,
+        context_tools: bool = True,
+        context_screenshot: bool = False,
         intents: "list[dict] | None" = None,
     ) -> None:
         """Add a caller block (framed panel with header + intent rows) to the UI."""
@@ -594,6 +890,26 @@ class SettingsDialog(QDialog):
         hdr_h.addWidget(del_caller_btn)
         outer.addWidget(hdr)
 
+        context_row = QWidget()
+        context_h = QHBoxLayout(context_row)
+        context_h.setContentsMargins(0, 0, 0, 0)
+        context_h.setSpacing(10)
+        ambient_cb = QCheckBox("Ambient")
+        ambient_cb.setChecked(context_ambient)
+        docs_cb = QCheckBox("Open docs")
+        docs_cb.setChecked(context_documents)
+        tools_cb = QCheckBox("Tools")
+        tools_cb.setChecked(context_tools)
+        screenshot_cb = QCheckBox("Auto screenshot")
+        screenshot_cb.setChecked(context_screenshot)
+        context_h.addWidget(QLabel("Context:"))
+        context_h.addWidget(ambient_cb)
+        context_h.addWidget(docs_cb)
+        context_h.addWidget(tools_cb)
+        context_h.addWidget(screenshot_cb)
+        context_h.addStretch()
+        outer.addWidget(context_row)
+
         # Intent rows column header
         from PyQt6.QtWidgets import QSizePolicy as SP
         int_hdr = QWidget()
@@ -623,6 +939,10 @@ class SettingsDialog(QDialog):
             "label":          label_edit,
             "paste_back":     paste_cb,
             "custom_key":     custom_key_edit,
+            "context_ambient": ambient_cb,
+            "context_documents": docs_cb,
+            "context_tools": tools_cb,
+            "context_screenshot": screenshot_cb,
             "intents_layout": intents_vlayout,
             "intent_rows":    [],
         }
@@ -824,6 +1144,88 @@ class SettingsDialog(QDialog):
         le.setEchoMode(QLineEdit.EchoMode.Password)
         return le
 
+    def _add_fallback_editor(
+        self,
+        form: QFormLayout,
+        label: str,
+        key: str,
+        providers: list[str] | None = None,
+    ) -> None:
+        box = QWidget()
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        rows_widget = QWidget()
+        rows_layout = QVBoxLayout(rows_widget)
+        rows_layout.setContentsMargins(0, 0, 0, 0)
+        rows_layout.setSpacing(4)
+        layout.addWidget(rows_widget)
+
+        add_btn = QPushButton("+ Add fallback")
+        add_btn.setFixedWidth(120)
+        add_btn.clicked.connect(lambda: self._add_fallback_row(key, providers=providers))
+        add_wrap = QHBoxLayout()
+        add_wrap.setContentsMargins(0, 0, 0, 0)
+        add_wrap.addWidget(add_btn)
+        add_wrap.addStretch()
+        layout.addLayout(add_wrap)
+
+        self._fields[key] = box
+        self._fallback_rows[key] = []
+        self._fallback_rows[f"{key}__layout"] = rows_layout  # type: ignore[index]
+        self._fallback_rows[f"{key}__providers"] = providers or ["groq", "openai", "anthropic", "chatgpt", "copilot"]  # type: ignore[index]
+        form.addRow(label, box)
+
+    def _add_fallback_row(
+        self,
+        key: str,
+        provider: str = "",
+        model: str = "",
+        providers: list[str] | None = None,
+    ) -> None:
+        row_w = QWidget()
+        h = QHBoxLayout(row_w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(6)
+
+        provider_options = providers or self._fallback_rows.get(f"{key}__providers", ["groq", "openai", "anthropic", "chatgpt", "copilot"])  # type: ignore[arg-type]
+        provider_combo = self._combo(provider_options, provider)
+        provider_combo.setFixedWidth(130)
+        model_edit = QLineEdit(model)
+        model_edit.setPlaceholderText("model")
+        remove_btn = QPushButton("Remove")
+        remove_btn.setFixedWidth(70)
+        h.addWidget(provider_combo)
+        h.addWidget(model_edit)
+        h.addWidget(remove_btn)
+
+        row_info = {"widget": row_w, "provider": provider_combo, "model": model_edit}
+        remove_btn.clicked.connect(lambda: self._remove_fallback_row(key, row_info))
+        rows_layout = self._fallback_rows[f"{key}__layout"]  # type: ignore[index]
+        rows_layout.addWidget(row_w)
+        self._fallback_rows[key].append(row_info)
+
+    def _remove_fallback_row(self, key: str, row_info: dict) -> None:
+        if row_info in self._fallback_rows[key]:
+            self._fallback_rows[key].remove(row_info)
+        row_info["widget"].deleteLater()
+
+    def _set_fallback_rows(self, key: str, raw: str) -> None:
+        for row in list(self._fallback_rows[key]):
+            self._remove_fallback_row(key, row)
+        for provider, model in _parse_fallback_rows(raw):
+            self._add_fallback_row(key, provider, model)
+
+    def _get_fallback_rows(self, key: str) -> str:
+        parts = []
+        for row in self._fallback_rows[key]:
+            provider = row["provider"].currentText().strip()
+            model = row["model"].text().strip()
+            if provider and model:
+                parts.append(f"{provider}:{model}")
+        return "\n".join(parts)
+
     # ------------------------------------------------------------------
     # Load / Save
     # ------------------------------------------------------------------
@@ -833,20 +1235,31 @@ class SettingsDialog(QDialog):
 
         _set(self._fields["LLM_PROVIDER"], self._env.get("LLM_PROVIDER", cfg.LLM_PROVIDER))
         _set(self._fields["LLM_MODEL"], self._env.get("LLM_MODEL", cfg.LLM_MODEL))
+        self._set_fallback_rows("LLM_FALLBACKS", self._env.get("LLM_FALLBACKS", cfg.LLM_FALLBACKS))
         _set(self._fields["CHAT_LLM_PROVIDER"], self._env.get("CHAT_LLM_PROVIDER", cfg.CHAT_LLM_PROVIDER))
         _set(self._fields["CHAT_LLM_MODEL"], self._env.get("CHAT_LLM_MODEL", cfg.CHAT_LLM_MODEL))
-        _set(self._fields["GROQ_API_KEY"], self._env.get("GROQ_API_KEY", ""))
-        _set(self._fields["OPENAI_API_KEY"], self._env.get("OPENAI_API_KEY", ""))
-        _set(self._fields["ANTHROPIC_API_KEY"], self._env.get("ANTHROPIC_API_KEY", ""))
+        self._set_fallback_rows("CHAT_LLM_FALLBACKS", self._env.get("CHAT_LLM_FALLBACKS", cfg.CHAT_LLM_FALLBACKS))
         _set(self._fields["TTS_PROVIDER"], self._env.get("TTS_PROVIDER", cfg.TTS_PROVIDER))
-        _set(self._fields["CARTESIA_API_KEY"], self._env.get("CARTESIA_API_KEY", ""))
         _set(self._fields["CARTESIA_VOICE_ID"], self._env.get("CARTESIA_VOICE_ID", ""))
-        _set(self._fields["ELEVENLABS_API_KEY"], self._env.get("ELEVENLABS_API_KEY", ""))
+        for name in secret_store.API_KEY_NAMES:
+            self._fields[name].clear()  # type: ignore[attr-defined]
+            status = "stored in OS keychain" if secret_store.has_secret(name) or self._env.get(name) else "not configured"
+            self._fields[name].setPlaceholderText(status)  # type: ignore[attr-defined]
         _set(self._fields["HOTKEY_ADD_CONTEXT"],   self._env.get("HOTKEY_ADD_CONTEXT",   cfg.HOTKEY_ADD_CONTEXT))
         _set(self._fields["HOTKEY_CLEAR_CONTEXT"], self._env.get("HOTKEY_CLEAR_CONTEXT", cfg.HOTKEY_CLEAR_CONTEXT))
         _set(self._fields["HOTKEY_SNIP"],          self._env.get("HOTKEY_SNIP",          cfg.HOTKEY_SNIP))
+        self._fields["SNIP_CONTEXT_AMBIENT"].setChecked(self._env.get("SNIP_CONTEXT_AMBIENT", str(cfg.SNIP_CONTEXT_AMBIENT)).lower() == "true")  # type: ignore
+        self._fields["SNIP_CONTEXT_DOCUMENTS"].setChecked(self._env.get("SNIP_CONTEXT_DOCUMENTS", str(cfg.SNIP_CONTEXT_DOCUMENTS)).lower() == "true")  # type: ignore
+        self._fields["SNIP_CONTEXT_TOOLS"].setChecked(self._env.get("SNIP_CONTEXT_TOOLS", str(cfg.SNIP_CONTEXT_TOOLS)).lower() == "true")  # type: ignore
         _set(self._fields["VISION_LLM_PROVIDER"],  self._env.get("VISION_LLM_PROVIDER",  cfg.VISION_LLM_PROVIDER))
         _set(self._fields["VISION_LLM_MODEL"],     self._env.get("VISION_LLM_MODEL",     cfg.VISION_LLM_MODEL))
+        self._set_fallback_rows("VISION_LLM_FALLBACKS", self._env.get("VISION_LLM_FALLBACKS", cfg.VISION_LLM_FALLBACKS))
+        _set(self._fields["GITHUB_CLIENT_ID"],     self._env.get("GITHUB_CLIENT_ID",     cfg.GITHUB_CLIENT_ID))
+        _set(self._fields["GITHUB_OAUTH_SCOPES"],  self._env.get("GITHUB_OAUTH_SCOPES",  cfg.GITHUB_OAUTH_SCOPES))
+        _set(self._fields["CONTEXT_BROWSER_MAX_CHARS"], self._env.get("CONTEXT_BROWSER_MAX_CHARS", str(cfg.CONTEXT_BROWSER_MAX_CHARS)))
+        _set(self._fields["CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS"], self._env.get("CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS", str(cfg.CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS)))
+        _set(self._fields["CONTEXT_TOOL_DOCUMENT_MAX_CHARS"], self._env.get("CONTEXT_TOOL_DOCUMENT_MAX_CHARS", str(cfg.CONTEXT_TOOL_DOCUMENT_MAX_CHARS)))
+        _set(self._fields["TOOL_PLUGIN_DIR"], self._env.get("TOOL_PLUGIN_DIR", cfg.TOOL_PLUGIN_DIR))
 
         _set(self._fields["MEMORY_LLM_PROVIDER"],    self._env.get("MEMORY_LLM_PROVIDER",    cfg.MEMORY_LLM_PROVIDER))
         _set(self._fields["MEMORY_LLM_MODEL"],       self._env.get("MEMORY_LLM_MODEL",       cfg.MEMORY_LLM_MODEL))
@@ -878,6 +1291,10 @@ class SettingsDialog(QDialog):
                 label      = self._env.get(f"CALLER_{n}_LABEL",      cr.get("label", "")),
                 paste_back = self._env.get(f"CALLER_{n}_PASTE_BACK", str(cr.get("paste_back", False))).lower() == "true",
                 custom_key = self._env.get(f"CALLER_{n}_CUSTOM_KEY", cr.get("custom_key", "s")),
+                context_ambient = self._env.get(f"CALLER_{n}_CONTEXT_AMBIENT", str(cr.get("context_ambient", True))).lower() == "true",
+                context_documents = self._env.get(f"CALLER_{n}_CONTEXT_DOCUMENTS", str(cr.get("context_documents", True))).lower() == "true",
+                context_tools = self._env.get(f"CALLER_{n}_CONTEXT_TOOLS", str(cr.get("context_tools", True))).lower() == "true",
+                context_screenshot = self._env.get(f"CALLER_{n}_CONTEXT_SCREENSHOT", str(cr.get("context_screenshot", False))).lower() == "true",
                 intents    = intents,
             )
 
@@ -932,23 +1349,32 @@ class SettingsDialog(QDialog):
 
     def _do_save(self) -> bool:
         """Write .env. Returns True on success, False if validation failed."""
+        if not self._save_api_keys_to_keychain():
+            return False
         vals = {
             "LLM_PROVIDER":      _get(self._fields["LLM_PROVIDER"]),
             "LLM_MODEL":         _get(self._fields["LLM_MODEL"]),
+            "LLM_FALLBACKS":     self._get_fallback_rows("LLM_FALLBACKS"),
             "CHAT_LLM_PROVIDER": _get(self._fields["CHAT_LLM_PROVIDER"]),
             "CHAT_LLM_MODEL":    _get(self._fields["CHAT_LLM_MODEL"]),
-            "GROQ_API_KEY":      _get(self._fields["GROQ_API_KEY"]),
-            "OPENAI_API_KEY":    _get(self._fields["OPENAI_API_KEY"]),
-            "ANTHROPIC_API_KEY": _get(self._fields["ANTHROPIC_API_KEY"]),
+            "CHAT_LLM_FALLBACKS": self._get_fallback_rows("CHAT_LLM_FALLBACKS"),
             "TTS_PROVIDER":      _get(self._fields["TTS_PROVIDER"]),
-            "CARTESIA_API_KEY":  _get(self._fields["CARTESIA_API_KEY"]),
             "CARTESIA_VOICE_ID": _get(self._fields["CARTESIA_VOICE_ID"]),
-            "ELEVENLABS_API_KEY": _get(self._fields["ELEVENLABS_API_KEY"]),
             "HOTKEY_ADD_CONTEXT":  _get(self._fields["HOTKEY_ADD_CONTEXT"]),
             "HOTKEY_CLEAR_CONTEXT": _get(self._fields["HOTKEY_CLEAR_CONTEXT"]),
             "HOTKEY_SNIP":         _get(self._fields["HOTKEY_SNIP"]),
+            "SNIP_CONTEXT_AMBIENT": str(self._fields["SNIP_CONTEXT_AMBIENT"].isChecked()),  # type: ignore
+            "SNIP_CONTEXT_DOCUMENTS": str(self._fields["SNIP_CONTEXT_DOCUMENTS"].isChecked()),  # type: ignore
+            "SNIP_CONTEXT_TOOLS": str(self._fields["SNIP_CONTEXT_TOOLS"].isChecked()),  # type: ignore
             "VISION_LLM_PROVIDER":      _get(self._fields["VISION_LLM_PROVIDER"]),
             "VISION_LLM_MODEL":         _get(self._fields["VISION_LLM_MODEL"]),
+            "VISION_LLM_FALLBACKS":     self._get_fallback_rows("VISION_LLM_FALLBACKS"),
+            "CONTEXT_BROWSER_MAX_CHARS": _get(self._fields["CONTEXT_BROWSER_MAX_CHARS"]),
+            "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS": _get(self._fields["CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS"]),
+            "CONTEXT_TOOL_DOCUMENT_MAX_CHARS": _get(self._fields["CONTEXT_TOOL_DOCUMENT_MAX_CHARS"]),
+            "TOOL_PLUGIN_DIR": _get(self._fields["TOOL_PLUGIN_DIR"]),
+            "GITHUB_CLIENT_ID":          _get(self._fields["GITHUB_CLIENT_ID"]),
+            "GITHUB_OAUTH_SCOPES":       _get(self._fields["GITHUB_OAUTH_SCOPES"]),
             "MEMORY_LLM_PROVIDER":      _get(self._fields["MEMORY_LLM_PROVIDER"]),
             "MEMORY_LLM_MODEL":         _get(self._fields["MEMORY_LLM_MODEL"]),
             "MEMORY_CONSOLIDATION_INTERVAL": _get(self._fields["MEMORY_CONSOLIDATION_INTERVAL"]),
@@ -986,13 +1412,17 @@ class SettingsDialog(QDialog):
             vals[f"CALLER_{n}_LABEL"]         = _get(blk["label"])
             vals[f"CALLER_{n}_PASTE_BACK"]    = str(blk["paste_back"].isChecked())  # type: ignore
             vals[f"CALLER_{n}_CUSTOM_KEY"]    = _get(blk["custom_key"])
+            vals[f"CALLER_{n}_CONTEXT_AMBIENT"] = str(blk["context_ambient"].isChecked())  # type: ignore
+            vals[f"CALLER_{n}_CONTEXT_DOCUMENTS"] = str(blk["context_documents"].isChecked())  # type: ignore
+            vals[f"CALLER_{n}_CONTEXT_TOOLS"] = str(blk["context_tools"].isChecked())  # type: ignore
+            vals[f"CALLER_{n}_CONTEXT_SCREENSHOT"] = str(blk["context_screenshot"].isChecked())  # type: ignore
             vals[f"CALLER_{n}_INTENT_COUNT"]  = str(len(blk["intent_rows"]))
             for j, row in enumerate(blk["intent_rows"]):
                 m = j + 1
                 vals[f"CALLER_{n}_INTENT_{m}_KEY"]    = _get(row["key"])
                 vals[f"CALLER_{n}_INTENT_{m}_LABEL"]  = _get(row["label"])
                 vals[f"CALLER_{n}_INTENT_{m}_PROMPT"] = _get(row["prompt"])
-        _write_env(vals)
+        _write_env(vals, remove_keys=set(secret_store.API_KEY_NAMES))
         return True
 
 
@@ -1005,6 +1435,7 @@ _MODEL_HINTS: dict[str, str] = {
     "openai":    "e.g. gpt-4o",
     "anthropic": "e.g. claude-sonnet-4-5",
     "chatgpt":   "gpt-5.5  |  gpt-5.4  |  gpt-5.4-mini  |  gpt-5.3-codex",
+    "copilot":   "e.g. gpt-4.1",
 }
 
 
@@ -1026,6 +1457,8 @@ def _set(widget, value: str):
             widget.setCurrentIndex(idx)
     elif isinstance(widget, QLineEdit):
         widget.setText(value)
+    elif isinstance(widget, QTextEdit):
+        widget.setPlainText(value)
 
 
 def _get(widget) -> str:
@@ -1033,7 +1466,30 @@ def _get(widget) -> str:
         return widget.currentText()
     elif isinstance(widget, QLineEdit):
         return widget.text()
+    elif isinstance(widget, QTextEdit):
+        return widget.toPlainText()
     return ""
+
+
+def _desc_label(title: str, description: str) -> QLabel:
+    lbl = QLabel(f"<b>{title}</b><br><small>{description}</small>")
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet("color: palette(mid);")
+    return lbl
+
+
+def _parse_fallback_rows(raw: str) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for part in raw.replace(";", "\n").splitlines():
+        item = part.strip()
+        if not item or item.startswith("#") or ":" not in item:
+            continue
+        provider, model = item.split(":", 1)
+        provider = provider.strip()
+        model = model.strip()
+        if provider and model:
+            rows.append((provider, model))
+    return rows
 
 
 def open_settings(parent=None, on_apply=None):

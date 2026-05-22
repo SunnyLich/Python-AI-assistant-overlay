@@ -258,9 +258,8 @@ class MemoryViewer(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Long-term Memory")
         self.setMinimumSize(620, 480)
-        self.setWindowFlags(
-            self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
-        )
+        self.setWindowFlag(Qt.WindowType.Window, True)
+        self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
         fit_window_to_screen(self, preferred_width=620, preferred_height=520)
 
         root = QVBoxLayout(self)

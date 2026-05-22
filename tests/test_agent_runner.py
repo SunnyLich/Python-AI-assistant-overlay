@@ -376,6 +376,60 @@ class AgentRunnerTests(unittest.TestCase):
             self.assertEqual((scope / "app.py").read_text(encoding="utf-8"), "print('hello')")
             self.assertIn("agent run finished", (run_dir / "run.log").read_text(encoding="utf-8"))
 
+    def test_runner_round_robins_agents_and_records_messages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            scope = Path(tmp) / "scope"
+            logs = Path(tmp) / "logs"
+            scope.mkdir()
+            spec = DummySpec(scope_folder=str(scope), max_turns=3)
+            spec.agents = [
+                {
+                    "name": "Planner",
+                    "role": "Planner",
+                    "model": "same as task",
+                    "responsibility": "Decide what to inspect.",
+                },
+                {
+                    "name": "Reviewer",
+                    "role": "Reviewer",
+                    "model": "same as task",
+                    "responsibility": "Review the planner's message.",
+                },
+            ]
+            spec.communications = []
+            prompts: list[str] = []
+            responses = [
+                {
+                    "thought": "Ask reviewer to check.",
+                    "tool_calls": [{
+                        "tool": "send_message",
+                        "args": {"to": "Reviewer", "message": "Please review the empty scope."},
+                    }],
+                    "final": None,
+                },
+                {
+                    "thought": "I saw the planner message.",
+                    "tool_calls": [],
+                    "final": "Reviewer received Planner's message.",
+                },
+            ]
+
+            def fake_model(prompt: str) -> str:
+                prompts.append(prompt)
+                return json.dumps(responses.pop(0))
+
+            run_dir = AgentTaskRunner(log_root=logs, model_callback=fake_model).run(spec)
+
+            turns = json.loads((run_dir / "turns.json").read_text(encoding="utf-8"))
+            messages = json.loads((run_dir / "messages.json").read_text(encoding="utf-8"))
+            self.assertEqual([turn["agent"] for turn in turns], ["Planner", "Reviewer"])
+            self.assertEqual(messages[0]["from"], "Planner")
+            self.assertEqual(messages[0]["to"], "Reviewer")
+            self.assertIn("Active agent: Planner", prompts[0])
+            self.assertIn("Active agent: Reviewer", prompts[1])
+            self.assertIn("Please review the empty scope.", prompts[1])
+            self.assertEqual((run_dir / "final.md").read_text(encoding="utf-8"), "Reviewer received Planner's message.")
+
     def test_runner_repairs_invalid_json_once(self):
         with tempfile.TemporaryDirectory() as tmp:
             scope = Path(tmp) / "scope"

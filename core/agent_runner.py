@@ -46,6 +46,8 @@ class AgentTaskLike(Protocol):
     required_context: str
     completion_criteria: str
     report_format: str
+    agents: list
+    communications: list
 
 
 class ScopeViolation(ValueError):
@@ -460,9 +462,13 @@ class AgentTaskRunner:
             self._write_json(run_dir / "verification_commands.json", verify_commands)
             verbose("allowed verification commands", verify_commands)
 
-            final, turns = self._run_agent_loop(spec, tools, files, verify_commands, log, verbose)
+            final, turns, messages = self._run_agent_loop(spec, tools, files, verify_commands, log, verbose)
             (run_dir / "turns.json").write_text(
                 json.dumps(turns, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (run_dir / "messages.json").write_text(
+                json.dumps(messages, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
             self._write_diff_artifacts(run_dir, tools, permissions, log, verbose)
@@ -490,16 +496,26 @@ class AgentTaskRunner:
         verify_commands: list[list[str]],
         log: LogCallback,
         verbose: Callable[[str, object], None] | None = None,
-    ) -> tuple[str, list[dict]]:
-        prompt = self._build_agent_prompt(spec, files, verify_commands)
+    ) -> tuple[str, list[dict], list[dict]]:
+        agents = self._normalise_agents(spec)
+        messages: list[dict] = []
+        self._seed_communication_rules(spec, messages, log)
         turns: list[dict] = []
         tool_context = ""
         max_turns = max(1, int(spec.max_turns))
 
         for turn_idx in range(max_turns):
             self._control.raise_if_cancelled()
-            log(f"agent turn {turn_idx + 1}/{max_turns}")
-            model_input = prompt
+            agent = agents[turn_idx % len(agents)]
+            agent_name = agent["name"]
+            log(f"agent turn {turn_idx + 1}/{max_turns}: {agent_name}")
+            model_input = self._build_agent_prompt(
+                spec,
+                files,
+                verify_commands,
+                active_agent=agent,
+                messages=messages,
+            )
             if tool_context:
                 model_input += "\n\nPrevious tool results:\n" + tool_context
             if verbose:
@@ -509,8 +525,10 @@ class AgentTaskRunner:
                 verbose(f"turn {turn_idx + 1} model response", response_text)
             turn: dict = {
                 "turn": turn_idx + 1,
+                "agent": agent_name,
                 "model_response": response_text,
                 "tool_results": [],
+                "messages": [],
             }
             turns.append(turn)
 
@@ -520,38 +538,38 @@ class AgentTaskRunner:
                 log(f"agent response parse failed: {exc}")
                 repaired = self._repair_agent_response(response_text, log, verbose)
                 if repaired is None:
-                    return f"Agent stopped because the model returned invalid JSON.\n\n{exc}", turns
+                    return f"Agent stopped because the model returned invalid JSON.\n\n{exc}", turns, messages
                 response_text = repaired
                 turn["model_response_repaired"] = repaired
                 try:
                     parsed = self._parse_agent_response(repaired)
                 except ValueError as repair_exc:
                     log(f"agent response repair failed: {repair_exc}")
-                    return f"Agent stopped because JSON repair failed.\n\n{repair_exc}", turns
+                    return f"Agent stopped because JSON repair failed.\n\n{repair_exc}", turns, messages
             if verbose:
                 verbose(f"turn {turn_idx + 1} parsed response", parsed)
             thought = str(parsed.get("thought") or "").strip()
             if thought:
-                log(f"agent thought: {thought}")
+                log(f"{agent_name} thought: {thought}")
             final = str(parsed.get("final") or "").strip()
             calls = parsed.get("tool_calls") or []
             if final and not calls:
-                log("agent returned final response")
-                return final, turns
+                log(f"{agent_name} returned final response")
+                return final, turns, messages
             if not isinstance(calls, list) or not calls:
                 fallback = final or response_text.strip() or "Agent stopped without tool calls."
                 log("agent stopped without tool calls")
-                return fallback, turns
+                return fallback, turns, messages
 
             results: list[dict] = []
             for call in calls:
                 self._control.raise_if_cancelled()
                 if isinstance(call, dict):
                     tool_name = str(call.get("tool") or "unknown")
-                    log(f"tool call: {tool_name}")
+                    log(f"{agent_name} tool call: {tool_name}")
                 if verbose:
                     verbose(f"turn {turn_idx + 1} tool call", call)
-                result = self._execute_tool_call(tools, call)
+                result = self._execute_agent_tool_call(tools, call, agent_name, messages, turn)
                 result_dict = asdict(result)
                 if verbose:
                     verbose(f"turn {turn_idx + 1} tool result", result_dict)
@@ -560,18 +578,55 @@ class AgentTaskRunner:
             tool_context = json.dumps(results, indent=2, ensure_ascii=False)
 
         log("agent reached turn limit")
-        return "Agent stopped after reaching the configured turn limit.", turns
+        return "Agent stopped after reaching the configured turn limit.", turns, messages
 
     def _build_agent_prompt(
         self,
         spec: AgentTaskLike,
         files: list[str],
         verify_commands: list[list[str]] | None = None,
+        active_agent: dict | None = None,
+        messages: list[dict] | None = None,
     ) -> str:
         verify_commands = verify_commands or []
+        agents = self._normalise_agents(spec)
+        communications = getattr(spec, "communications", []) or []
+        active_agent = active_agent or agents[0]
+        messages = messages or []
+
+        def field_value(obj, name: str) -> str:  # noqa: ANN001
+            if isinstance(obj, dict):
+                return str(obj.get(name, "") or "")
+            return str(getattr(obj, name, "") or "")
+
+        agent_lines = []
+        for agent in agents:
+            name = agent["name"]
+            role = agent["role"]
+            model = agent["model"]
+            responsibility = agent["responsibility"]
+            agent_lines.append(f"- {name} ({role}, {model}): {responsibility}")
+        communication_lines = []
+        for comm in communications:
+            source = field_value(comm, "from_agent")
+            target = field_value(comm, "to_agent")
+            phase = field_value(comm, "phase")
+            trigger = field_value(comm, "trigger")
+            message = field_value(comm, "message")
+            communication_lines.append(f"- {source} -> {target} [{phase}] when {trigger}: {message}")
+        inbox_lines = [
+            f"- From {m['from']} to {m['to']}: {m['message']}"
+            for m in messages
+            if m.get("to") in (active_agent["name"], "ALL")
+        ]
+        board_lines = [
+            f"- {m['from']} -> {m['to']}: {m['message']}"
+            for m in messages[-20:]
+        ]
         prompt = (
             "You are an autonomous coding agent running inside a strictly scoped "
-            "desktop assistant. You may only use the JSON tool protocol below. "
+            "desktop assistant. You are one participant in a multi-agent run. "
+            "Act only as the active agent named below. You may only use the JSON tool protocol below. "
             "Do not write prose outside JSON.\n\n"
             "Return exactly one JSON object in this shape:\n"
             "{\n"
@@ -585,7 +640,8 @@ class AgentTaskRunner:
             '    {"tool": "delete_file", "args": {"path": "relative/path.py"}},\n'
             '    {"tool": "run_command", "args": {"args": ["python", "-m", "py_compile", "relative/path.py"], "timeout_seconds": 30}},\n'
             '    {"tool": "git_status", "args": {}},\n'
-            '    {"tool": "git_diff", "args": {}}\n'
+            '    {"tool": "git_diff", "args": {}},\n'
+            '    {"tool": "send_message", "args": {"to": "Agent name or ALL", "message": "short message for another agent"}}\n'
             "  ],\n"
             '  "final": null\n'
             "}\n\n"
@@ -596,6 +652,22 @@ class AgentTaskRunner:
             f"Objective:\n{spec.objective}\n\n"
             f"Required context:\n{spec.required_context or '(none)'}\n\n"
             f"Completion criteria:\n{spec.completion_criteria or '(none)'}\n\n"
+            f"Active agent: {active_agent['name']}\n"
+            f"Role: {active_agent['role']}\n"
+            f"Model preference: {active_agent['model']}\n"
+            f"Responsibility:\n{active_agent['responsibility'] or '(none)'}\n\n"
+            "Planned agents:\n"
+            + ("\n".join(agent_lines) if agent_lines else "- Single agent")
+            + "\n\n"
+            "Planned agent communications:\n"
+            + ("\n".join(communication_lines) if communication_lines else "- (none)")
+            + "\n\n"
+            "Your inbox:\n"
+            + ("\n".join(inbox_lines) if inbox_lines else "- (empty)")
+            + "\n\n"
+            "Shared message board:\n"
+            + ("\n".join(board_lines) if board_lines else "- (empty)")
+            + "\n\n"
             f"Scope folder: {spec.scope_folder}\n"
             f"Capabilities: shell={spec.allow_shell}, network={spec.allow_network}, "
             f"git={spec.allow_git}, create={spec.allow_file_create}, "
@@ -619,7 +691,7 @@ class AgentTaskRunner:
 
             log("requesting LLM tool response")
             chunks: list[str] = []
-            for chunk in llm.stream_response(prompt, use_tools=False):
+            for chunk in llm.stream_response(prompt, use_tools=True):
                 chunks.append(chunk)
             return "".join(chunks).strip()
         except Exception as exc:
@@ -629,6 +701,89 @@ class AgentTaskRunner:
                 "tool_calls": [],
                 "final": f"Agent could not contact the model.\n\nError: {exc}",
             })
+
+    def _normalise_agents(self, spec: AgentTaskLike) -> list[dict]:
+        raw_agents = getattr(spec, "agents", None) or []
+
+        def field_value(obj, name: str) -> str:  # noqa: ANN001
+            if isinstance(obj, dict):
+                return str(obj.get(name, "") or "")
+            return str(getattr(obj, name, "") or "")
+
+        agents: list[dict] = []
+        for idx, agent in enumerate(raw_agents):
+            name = field_value(agent, "name").strip() or f"Agent {idx + 1}"
+            agents.append({
+                "name": name,
+                "role": field_value(agent, "role").strip() or "Implementer",
+                "model": field_value(agent, "model").strip() or "same as task",
+                "responsibility": field_value(agent, "responsibility").strip(),
+            })
+        if not agents:
+            agents.append({
+                "name": "Solo",
+                "role": "Implementer",
+                "model": getattr(spec, "model", "same as task") or "same as task",
+                "responsibility": "Complete the task end to end.",
+            })
+        return agents
+
+    def _seed_communication_rules(self, spec: AgentTaskLike, messages: list[dict], log: LogCallback) -> None:
+        """Convert configured start-time communications into real board messages."""
+        for comm in getattr(spec, "communications", []) or []:
+            source = self._field_value(comm, "from_agent")
+            target = self._field_value(comm, "to_agent")
+            phase = self._field_value(comm, "phase").lower()
+            trigger = self._field_value(comm, "trigger").lower()
+            message = self._field_value(comm, "message")
+            if not source or not target or not message:
+                continue
+            if "start" not in phase and "start" not in trigger and phase not in {"", "planning"}:
+                continue
+            item = {
+                "from": source,
+                "to": target,
+                "message": message,
+                "source": "communication_rule",
+            }
+            messages.append(item)
+            log(f"message seeded: {source} -> {target}")
+
+    @staticmethod
+    def _field_value(obj, name: str) -> str:  # noqa: ANN001
+        if isinstance(obj, dict):
+            return str(obj.get(name, "") or "")
+        return str(getattr(obj, name, "") or "")
+
+    def _execute_agent_tool_call(
+        self,
+        tools: AgentToolbox,
+        call,
+        agent_name: str,
+        messages: list[dict],
+        turn: dict,
+    ) -> ToolResult:
+        if not isinstance(call, dict):
+            return ToolResult("invalid", False, "Tool call must be an object.")
+        tool = str(call.get("tool") or "")
+        args = call.get("args") or {}
+        if not isinstance(args, dict):
+            return ToolResult(tool or "invalid", False, "Tool args must be an object.")
+        if tool == "send_message":
+            target = str(args.get("to") or "ALL").strip() or "ALL"
+            message = str(args.get("message") or "").strip()
+            if not message:
+                return ToolResult("send_message", False, "Message cannot be empty.")
+            item = {
+                "from": agent_name,
+                "to": target,
+                "message": message,
+                "source": "tool_call",
+            }
+            messages.append(item)
+            turn["messages"].append(item)
+            return ToolResult("send_message", True, f"Message sent to {target}.", item)
+        return self._execute_tool_call(tools, call)
 
     def _repair_agent_response(
         self,

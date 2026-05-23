@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
-from ui.window_utils import fit_window_to_screen
+from ui.window_utils import enable_standard_window_controls, fit_window_to_screen
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -258,8 +258,7 @@ class MemoryViewer(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Long-term Memory")
         self.setMinimumSize(620, 480)
-        self.setWindowFlag(Qt.WindowType.Window, True)
-        self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+        enable_standard_window_controls(self)
         fit_window_to_screen(self, preferred_width=620, preferred_height=520)
 
         root = QVBoxLayout(self)

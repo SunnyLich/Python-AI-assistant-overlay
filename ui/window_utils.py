@@ -3,8 +3,19 @@ ui/window_utils.py - Small helpers for keeping app windows reachable.
 """
 from __future__ import annotations
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QApplication, QWidget
+
+
+def enable_standard_window_controls(window: QWidget) -> None:
+    """Give a top-level app window the usual minimize, maximize, and close buttons."""
+    window.setWindowFlag(Qt.WindowType.Window, True)
+    window.setWindowFlag(Qt.WindowType.WindowSystemMenuHint, True)
+    window.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, True)
+    window.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+    window.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, True)
+    window.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
 
 
 def fit_window_to_screen(
@@ -38,4 +49,3 @@ def fit_window_to_screen(
     x = min(max(x, available.left() + margin), available.right() - width - margin + 1)
     y = min(max(y, available.top() + margin), available.bottom() - height - margin + 1)
     window.move(x, y)
-

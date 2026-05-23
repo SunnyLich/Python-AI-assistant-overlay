@@ -7,6 +7,8 @@ Launch via tray icon → Settings, or call open_settings().
 """
 from __future__ import annotations
 import os
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
@@ -16,9 +18,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
-from dotenv import dotenv_values
+from core.env_utils import format_env_value, read_env_file, write_env_file
 from core import secret_store
-from ui.window_utils import fit_window_to_screen
+from ui.window_utils import enable_standard_window_controls, fit_window_to_screen
 
 ENV_PATH = Path(__file__).parent.parent / ".env"
 _settings_dialog: "SettingsDialog | None" = None
@@ -153,54 +155,15 @@ class HotkeyCaptureEdit(QLineEdit):
 
 
 def _read_env() -> dict[str, str]:
-    if not ENV_PATH.exists():
-        return {}
-    return {
-        k: v
-        for k, v in dotenv_values(ENV_PATH).items()
-        if k is not None and v is not None
-    }
+    return read_env_file(ENV_PATH)
 
 
 def _format_env_value(value: str) -> str:
-    if any(ch in value for ch in ("\n", "\r", '"', "#")):
-        escaped = (
-            value.replace("\\", "\\\\")
-            .replace("\r\n", "\n")
-            .replace("\r", "\n")
-            .replace("\n", "\\n")
-            .replace('"', '\\"')
-        )
-        return f'"{escaped}"'
-    return value
+    return format_env_value(value)
 
 
 def _write_env(vals: dict[str, str], remove_keys: set[str] | None = None):
-    remove_keys = remove_keys or set()
-    lines = []
-    if ENV_PATH.exists():
-        raw = ENV_PATH.read_text(encoding="utf-8").splitlines()
-        written = set()
-        for line in raw:
-            stripped = line.strip()
-            if stripped and not stripped.startswith("#") and "=" in stripped:
-                k = stripped.split("=", 1)[0].strip()
-                if k in remove_keys:
-                    continue
-                elif k in vals:
-                    lines.append(f"{k}={_format_env_value(vals[k])}")
-                    written.add(k)
-                else:
-                    lines.append(line)
-            else:
-                lines.append(line)
-        for k, v in vals.items():
-            if k not in written:
-                lines.append(f"{k}={_format_env_value(v)}")
-    else:
-        for k, v in vals.items():
-            lines.append(f"{k}={_format_env_value(v)}")
-    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_env_file(ENV_PATH, vals, remove_keys=remove_keys)
 
 
 class SettingsDialog(QDialog):
@@ -210,10 +173,16 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Settings")
         self.setMinimumWidth(480)
         self.setModal(False)
-        self.setWindowFlag(Qt.WindowType.Window, True)
-        self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+        enable_standard_window_controls(self)
         self._env = _read_env()
         self._fields: dict[str, QLineEdit | QComboBox | QCheckBox | QTextEdit] = {}
+        self._pending_test_results: list[tuple[str, int, bool, str]] = []
+        self._pending_test_results_lock = threading.Lock()
+        self._running_test_tokens: set[tuple[str, int]] = set()
+        self._latest_test_token: dict[str, int] = {}
+        self._test_result_timer = QTimer(self)
+        self._test_result_timer.setInterval(100)
+        self._test_result_timer.timeout.connect(self._drain_test_results)
         self._build_ui()
         self._load_values()
         fit_window_to_screen(self, preferred_width=620, preferred_height=620)
@@ -223,6 +192,7 @@ class SettingsDialog(QDialog):
             "GROQ_API_KEY": "Groq",
             "OPENAI_API_KEY": "OpenAI",
             "ANTHROPIC_API_KEY": "Anthropic",
+            "GOOGLE_API_KEY": "Google AI Studio",
             "CARTESIA_API_KEY": "Cartesia",
             "ELEVENLABS_API_KEY": "ElevenLabs",
         }
@@ -301,7 +271,7 @@ class SettingsDialog(QDialog):
         f.setContentsMargins(12, 12, 12, 12)
 
         self._fields["LLM_PROVIDER"] = self._combo(
-            ["groq", "openai", "anthropic", "chatgpt", "copilot"]
+            ["groq", "openai", "anthropic", "google", "chatgpt", "copilot"]
         )
         self._fields["LLM_MODEL"] = QLineEdit()
         self._fallback_rows: dict[str, list[dict]] = {
@@ -312,12 +282,14 @@ class SettingsDialog(QDialog):
         self._fields["GROQ_API_KEY"] = self._password()
         self._fields["OPENAI_API_KEY"] = self._password()
         self._fields["ANTHROPIC_API_KEY"] = self._password()
+        self._fields["GOOGLE_API_KEY"] = self._password()
         self._fields["GROQ_API_KEY"].setPlaceholderText("Stored in OS keychain")
         self._fields["OPENAI_API_KEY"].setPlaceholderText("Stored in OS keychain")
         self._fields["ANTHROPIC_API_KEY"].setPlaceholderText("Stored in OS keychain")
+        self._fields["GOOGLE_API_KEY"].setPlaceholderText("Stored in OS keychain")
 
         self._fields["CHAT_LLM_PROVIDER"] = self._combo(
-            ["groq", "openai", "anthropic", "chatgpt", "copilot"]
+            ["groq", "openai", "anthropic", "google", "chatgpt", "copilot"]
         )
 
         def _update_model_placeholders():
@@ -335,9 +307,13 @@ class SettingsDialog(QDialog):
 
         f.addRow("Provider", self._fields["LLM_PROVIDER"])
         f.addRow("Model", self._fields["LLM_MODEL"])
-        self._add_fallback_editor(f, "Fallback priority", "LLM_FALLBACKS")
+        self._llm_test_status_lbl = QLabel()
+        self._llm_test_status_lbl.setWordWrap(True)
+        f.addRow("", self._button_row(("Test LLM", self._test_primary_llm_connection)))
+        f.addRow("", self._llm_test_status_lbl)
+        self._add_fallback_section(f, "LLM_FALLBACKS", "Fallback")
         f.addRow(_sep(), _sep())
-        note = QLabel("<small><i>openai</i> = API key (pay-per-token) &nbsp;|&nbsp; <i>chatgpt</i> = your Pro/Plus subscription</small>")
+        note = QLabel("<small><i>openai</i>/<i>google</i> = API key (pay-per-token) &nbsp;|&nbsp; <i>chatgpt</i> = your Pro/Plus subscription</small>")
         note.setWordWrap(True)
         f.addRow("", note)
         key_note = QLabel("<small>API keys are saved to the OS keychain. Leave blank to keep the stored key.</small>")
@@ -346,21 +322,30 @@ class SettingsDialog(QDialog):
         f.addRow("Groq API key", self._fields["GROQ_API_KEY"])
         f.addRow("OpenAI API key", self._fields["OPENAI_API_KEY"])
         f.addRow("Anthropic API key", self._fields["ANTHROPIC_API_KEY"])
+        f.addRow("Google AI Studio API key", self._fields["GOOGLE_API_KEY"])
         f.addRow(_sep(), _sep())
         f.addRow(QLabel("<i>Chat / Elaborate model</i>"), QLabel(""))
         f.addRow("Chat provider", self._fields["CHAT_LLM_PROVIDER"])
         f.addRow("Chat model", self._fields["CHAT_LLM_MODEL"])
-        self._add_fallback_editor(f, "Chat fallback priority", "CHAT_LLM_FALLBACKS")
+        self._chat_llm_test_status_lbl = QLabel()
+        self._chat_llm_test_status_lbl.setWordWrap(True)
+        f.addRow("", self._button_row(("Test Chat", self._test_chat_llm_connection)))
+        f.addRow("", self._chat_llm_test_status_lbl)
+        self._add_fallback_section(f, "CHAT_LLM_FALLBACKS", "Chat fallback")
         f.addRow(_sep(), _sep())
         self._fields["VISION_LLM_PROVIDER"] = self._combo(
-            ["", "anthropic", "openai", "chatgpt"]
+            ["", "anthropic", "openai", "google", "chatgpt"]
         )
         self._fields["VISION_LLM_MODEL"] = QLineEdit()
-        self._fields["VISION_LLM_MODEL"].setPlaceholderText("e.g. claude-opus-4-5 / gpt-4o")
+        self._fields["VISION_LLM_MODEL"].setPlaceholderText("e.g. claude-opus-4-5 / gpt-4o / gemini-2.5-flash")
         f.addRow(QLabel("<i>Vision model (screen snip)</i>"), QLabel(""))
         f.addRow("Vision provider", self._fields["VISION_LLM_PROVIDER"])
         f.addRow("Vision model", self._fields["VISION_LLM_MODEL"])
-        self._add_fallback_editor(f, "Vision fallback priority", "VISION_LLM_FALLBACKS", providers=["", "anthropic", "openai", "chatgpt"])
+        self._vision_test_status_lbl = QLabel()
+        self._vision_test_status_lbl.setWordWrap(True)
+        f.addRow("", self._button_row(("Test Vision", self._test_vision_connection)))
+        f.addRow("", self._vision_test_status_lbl)
+        self._add_fallback_section(f, "VISION_LLM_FALLBACKS", "Vision fallback", providers=["", "anthropic", "openai", "google", "chatgpt"])
 
         # ---- ChatGPT Pro/Plus OAuth section ----
         f.addRow(_sep(), _sep())
@@ -390,11 +375,8 @@ class SettingsDialog(QDialog):
         # ---- GitHub OAuth section ----
         f.addRow(_sep(), _sep())
         f.addRow(
-            _desc_label(
-                "GitHub OAuth",
-                "Sign in opens GitHub in your browser. Client ID is bundled; override only for development.",
-            ),
-            QLabel(""),
+            QLabel("<i>GitHub OAuth</i>"),
+            _desc_label("", "Sign in opens GitHub in your browser. Client ID is bundled; override only for development."),
         )
         self._fields["GITHUB_CLIENT_ID"] = QLineEdit()
         self._fields["GITHUB_CLIENT_ID"].setPlaceholderText("Optional custom OAuth app client ID")
@@ -424,11 +406,8 @@ class SettingsDialog(QDialog):
         # ---- GitHub Copilot token section ----
         f.addRow(_sep(), _sep())
         f.addRow(
-            _desc_label(
-                "GitHub Copilot token",
-                "Use a fine-grained PAT with Copilot Requests: Read-only. Stored only in the OS keychain.",
-            ),
-            QLabel(""),
+            QLabel("<i>GitHub Copilot token</i>"),
+            _desc_label("", "Use a fine-grained PAT with Copilot Requests: Read-only. Stored only in the OS keychain."),
         )
 
         self._copilot_token_edit = self._password()
@@ -721,6 +700,10 @@ class SettingsDialog(QDialog):
         f.addRow("Cartesia Voice ID", self._fields["CARTESIA_VOICE_ID"])
         f.addRow(_sep(), _sep())
         f.addRow("ElevenLabs API key", self._fields["ELEVENLABS_API_KEY"])
+        self._tts_test_status_lbl = QLabel()
+        self._tts_test_status_lbl.setWordWrap(True)
+        f.addRow("", self._button_row(("Test TTS", self._test_tts_connection)))
+        f.addRow("", self._tts_test_status_lbl)
         return w
 
     def _tab_prompt(self) -> QWidget:
@@ -1030,7 +1013,7 @@ class SettingsDialog(QDialog):
         f.setContentsMargins(8, 8, 8, 8)
 
         mem_provider = self._combo(
-            ["groq", "openai", "anthropic"],
+            ["groq", "openai", "anthropic", "google"],
             self._env.get("MEMORY_LLM_PROVIDER", ""),
         )
         self._fields["MEMORY_LLM_PROVIDER"] = mem_provider
@@ -1040,6 +1023,11 @@ class SettingsDialog(QDialog):
         mem_model.setPlaceholderText("e.g. llama-3.1-8b-instant")
         self._fields["MEMORY_LLM_MODEL"] = mem_model
         f.addRow("Memory LLM model:", mem_model)
+
+        self._memory_test_status_lbl = QLabel()
+        self._memory_test_status_lbl.setWordWrap(True)
+        f.addRow("", self._button_row(("Test Memory LLM", self._test_memory_connection)))
+        f.addRow("", self._memory_test_status_lbl)
 
         mem_interval = QLineEdit(self._env.get("MEMORY_CONSOLIDATION_INTERVAL", "15"))
         mem_interval.setPlaceholderText("minutes between consolidations")
@@ -1139,43 +1127,47 @@ class SettingsDialog(QDialog):
             cb.setCurrentText(current)
         return cb
 
+    def _button_row(self, *buttons: tuple[str, object]) -> QWidget:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        for text, handler in buttons:
+            btn = QPushButton(text)
+            btn.clicked.connect(handler)
+            layout.addWidget(btn)
+        layout.addStretch()
+        return row
+
     def _password(self) -> QLineEdit:
         le = QLineEdit()
         le.setEchoMode(QLineEdit.EchoMode.Password)
         return le
 
-    def _add_fallback_editor(
+    def _add_fallback_section(
         self,
         form: QFormLayout,
-        label: str,
         key: str,
+        label_prefix: str,
         providers: list[str] | None = None,
     ) -> None:
-        box = QWidget()
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-
-        rows_widget = QWidget()
-        rows_layout = QVBoxLayout(rows_widget)
-        rows_layout.setContentsMargins(0, 0, 0, 0)
-        rows_layout.setSpacing(4)
-        layout.addWidget(rows_widget)
-
         add_btn = QPushButton("+ Add fallback")
         add_btn.setFixedWidth(120)
-        add_btn.clicked.connect(lambda: self._add_fallback_row(key, providers=providers))
         add_wrap = QHBoxLayout()
         add_wrap.setContentsMargins(0, 0, 0, 0)
         add_wrap.addWidget(add_btn)
         add_wrap.addStretch()
-        layout.addLayout(add_wrap)
+        add_widget = QWidget()
+        add_widget.setLayout(add_wrap)
 
-        self._fields[key] = box
+        self._fields[key] = add_widget
         self._fallback_rows[key] = []
-        self._fallback_rows[f"{key}__layout"] = rows_layout  # type: ignore[index]
-        self._fallback_rows[f"{key}__providers"] = providers or ["groq", "openai", "anthropic", "chatgpt", "copilot"]  # type: ignore[index]
-        form.addRow(label, box)
+        self._fallback_rows[f"{key}__form"] = form  # type: ignore[index]
+        self._fallback_rows[f"{key}__prefix"] = label_prefix  # type: ignore[index]
+        self._fallback_rows[f"{key}__providers"] = providers or ["groq", "openai", "anthropic", "google", "chatgpt", "copilot"]  # type: ignore[index]
+        self._fallback_rows[f"{key}__add_widget"] = add_widget  # type: ignore[index]
+        add_btn.clicked.connect(lambda: self._add_fallback_row(key, providers=providers))
+        form.addRow("", add_widget)
 
     def _add_fallback_row(
         self,
@@ -1184,32 +1176,50 @@ class SettingsDialog(QDialog):
         model: str = "",
         providers: list[str] | None = None,
     ) -> None:
-        row_w = QWidget()
-        h = QHBoxLayout(row_w)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(6)
-
-        provider_options = providers or self._fallback_rows.get(f"{key}__providers", ["groq", "openai", "anthropic", "chatgpt", "copilot"])  # type: ignore[arg-type]
+        provider_options = providers or self._fallback_rows.get(f"{key}__providers", ["groq", "openai", "anthropic", "google", "chatgpt", "copilot"])  # type: ignore[arg-type]
         provider_combo = self._combo(provider_options, provider)
-        provider_combo.setFixedWidth(130)
         model_edit = QLineEdit(model)
         model_edit.setPlaceholderText("model")
         remove_btn = QPushButton("Remove")
         remove_btn.setFixedWidth(70)
-        h.addWidget(provider_combo)
-        h.addWidget(model_edit)
-        h.addWidget(remove_btn)
+        model_row = QWidget()
+        model_h = QHBoxLayout(model_row)
+        model_h.setContentsMargins(0, 0, 0, 0)
+        model_h.setSpacing(8)
+        model_h.addWidget(model_edit)
+        model_h.addWidget(remove_btn)
 
-        row_info = {"widget": row_w, "provider": provider_combo, "model": model_edit}
+        provider_label = QLabel()
+        model_label = QLabel()
+        row_info = {
+            "provider_label": provider_label,
+            "provider": provider_combo,
+            "model_label": model_label,
+            "model_row": model_row,
+            "model": model_edit,
+        }
         remove_btn.clicked.connect(lambda: self._remove_fallback_row(key, row_info))
-        rows_layout = self._fallback_rows[f"{key}__layout"]  # type: ignore[index]
-        rows_layout.addWidget(row_w)
+        form = self._fallback_rows[f"{key}__form"]  # type: ignore[index]
+        add_widget = self._fallback_rows[f"{key}__add_widget"]  # type: ignore[index]
+        insert_at, _role = form.getWidgetPosition(add_widget)
+        form.insertRow(insert_at, provider_label, provider_combo)
+        form.insertRow(insert_at + 1, model_label, model_row)
         self._fallback_rows[key].append(row_info)
+        self._renumber_fallback_rows(key)
 
     def _remove_fallback_row(self, key: str, row_info: dict) -> None:
         if row_info in self._fallback_rows[key]:
             self._fallback_rows[key].remove(row_info)
-        row_info["widget"].deleteLater()
+        form = self._fallback_rows[f"{key}__form"]  # type: ignore[index]
+        form.removeRow(row_info["provider_label"])
+        form.removeRow(row_info["model_label"])
+        self._renumber_fallback_rows(key)
+
+    def _renumber_fallback_rows(self, key: str) -> None:
+        prefix = self._fallback_rows[f"{key}__prefix"]  # type: ignore[index]
+        for idx, row in enumerate(self._fallback_rows[key], 1):
+            row["provider_label"].setText(f"{prefix} provider {idx}")
+            row["model_label"].setText(f"{prefix} model {idx}")
 
     def _set_fallback_rows(self, key: str, raw: str) -> None:
         for row in list(self._fallback_rows[key]):
@@ -1243,7 +1253,7 @@ class SettingsDialog(QDialog):
         _set(self._fields["CARTESIA_VOICE_ID"], self._env.get("CARTESIA_VOICE_ID", ""))
         for name in secret_store.API_KEY_NAMES:
             self._fields[name].clear()  # type: ignore[attr-defined]
-            status = "stored in OS keychain" if secret_store.has_secret(name) or self._env.get(name) else "not configured"
+            status = "stored in OS keychain" if secret_store.get_keychain_secret(name) else "not configured"
             self._fields[name].setPlaceholderText(status)  # type: ignore[attr-defined]
         _set(self._fields["HOTKEY_ADD_CONTEXT"],   self._env.get("HOTKEY_ADD_CONTEXT",   cfg.HOTKEY_ADD_CONTEXT))
         _set(self._fields["HOTKEY_CLEAR_CONTEXT"], self._env.get("HOTKEY_CLEAR_CONTEXT", cfg.HOTKEY_CLEAR_CONTEXT))
@@ -1319,6 +1329,136 @@ class SettingsDialog(QDialog):
 
         util_val = self._env.get("SYSTEM_PROMPT_UTILITY", cfg.SYSTEM_PROMPT_UTILITY)
         self._fields["SYSTEM_PROMPT_UTILITY"].setPlainText(util_val)  # type: ignore
+
+    def _effective_secret_value(self, name: str) -> str:
+        typed = _get(self._fields[name]).strip()
+        if typed:
+            return typed
+        import config as cfg
+
+        return getattr(cfg, name, "")
+
+    def _set_test_status(self, label: QLabel, ok: bool, message: str) -> None:
+        label.setText(message)
+        label.setStyleSheet("color: #80c080;" if ok else "color: #c04040;")
+
+    def _set_test_pending(self, label: QLabel, message: str = "Testing...") -> None:
+        label.setText(message)
+        label.setStyleSheet("color: #c0c040;")
+
+    def _start_async_test(self, test_key: str, status_label: QLabel, runner) -> None:
+        token = self._latest_test_token.get(test_key, 0) + 1
+        self._latest_test_token[test_key] = token
+        self._running_test_tokens.add((test_key, token))
+        self._set_test_pending(status_label)
+
+        def _worker() -> None:
+            try:
+                ok, message = runner()
+            except Exception as exc:
+                ok, message = False, f"Test failed: {exc}"
+            with self._pending_test_results_lock:
+                self._pending_test_results.append((test_key, token, ok, message))
+
+        threading.Thread(target=_worker, daemon=True).start()
+        if not self._test_result_timer.isActive():
+            self._test_result_timer.start()
+
+    def _drain_test_results(self) -> None:
+        with self._pending_test_results_lock:
+            pending = list(self._pending_test_results)
+            self._pending_test_results.clear()
+        for test_key, token, ok, message in pending:
+            self._running_test_tokens.discard((test_key, token))
+            if self._latest_test_token.get(test_key) != token:
+                continue
+            label = getattr(self, f"_{test_key}_status_lbl", None)
+            if isinstance(label, QLabel):
+                self._set_test_status(label, ok, message)
+        if not self._running_test_tokens and not pending:
+            self._test_result_timer.stop()
+
+    def _test_llm_route(self, *, provider_key: str, model_key: str, route_name: str, status_label: QLabel, image: bool = False) -> None:
+        from core import llm
+
+        provider = _get(self._fields[provider_key]).strip().lower()
+        model = _get(self._fields[model_key]).strip()
+        groq_api_key = self._effective_secret_value("GROQ_API_KEY")
+        openai_api_key = self._effective_secret_value("OPENAI_API_KEY")
+        anthropic_api_key = self._effective_secret_value("ANTHROPIC_API_KEY")
+        google_api_key = self._effective_secret_value("GOOGLE_API_KEY")
+        test_key = {
+            "LLM": "llm_test",
+            "CHAT_LLM": "chat_llm_test",
+            "VISION_LLM": "vision_test",
+            "MEMORY_LLM": "memory_test",
+        }[route_name]
+
+        self._start_async_test(
+            test_key,
+            status_label,
+            lambda: llm.test_route_connection(
+                provider,
+                model,
+                route_name,
+                image=image,
+                groq_api_key=groq_api_key,
+                openai_api_key=openai_api_key,
+                anthropic_api_key=anthropic_api_key,
+                google_api_key=google_api_key,
+            ),
+        )
+
+    def _test_primary_llm_connection(self) -> None:
+        self._test_llm_route(
+            provider_key="LLM_PROVIDER",
+            model_key="LLM_MODEL",
+            route_name="LLM",
+            status_label=self._llm_test_status_lbl,
+        )
+
+    def _test_chat_llm_connection(self) -> None:
+        self._test_llm_route(
+            provider_key="CHAT_LLM_PROVIDER",
+            model_key="CHAT_LLM_MODEL",
+            route_name="CHAT_LLM",
+            status_label=self._chat_llm_test_status_lbl,
+        )
+
+    def _test_vision_connection(self) -> None:
+        self._test_llm_route(
+            provider_key="VISION_LLM_PROVIDER",
+            model_key="VISION_LLM_MODEL",
+            route_name="VISION_LLM",
+            status_label=self._vision_test_status_lbl,
+            image=True,
+        )
+
+    def _test_memory_connection(self) -> None:
+        self._test_llm_route(
+            provider_key="MEMORY_LLM_PROVIDER",
+            model_key="MEMORY_LLM_MODEL",
+            route_name="MEMORY_LLM",
+            status_label=self._memory_test_status_lbl,
+        )
+
+    def _test_tts_connection(self) -> None:
+        from core import tts
+
+        provider = _get(self._fields["TTS_PROVIDER"]).strip().lower()
+        cartesia_api_key = self._effective_secret_value("CARTESIA_API_KEY")
+        cartesia_voice_id = _get(self._fields["CARTESIA_VOICE_ID"]).strip()
+        elevenlabs_api_key = self._effective_secret_value("ELEVENLABS_API_KEY")
+        self._start_async_test(
+            "tts_test",
+            self._tts_test_status_lbl,
+            lambda: tts.test_connection(
+                provider,
+                cartesia_api_key=cartesia_api_key,
+                cartesia_voice_id=cartesia_voice_id,
+                elevenlabs_api_key=elevenlabs_api_key,
+            ),
+        )
 
     def _apply(self):
         """Save without closing the dialog, then apply changes live."""
@@ -1434,6 +1574,7 @@ _MODEL_HINTS: dict[str, str] = {
     "groq":      "e.g. llama3-8b-8192",
     "openai":    "e.g. gpt-4o",
     "anthropic": "e.g. claude-sonnet-4-5",
+    "google":    "e.g. gemini-2.5-flash",
     "chatgpt":   "gpt-5.5  |  gpt-5.4  |  gpt-5.4-mini  |  gpt-5.3-codex",
     "copilot":   "e.g. gpt-4.1",
 }
@@ -1472,9 +1613,9 @@ def _get(widget) -> str:
 
 
 def _desc_label(title: str, description: str) -> QLabel:
-    lbl = QLabel(f"<b>{title}</b><br><small>{description}</small>")
+    lbl = QLabel(description)
     lbl.setWordWrap(True)
-    lbl.setStyleSheet("color: palette(mid);")
+    lbl.setStyleSheet("color: palette(mid); font-size: 9pt;")
     return lbl
 
 

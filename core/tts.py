@@ -182,3 +182,74 @@ def _stream_elevenlabs(text: str) -> Generator[bytes, None, None]:
     for chunk in audio_stream:
         if chunk:
             yield chunk
+
+
+def test_connection(
+    provider: str | None = None,
+    *,
+    cartesia_api_key: str | None = None,
+    cartesia_voice_id: str | None = None,
+    elevenlabs_api_key: str | None = None,
+) -> tuple[bool, str]:
+    provider = (provider or config.TTS_PROVIDER).lower().strip()
+    cartesia_api_key = config.CARTESIA_API_KEY if cartesia_api_key is None else cartesia_api_key
+    cartesia_voice_id = config.CARTESIA_VOICE_ID if cartesia_voice_id is None else cartesia_voice_id
+    elevenlabs_api_key = config.ELEVENLABS_API_KEY if elevenlabs_api_key is None else elevenlabs_api_key
+    try:
+        if provider == "none":
+            return True, "TTS is disabled (provider=none)."
+        if provider == "cartesia":
+            if not cartesia_api_key:
+                raise ValueError("CARTESIA_API_KEY is not configured.")
+            if not cartesia_voice_id:
+                raise ValueError("CARTESIA_VOICE_ID is not configured.")
+            got_audio = False
+            from cartesia import Cartesia  # type: ignore
+
+            client = Cartesia(api_key=cartesia_api_key)
+            ws_manager = client.tts.websocket_connect()
+            ws = ws_manager.__enter__()
+            ctx = ws.context(
+                model_id="sonic-3",
+                voice={"mode": "id", "id": cartesia_voice_id},
+                output_format={
+                    "container": "raw",
+                    "encoding": "pcm_f32le",
+                    "sample_rate": SAMPLE_RATE,
+                },
+                language="en",
+                add_timestamps=False,
+            )
+            ctx.push("ok")
+            ctx.no_more_inputs()
+            for response in ctx.receive():
+                if response.type == "chunk" and response.audio:
+                    got_audio = True
+                    break
+            try:
+                ws_manager.__exit__(None, None, None)
+            except Exception:
+                pass
+            if not got_audio:
+                raise RuntimeError("Cartesia connected but returned no audio.")
+            return True, "TTS route OK: cartesia"
+        if provider == "elevenlabs":
+            if not elevenlabs_api_key:
+                raise ValueError("ELEVENLABS_API_KEY is not configured.")
+            from elevenlabs.client import ElevenLabs  # type: ignore
+
+            client = ElevenLabs(api_key=elevenlabs_api_key)
+            audio_stream = client.generate(
+                text="ok",
+                stream=True,
+                output_format="pcm_22050",
+            )
+            for chunk in audio_stream:
+                if chunk:
+                    return True, "TTS route OK: elevenlabs"
+            raise RuntimeError("ElevenLabs connected but returned no audio.")
+        raise ValueError(f"Unknown TTS provider: {provider}")
+    except Exception as exc:
+        if provider == "cartesia" and cartesia_api_key is None:
+            _reset_cartesia_ws()
+        return False, f"TTS test failed: {exc}"

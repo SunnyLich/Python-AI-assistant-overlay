@@ -24,7 +24,7 @@ _FONT_SIZE    = 10
 _DOLL_W       = 80
 _DOLL_H       = 80
 _DOLL_MARGIN  = 20
-_HIDE_DELAY    = 8_000   # ms after finish() before hiding
+_HIDE_DELAY    = 3_500   # fallback ms after finish() before hiding
 
 
 def _color(value: str, fallback: QColor) -> QColor:
@@ -65,10 +65,12 @@ class SpeechBubble(QWidget):
         self._bubble_color = _color(config.BUBBLE_COLOR, QColor(28, 28, 36, 220))
         self._text_color = _color(config.BUBBLE_TEXT_COLOR, QColor(230, 230, 230))
         self._read_word_color = _color(config.BUBBLE_READ_WORD_COLOR, QColor(77, 163, 255))
+        self._thought_color = QColor(150, 150, 165)
 
         self._full_text = ""
+        self._thought_text = ""
         self._lines: list[str] = []
-        self._line_segments: list[list[tuple[str, bool, int | None]]] = []
+        self._line_segments: list[list[tuple[str, bool, int | None, bool]]] = []
         self._thinking = False
         self._dot_count = 1
         self._last_chunk_ended_with_space = True  # guards mid-word chunk merging
@@ -108,7 +110,7 @@ class SpeechBubble(QWidget):
         # Auto-hide after response finishes
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
-        self._hide_timer.setInterval(_HIDE_DELAY)
+        self._hide_timer.setInterval(self._hide_delay_ms())
         self._hide_timer.timeout.connect(self.hide)
 
         # Word-reveal timer
@@ -147,6 +149,7 @@ class SpeechBubble(QWidget):
         self._bubble_color = _color(config.BUBBLE_COLOR, QColor(28, 28, 36, 220))
         self._text_color = _color(config.BUBBLE_TEXT_COLOR, QColor(230, 230, 230))
         self._read_word_color = _color(config.BUBBLE_READ_WORD_COLOR, QColor(77, 163, 255))
+        self._hide_timer.setInterval(self._hide_delay_ms())
         self._apply_reveal_speed()
         if self._full_text:
             self._rewrap()
@@ -187,9 +190,10 @@ class SpeechBubble(QWidget):
     def show_listening(self):
         """Show a static mic indicator while the user holds F9."""
         self._full_text = ""
+        self._thought_text = ""
         self._highlight_generation += 1
         self._lines = ["\u25cf Recording — release to send"]
-        self._line_segments = [[("Recording - release to send", False, None)]]
+        self._line_segments = [[("Recording - release to send", False, None, False)]]
         self._thinking = False
         self._pending_words = []
         self._revealed_count = 0
@@ -206,6 +210,7 @@ class SpeechBubble(QWidget):
     def start_thinking(self):
         """Show animated dots while waiting for the first LLM token."""
         self._full_text = ""
+        self._thought_text = ""
         self._highlight_generation += 1
         self._lines = []
         self._line_segments = []
@@ -284,13 +289,20 @@ class SpeechBubble(QWidget):
         self._rewrap()
         self.update()
 
-    def append_chunk(self, chunk: str):
+    def append_chunk(self, chunk: str, is_thought: bool = False):
         """Buffer incoming LLM chunk. Starts WPM reveal on first token if not already active."""
         if not chunk:
             return
         if self._thinking:
             self._thinking = False
             self._dot_timer.stop()
+        if is_thought:
+            self._thought_text += chunk
+            self._rewrap()
+            self.show()
+            self.raise_()
+            self.update()
+            return
         new_words = chunk.split()
         if new_words:
             # If this chunk starts mid-word (no leading space) and the previous
@@ -353,9 +365,32 @@ class SpeechBubble(QWidget):
         self._pre_audio_timestamps = []
         self._thinking = False
         self._full_text = ""
+        self._thought_text = ""
         self._lines = []
         self._line_segments = []
         self.hide()
+
+    def show_notice(self, text: str, *, timeout_ms: int = 12000):
+        """Show a compact non-streaming notice next to the doll icon."""
+        self._hide_timer.stop()
+        self._dot_timer.stop()
+        self._reveal_timer.stop()
+        self._reveal_mode = False
+        self._finishing = False
+        self._timestamp_mode = False
+        self._audio_started = False
+        self._thinking = False
+        self._thought_text = ""
+        self._pending_words = text.split()
+        self._revealed_count = len(self._pending_words)
+        self._full_text = " ".join(self._pending_words)
+        self._rewrap()
+        self.show()
+        self.raise_()
+        self.update()
+        if timeout_ms > 0:
+            self._hide_timer.setInterval(timeout_ms)
+            self._hide_timer.start()
 
     # ------------------------------------------------------------------
     # Internals
@@ -369,6 +404,10 @@ class SpeechBubble(QWidget):
         if self._speed_boosting:
             return max(1, int(getattr(config, "BUBBLE_HOLD_REVEAL_WPM", 480)))
         return max(1, int(getattr(config, "BUBBLE_REVEAL_WPM", 170)))
+
+    @staticmethod
+    def _hide_delay_ms() -> int:
+        return max(500, int(getattr(config, "BUBBLE_HIDE_DELAY_MS", _HIDE_DELAY)))
 
     def _current_tts_rate(self) -> float:
         if self._speed_boosting:
@@ -399,20 +438,26 @@ class SpeechBubble(QWidget):
 
     def _rewrap(self):
         """Word-wrap _full_text and scroll the visible window to the read position."""
-        words = self._markdown_words(self._full_text)
-        lines: list[list[tuple[str, bool, int]]] = []
-        current: list[tuple[str, bool, int]] = []
+        thought_words = self._markdown_words(self._thought_text)
+        reply_words = self._markdown_words(self._full_text)
+        words: list[tuple[str, bool, int | None, bool]] = []
+        for word, bold in thought_words:
+            words.append((word, bold, None, True))
+        for reply_idx, (word, bold) in enumerate(reply_words):
+            words.append((word, bold, reply_idx, False))
+        lines: list[list[tuple[str, bool, int | None, bool]]] = []
+        current: list[tuple[str, bool, int | None, bool]] = []
         current_w = 0
-        for word_idx, (word, bold) in enumerate(words):
+        for word, bold, reply_idx, is_thought in words:
             fm = self._bold_fm if bold else self._fm
             word_w = fm.horizontalAdvance(word)
             extra_space = self._space_w if current else 0
             if current and current_w + extra_space + word_w > self._text_w:
                 lines.append(current)
-                current = [(word, bold, word_idx)]
+                current = [(word, bold, reply_idx, is_thought)]
                 current_w = word_w
             else:
-                current.append((word, bold, word_idx))
+                current.append((word, bold, reply_idx, is_thought))
                 current_w += extra_space + word_w
         if current:
             lines.append(current)
@@ -420,18 +465,18 @@ class SpeechBubble(QWidget):
         if not lines:
             visible = []
         elif self._revealed_count <= 0:
-            visible = lines[:visible_lines]
+            visible = lines[max(0, len(lines) - visible_lines):]
         else:
-            target_idx = min(self._revealed_count - 1, len(words) - 1)
+            target_idx = min(self._revealed_count - 1, len(reply_words) - 1)
             target_line = 0
             for line_idx, line in enumerate(lines):
-                if any(word_idx == target_idx for _word, _bold, word_idx in line):
+                if any(reply_idx == target_idx for _word, _bold, reply_idx, _is_thought in line):
                     target_line = line_idx
                     break
             start_line = max(0, target_line - visible_lines + 1)
             visible = lines[start_line:start_line + visible_lines]
         self._line_segments = visible
-        self._lines = [" ".join(word for word, _bold, _idx in line) for line in visible]
+        self._lines = [" ".join(word for word, _bold, _idx, _is_thought in line) for line in visible]
 
     @staticmethod
     def _markdown_words(text: str) -> list[tuple[str, bool]]:
@@ -485,18 +530,22 @@ class SpeechBubble(QWidget):
             p.setPen(QPen(self._text_color))
             y = _PAD
             if not self._line_segments and self._lines:
-                self._line_segments = [[(line, False, None)] for line in self._lines]
+                self._line_segments = [[(line, False, None, False)] for line in self._lines]
             for line in self._line_segments:
                 x = _PAD
-                for idx, (word, bold, word_idx) in enumerate(line):
+                for idx, (word, bold, word_idx, is_thought) in enumerate(line):
                     if idx:
                         x += self._space_w
-                    is_read = word_idx is not None and word_idx < self._revealed_count
-                    font = self._bold_font if (bold or is_read) else self._font
-                    fm = self._bold_fm if (bold or is_read) else self._fm
+                    is_read = (not is_thought) and word_idx is not None and word_idx < self._revealed_count
+                    font = self._bold_font if ((bold and not is_thought) or is_read) else self._font
+                    fm = self._bold_fm if ((bold and not is_thought) or is_read) else self._fm
                     word_w = fm.horizontalAdvance(word)
                     p.setFont(font)
-                    p.setPen(QPen(self._read_word_color if is_read else self._text_color))
+                    if is_thought:
+                        pen = self._thought_color
+                    else:
+                        pen = self._read_word_color if is_read else self._text_color
+                    p.setPen(QPen(pen))
                     p.drawText(x, y, self._text_w - (x - _PAD), self._line_h,
                                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                                word)

@@ -362,6 +362,9 @@ _vision_anthropic_client = None
 _codex_client = None
 _chat_codex_client = None
 
+_GOOGLE_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+_TEST_IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII="
+
 
 def reset_clients() -> None:
     """Discard all cached API clients so they are rebuilt with the current config."""
@@ -454,6 +457,8 @@ def _api_key_for(provider: str) -> str:
         return config.OPENAI_API_KEY
     if p == "anthropic":
         return config.ANTHROPIC_API_KEY
+    if p == "google":
+        return config.GOOGLE_API_KEY
     if p == "chatgpt":
         return "chatgpt-oauth"   # no static key — auth is via OAuth tokens
     if p == "copilot":
@@ -469,6 +474,8 @@ def _credential_source_for_provider(provider: str) -> str:
         return secret_store.secret_source("OPENAI_API_KEY")
     if p == "anthropic":
         return secret_store.secret_source("ANTHROPIC_API_KEY")
+    if p == "google":
+        return secret_store.secret_source("GOOGLE_API_KEY")
     if p == "chatgpt":
         return "chatgpt-oauth"
     if p == "copilot":
@@ -519,6 +526,8 @@ def _dynamic_openai_client(provider: str):
 
     if provider == "groq":
         return OpenAI(api_key=config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+    if provider == "google":
+        return OpenAI(api_key=config.GOOGLE_API_KEY, base_url=_GOOGLE_OPENAI_BASE_URL)
     return OpenAI(api_key=config.OPENAI_API_KEY)
 
 
@@ -651,6 +660,43 @@ def _check_route_config(provider: str, model: str, route_name: str) -> None:
         raise ValueError(f"{route_name} route uses {provider!r}, but its API key is not configured.")
 
 
+def _check_route_config_with_credentials(
+    provider: str,
+    model: str,
+    route_name: str,
+    *,
+    groq_api_key: str = "",
+    openai_api_key: str = "",
+    anthropic_api_key: str = "",
+    google_api_key: str = "",
+) -> None:
+    if not provider or not model:
+        raise ValueError(f"{route_name} route is missing provider or model.")
+    if provider == "chatgpt":
+        from core import chatgpt_auth
+        if not chatgpt_auth.get_tokens():
+            raise ValueError(f"{route_name} route uses chatgpt but you are not logged in.")
+        if model.lower() not in _CHATGPT_SUPPORTED_MODELS:
+            raise ValueError(
+                f"Model '{model}' is not supported by the ChatGPT Codex endpoint. "
+                f"Use one of: {', '.join(sorted(_CHATGPT_SUPPORTED_MODELS))}"
+            )
+        return
+    if provider == "copilot":
+        from core import copilot_auth
+        if not copilot_auth.get_token():
+            raise ValueError(f"{route_name} route uses copilot but no GitHub Copilot token is stored.")
+        return
+    available_keys = {
+        "groq": groq_api_key,
+        "openai": openai_api_key,
+        "anthropic": anthropic_api_key,
+        "google": google_api_key,
+    }
+    if not available_keys.get(provider, ""):
+        raise ValueError(f"{route_name} route uses {provider!r}, but its API key is not configured.")
+
+
 def _get_openai_client():
     global _openai_client
     if _openai_client is None:
@@ -709,6 +755,11 @@ def _get_vision_openai_client():
                 api_key=config.GROQ_API_KEY,
                 base_url="https://api.groq.com/openai/v1",
             )
+        elif config.VISION_LLM_PROVIDER.lower() == "google":
+            _vision_openai_client = OpenAI(
+                api_key=config.GOOGLE_API_KEY,
+                base_url=_GOOGLE_OPENAI_BASE_URL,
+            )
         else:
             _vision_openai_client = OpenAI(api_key=config.OPENAI_API_KEY)
     return _vision_openai_client
@@ -722,12 +773,208 @@ def _get_vision_anthropic_client():
     return _vision_anthropic_client
 
 
+def _probe_openai_compat_route(provider: str, model: str, image_base64: str | None = None) -> None:
+    client = _dynamic_openai_client(provider)
+    client.chat.completions.create(
+        model=model,
+        messages=_build_openai_messages("Reply with OK.", image_base64),
+        stream=False,
+        max_tokens=8,
+    )
+
+
+def _probe_openai_compat_route_with_credentials(
+    provider: str,
+    model: str,
+    *,
+    api_key: str,
+    image_base64: str | None = None,
+) -> None:
+    from openai import OpenAI
+
+    if provider == "groq":
+        client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
+    elif provider == "google":
+        client = OpenAI(api_key=api_key, base_url=_GOOGLE_OPENAI_BASE_URL)
+    else:
+        client = OpenAI(api_key=api_key)
+    client.chat.completions.create(
+        model=model,
+        messages=_build_openai_messages("Reply with OK.", image_base64),
+        stream=False,
+        max_tokens=8,
+    )
+
+
+def _probe_anthropic_route(model: str, image_base64: str | None = None) -> None:
+    client = _dynamic_anthropic_client()
+    if image_base64:
+        content = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": image_base64,
+                },
+            },
+            {"type": "text", "text": "Reply with OK."},
+        ]
+    else:
+        content = "Reply with OK."
+    client.messages.create(
+        model=model,
+        max_tokens=8,
+        messages=[{"role": "user", "content": content}],
+    )
+
+
+def _probe_anthropic_route_with_api_key(model: str, api_key: str, image_base64: str | None = None) -> None:
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=api_key)
+    if image_base64:
+        content = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": image_base64,
+                },
+            },
+            {"type": "text", "text": "Reply with OK."},
+        ]
+    else:
+        content = "Reply with OK."
+    client.messages.create(
+        model=model,
+        max_tokens=8,
+        messages=[{"role": "user", "content": content}],
+    )
+
+
+def _probe_chatgpt_route(model: str, image_base64: str | None = None) -> None:
+    client = _get_codex_client()
+    if image_base64:
+        content = [
+            {"type": "input_text", "text": "Reply with OK."},
+            {"type": "input_image", "image_url": f"data:image/png;base64,{image_base64}"},
+        ]
+    else:
+        content = [{"type": "input_text", "text": "Reply with OK."}]
+    client.responses.create(
+        model=model,
+        input=[{"type": "message", "role": "user", "content": content}],
+        instructions="Return exactly OK.",
+        store=False,
+        max_output_tokens=8,
+    )
+
+
+def _probe_copilot_route(model: str) -> None:
+    from core import copilot_client
+
+    text = copilot_client.ask(
+        "Reply with OK.",
+        model,
+        system="Return exactly OK.",
+        allow_tools=False,
+    )
+    if not text.strip():
+        raise RuntimeError("Copilot returned an empty response.")
+
+
+def test_route_connection(
+    provider: str,
+    model: str,
+    route_name: str = "LLM",
+    *,
+    image: bool = False,
+    groq_api_key: str | None = None,
+    openai_api_key: str | None = None,
+    anthropic_api_key: str | None = None,
+    google_api_key: str | None = None,
+) -> tuple[bool, str]:
+    provider = (provider or "").strip().lower()
+    model = (model or "").strip()
+    try:
+        explicit_credentials = any(
+            value is not None
+            for value in (groq_api_key, openai_api_key, anthropic_api_key, google_api_key)
+        )
+        if explicit_credentials:
+            _check_route_config_with_credentials(
+                provider,
+                model,
+                route_name,
+                groq_api_key=groq_api_key or "",
+                openai_api_key=openai_api_key or "",
+                anthropic_api_key=anthropic_api_key or "",
+                google_api_key=google_api_key or "",
+            )
+        else:
+            _check_route_config(provider, model, route_name)
+        if image:
+            image_base64 = _TEST_IMAGE_BASE64
+            if provider in ("groq", "openai", "google"):
+                if explicit_credentials:
+                    api_key = {
+                        "groq": groq_api_key or "",
+                        "openai": openai_api_key or "",
+                        "google": google_api_key or "",
+                    }[provider]
+                    _probe_openai_compat_route_with_credentials(provider, model, api_key=api_key, image_base64=image_base64)
+                else:
+                    _probe_openai_compat_route(provider, model, image_base64=image_base64)
+            elif provider == "anthropic":
+                if explicit_credentials:
+                    _probe_anthropic_route_with_api_key(model, anthropic_api_key or "", image_base64=image_base64)
+                else:
+                    _probe_anthropic_route(model, image_base64=image_base64)
+            elif provider == "chatgpt":
+                _probe_chatgpt_route(model, image_base64=image_base64)
+            else:
+                raise ValueError(f"Unknown vision provider: {provider}")
+            return True, f"{route_name} vision route OK: {provider} / {model}"
+
+        if provider in ("groq", "openai", "google"):
+            if explicit_credentials:
+                api_key = {
+                    "groq": groq_api_key or "",
+                    "openai": openai_api_key or "",
+                    "google": google_api_key or "",
+                }[provider]
+                _probe_openai_compat_route_with_credentials(provider, model, api_key=api_key)
+            else:
+                _probe_openai_compat_route(provider, model)
+        elif provider == "anthropic":
+            if explicit_credentials:
+                _probe_anthropic_route_with_api_key(model, anthropic_api_key or "")
+            else:
+                _probe_anthropic_route(model)
+        elif provider == "chatgpt":
+            _probe_chatgpt_route(model)
+        elif provider == "copilot":
+            _probe_copilot_route(model)
+        else:
+            raise ValueError(f"Unknown LLM provider: {provider}")
+        return True, f"{route_name} route OK: {provider} / {model}"
+    except Exception as exc:
+        return False, f"{route_name} test failed: {exc}"
+
+
 def stream_response(
     user_message: str,
     image_base64: str | None = None,
     ambient_context: str = "",
     memory_context: str = "",
     use_tools: bool = False,
+    route_provider: str | None = None,
+    route_model: str | None = None,
+    route_fallbacks: str | None = None,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
 ) -> Generator[str, None, None]:
     """
     Stream a response from the configured LLM.
@@ -749,6 +996,13 @@ def stream_response(
                   must use the actual tool call interface rather than
                   describing or simulating tool calls in text.
                   Ignored for Groq/OpenAI providers and vision calls.
+        route_provider:   Optional provider override for non-vision calls.
+        route_model:      Optional model override for non-vision calls.
+        route_fallbacks:  Optional provider:model fallback string for overrides.
+        max_tokens:       Optional response budget override for callers that
+                          need structured or longer output.
+        temperature:      Optional sampling override for callers that need
+                          deterministic structured output.
 
     Yields:
         Text chunks as they arrive from the API.
@@ -784,10 +1038,15 @@ def stream_response(
                 memory_context,
                 use_tools=False,
                 route_name="VISION_LLM",
+                max_tokens=max_tokens,
+                temperature=temperature,
             ),
         )
     else:
-        candidates = _route_candidates(config.LLM_PROVIDER, config.LLM_MODEL, config.LLM_FALLBACKS)
+        provider = (route_provider or config.LLM_PROVIDER).strip()
+        model = (route_model or config.LLM_MODEL).strip()
+        fallback_raw = config.LLM_FALLBACKS if route_fallbacks is None else route_fallbacks
+        candidates = _route_candidates(provider, model, fallback_raw)
         yield from _stream_with_fallbacks(
             "query",
             candidates,
@@ -800,6 +1059,8 @@ def stream_response(
                 memory_context,
                 use_tools=use_tools,
                 route_name="LLM",
+                max_tokens=max_tokens,
+                temperature=temperature,
             ),
         )
 
@@ -844,24 +1105,59 @@ def _stream_single_response_route(
     memory_context: str,
     use_tools: bool,
     route_name: str,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
 ) -> Generator[str, None, None]:
     _check_route_config(provider, model, route_name)
     effective_model = config.TOOL_LLM_MODEL if provider == "anthropic" and use_tools else model
     _log_model_route("vision" if image_base64 else "query", provider, effective_model, use_tools=use_tools)
     if image_base64:
-        if provider in ("groq", "openai"):
-            yield from _stream_openai_compat(user_message, image_base64, model, _dynamic_openai_client(provider))
+        if provider in ("groq", "openai", "google"):
+            yield from _stream_openai_compat(
+                user_message,
+                image_base64,
+                model,
+                _dynamic_openai_client(provider),
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
         elif provider == "anthropic":
-            yield from _stream_anthropic(user_message, image_base64, model, _dynamic_anthropic_client())
+            yield from _stream_anthropic(
+                user_message,
+                image_base64,
+                model,
+                _dynamic_anthropic_client(),
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
         elif provider == "chatgpt":
             yield from _stream_codex_vision(user_message, image_base64, model, _get_codex_client())
         else:
             raise ValueError(f"Unknown vision provider: {provider}")
         return
-    if provider in ("groq", "openai"):
-        yield from _stream_openai_compat(user_message, None, model, _dynamic_openai_client(provider), ambient_context, memory_context)
+    if provider in ("groq", "openai", "google"):
+        yield from _stream_openai_compat(
+            user_message,
+            None,
+            model,
+            _dynamic_openai_client(provider),
+            ambient_context,
+            memory_context,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
     elif provider == "anthropic":
-        yield from _stream_anthropic(user_message, None, effective_model, _dynamic_anthropic_client(), ambient_context, memory_context, use_tools)
+        yield from _stream_anthropic(
+            user_message,
+            None,
+            effective_model,
+            _dynamic_anthropic_client(),
+            ambient_context,
+            memory_context,
+            use_tools,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
     elif provider == "chatgpt":
         yield from _stream_codex(user_message, model, _get_codex_client(), ambient_context, memory_context, use_tools)
     elif provider == "copilot":
@@ -904,6 +1200,8 @@ def _stream_openai_compat(
     client,
     ambient_context: str = "",
     memory_context: str = "",
+    max_tokens: int | None = None,
+    temperature: float | None = None,
 ) -> Generator[str, None, None]:
     messages = _build_openai_messages(user_message, image_base64, ambient_context, memory_context)
 
@@ -911,8 +1209,8 @@ def _stream_openai_compat(
         model=model,
         messages=messages,
         stream=True,
-        max_tokens=256,
-        temperature=0.5,
+        max_tokens=max_tokens or 256,
+        temperature=0.5 if temperature is None else temperature,
     ) as stream:
         for chunk in stream:
             delta = chunk.choices[0].delta.content
@@ -1075,6 +1373,8 @@ def _stream_anthropic(
     ambient_context: str = "",
     memory_context: str = "",
     use_tools: bool = False,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
 ) -> Generator[str, None, None]:
     system = config.get_system_prompt()
     if memory_context:
@@ -1099,12 +1399,15 @@ def _stream_anthropic(
 
     # --- No tools: original streaming path (lowest latency) ---
     if not use_tools:
-        with client.messages.stream(
-            model=model,
-            max_tokens=256,
-            system=system,
-            messages=[{"role": "user", "content": content}],
-        ) as stream:
+        request = {
+            "model": model,
+            "max_tokens": max_tokens or 256,
+            "system": system,
+            "messages": [{"role": "user", "content": content}],
+        }
+        if temperature is not None:
+            request["temperature"] = temperature
+        with client.messages.stream(**request) as stream:
             for text in stream.text_stream:
                 yield text
         return
@@ -1114,13 +1417,16 @@ def _stream_anthropic(
     # Only falls back to blocking create() if Claude actually invokes a tool.
     messages: list[dict] = [{"role": "user", "content": content}]
 
-    with client.messages.stream(
-        model=model,
-        max_tokens=512,
-        system=system,
-        messages=messages,
-        tools=_get_tool_schemas(),
-    ) as stream:
+    request = {
+        "model": model,
+        "max_tokens": max_tokens or 512,
+        "system": system,
+        "messages": messages,
+        "tools": _get_tool_schemas(),
+    }
+    if temperature is not None:
+        request["temperature"] = temperature
+    with client.messages.stream(**request) as stream:
         for text in stream.text_stream:
             yield text
         final = stream.get_final_message()
@@ -1129,7 +1435,14 @@ def _stream_anthropic(
         return
 
     # A tool was called — execute it and do followup round(s) non-streaming.
-    yield from _run_anthropic_tool_loop(client, messages, final, model, system, max_tokens=512)
+    yield from _run_anthropic_tool_loop(
+        client,
+        messages,
+        final,
+        model,
+        system,
+        max_tokens=max_tokens or 512,
+    )
 
 
 # ------------------------------------------------------------------
@@ -1172,7 +1485,7 @@ def stream_rewrite(selected_text: str, intent_prompt: str = "Rewrite or fix the 
 def _stream_single_rewrite_route(provider: str, model: str, user_message: str) -> Generator[str, None, None]:
     _check_route_config(provider, model, "LLM")
     _log_model_route("rewrite", provider, model, use_tools=False)
-    if provider in ("groq", "openai"):
+    if provider in ("groq", "openai", "google"):
         client = _dynamic_openai_client(provider)
         with client.chat.completions.create(
             model=model,
@@ -1267,7 +1580,7 @@ def stream_response_with_history(
 def _stream_single_history_route(provider: str, model: str, messages: list) -> Generator[str, None, None]:
     _check_route_config(provider, model, "CHAT_LLM")
     _log_model_route("chat", provider, model, use_tools=(provider == "anthropic"))
-    if provider in ("groq", "openai"):
+    if provider in ("groq", "openai", "google"):
         client = _dynamic_openai_client(provider)
         with client.chat.completions.create(
             model=model,

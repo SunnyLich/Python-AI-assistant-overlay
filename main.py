@@ -14,6 +14,7 @@ os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.screen=false")
 import config
 from core.hotkeys import HotkeyListener
 from core import capture, llm, audio, context_fetcher, stt
+from core.assistant_text import ThoughtStreamParser
 from core import tts as tts_module
 from core import memory as memory_module
 from ui.overlay import DollOverlay, OverlaySignals
@@ -248,8 +249,6 @@ class App:
 
         self._steal_foreground()
         audio.play_filler()
-        if config.DOLL_AUTO_HIDE:
-            self._signals.show_doll.emit()
         self._signals.set_state.emit("listening")
         self._signals.show_intent_picker.emit(caller_idx)
 
@@ -279,8 +278,6 @@ class App:
         self._pending_paste_target = 0
 
         audio.play_filler()
-        if config.DOLL_AUTO_HIDE:
-            self._signals.show_doll.emit()
         self._signals.set_state.emit("listening")
         self._signals.show_intent_picker.emit(0)
 
@@ -531,10 +528,12 @@ class App:
 
         # Fresh query — reset streamed text accumulator.
         full_text = ""
+        reply_text = ""
         llm_chunk_q: queue.Queue[str | None] = queue.Queue()
+        parser = ThoughtStreamParser()
 
         def llm_producer():
-            nonlocal full_text
+            nonlocal full_text, reply_text
             try:
                 for chunk in llm.stream_response(
                     user_message,
@@ -544,24 +543,39 @@ class App:
                     use_tools=(not screenshot_b64 and caller.get("context_tools", True)),
                 ):
                     full_text += chunk
-                    llm_chunk_q.put(chunk)
-                    self._signals.bubble_chunk.emit(chunk)   # buffered by bubble in reveal mode
+                    for part, is_thought in parser.feed(chunk):
+                        if not part:
+                            continue
+                        self._signals.bubble_chunk.emit(part, is_thought)
+                        if not is_thought:
+                            reply_text += part
+                            llm_chunk_q.put(part)
                     if gen_id != self._gen_id:
                         break  # a newer query started — stop feeding stale chunks to the bubble
             finally:
+                for part, is_thought in parser.finish():
+                    if not part:
+                        continue
+                    self._signals.bubble_chunk.emit(part, is_thought)
+                    if not is_thought:
+                        reply_text += part
+                        llm_chunk_q.put(part)
                 llm_chunk_q.put(None)
             # Store context separately so the chat window can inject it into
             # the system prompt for follow-ups without re-embedding it in turns.
+            assistant_msg = {"role": "assistant", "content": reply_text}
+            if full_text != reply_text:
+                assistant_msg["display_content"] = full_text
             self._all_conversations.append({
                 "messages": [
                     {"role": "user", "content": user_message,
                      **({"image_base64": screenshot_b64} if screenshot_b64 else {})},
-                    {"role": "assistant", "content": full_text},
+                    assistant_msg,
                 ],
                 "context": ambient_ctx,
             })
             # Record the completed turn in short-term memory.
-            self._memory.record_turn(user_message, full_text, ambient_ctx)
+            self._memory.record_turn(user_message, reply_text, ambient_ctx)
 
         def llm_chunk_iter():
             while True:
@@ -590,7 +604,7 @@ class App:
                 on_audio_start()
 
             def _on_done():
-                self._last_reply = full_text
+                self._last_reply = reply_text
                 if gen_id == self._gen_id:
                     self._signals.set_state.emit("idle")
                     self._signals.bubble_finish.emit()

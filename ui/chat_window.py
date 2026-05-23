@@ -7,16 +7,18 @@ continue that thread.
 Send message: Enter (Shift+Enter for newline).
 """
 from __future__ import annotations
+import html
 import threading
 import config
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
-    QLabel, QTextEdit, QPushButton, QFrame, QApplication,
+    QLabel, QTextEdit, QPushButton, QFrame, QApplication, QTextBrowser,
     QSizePolicy, QStackedWidget, QSplitter,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer
 from PyQt6.QtGui import QFont, QPixmap, QShortcut, QKeySequence
-from ui.window_utils import fit_window_to_screen
+from core.assistant_text import ThoughtStreamParser, merge_segment_iterables, split_tagged_text
+from ui.window_utils import enable_standard_window_controls, fit_window_to_screen
 
 _W          = 680
 _H          = 520
@@ -35,6 +37,57 @@ _SEL_BG     = "rgba(160,160,255,18)"
 class _StreamSignals(QObject):
     chunk     = pyqtSignal(str)
     finished  = pyqtSignal()
+
+
+class _MessageTextView(QTextBrowser):
+    def __init__(self, style_sheet: str):
+        super().__init__()
+        self.setOpenLinks(False)
+        self.setReadOnly(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setStyleSheet(style_sheet)
+        self.textChanged.connect(self._sync_height)
+
+    def _sync_height(self):
+        doc_h = self.document().documentLayout().documentSize().height()
+        margin = self.contentsMargins().top() + self.contentsMargins().bottom()
+        self.setFixedHeight(max(38, int(doc_h + margin + 6)))
+
+
+def _merge_display_segments(segments: list[tuple[str, bool]], text: str, is_thought: bool) -> list[tuple[str, bool]]:
+    if not text:
+        return segments
+    if segments and segments[-1][1] == is_thought:
+        segments[-1] = (segments[-1][0] + text, is_thought)
+    else:
+        segments.append((text, is_thought))
+    return segments
+
+
+def _segment_text_to_html(text: str) -> str:
+    return html.escape(text).replace("\n", "<br>")
+
+
+def _assistant_segments_to_html(segments: list[tuple[str, bool]]) -> str:
+    parts: list[str] = []
+    for text, is_thought in segments:
+        body = _segment_text_to_html(text)
+        if is_thought:
+            parts.append(f'<span style="color: #8f8f9e;">{body}</span>')
+        else:
+            parts.append(body)
+    return "".join(parts)
+
+
+def _assistant_text_to_html(text: str) -> str:
+    return _assistant_segments_to_html(split_tagged_text(text))
 
 
 class ChatWindow(QWidget):
@@ -58,8 +111,11 @@ class ChatWindow(QWidget):
         self._conversations = conversations  # live reference — NOT a copy
         self._send_fn = send_fn
         self._streaming = False
-        self._current_ai_label: QLabel | None = None
+        self._current_ai_label: _MessageTextView | None = None
         self._current_ai_text = ""
+        self._current_ai_reply_text = ""
+        self._current_ai_segments: list[tuple[str, bool]] = []
+        self._current_ai_parser: ThoughtStreamParser | None = None
         self._active_idx = max(0, len(conversations) - 1)
 
         self._signals = _StreamSignals()
@@ -68,6 +124,7 @@ class ChatWindow(QWidget):
 
         self.setWindowTitle("Chat")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
+        enable_standard_window_controls(self)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setStyleSheet(f"background: {_BG}; color: {_TEXT};")
         self.setMinimumSize(_W, _H)
@@ -301,7 +358,8 @@ class ChatWindow(QWidget):
         layout.addStretch()
 
         for msg in conv["messages"]:
-            self._bubble(layout, msg["content"], msg["role"], msg.get("image_base64"))
+            display_text = msg.get("display_content", msg["content"])
+            self._bubble(layout, display_text, msg["role"], msg.get("image_base64"))
 
         scroll._msg_layout = layout  # type: ignore[attr-defined]
         scroll.setWidget(container)
@@ -341,17 +399,17 @@ class ChatWindow(QWidget):
 
     # ------------------------------------------------------------------ Bubbles
 
-    def _bubble(self, layout, text: str, role: str, image_b64: str | None = None) -> QLabel:
-        lbl = QLabel(text)
-        lbl.setTextFormat(Qt.TextFormat.MarkdownText)
-        lbl.setWordWrap(True)
-        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        lbl.setStyleSheet(
-            f"QLabel {{ background: {'#3a3a5c' if role == 'user' else '#26263a'};"
-            f" color: {_TEXT}; border-radius: 8px; padding: 8px 11px; font-size: 10pt; }}"
+    def _bubble(self, layout, text: str, role: str, image_b64: str | None = None) -> _MessageTextView:
+        bg = '#3a3a5c' if role == 'user' else '#26263a'
+        lbl = _MessageTextView(
+            f"QTextBrowser {{ background: {bg}; color: {_TEXT}; border-radius: 8px;"
+            f" padding: 8px 11px; font-size: 10pt; border: none; }}"
+            f"QTextBrowser::selection {{ background: rgba(160,160,255,60); color: {_TEXT}; }}"
         )
-        lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        if role == "assistant":
+            lbl.setHtml(_assistant_text_to_html(text))
+        else:
+            lbl.setPlainText(text)
 
         role_lbl = QLabel("You" if role == "user" else "Assistant")
         role_lbl.setStyleSheet(f"color: {_HINT}; background: transparent; font-size: 8pt;")
@@ -433,6 +491,9 @@ class ChatWindow(QWidget):
         conv["messages"].append({"role": "user", "content": text})
 
         self._current_ai_text = ""
+        self._current_ai_reply_text = ""
+        self._current_ai_segments = []
+        self._current_ai_parser = ThoughtStreamParser()
         self._current_ai_label = self._bubble(layout, "…", "assistant") if layout else None
         self._scroll_bottom()
 
@@ -455,17 +516,35 @@ class ChatWindow(QWidget):
 
     def _on_chunk(self, chunk: str):
         self._current_ai_text += chunk
+        if self._current_ai_parser is None:
+            self._current_ai_parser = ThoughtStreamParser()
+        for text, is_thought in self._current_ai_parser.feed(chunk):
+            _merge_display_segments(self._current_ai_segments, text, is_thought)
+            if not is_thought:
+                self._current_ai_reply_text += text
         if self._current_ai_label:
-            self._current_ai_label.setText(self._current_ai_text)
+            self._current_ai_label.setHtml(_assistant_segments_to_html(self._current_ai_segments))
         self._scroll_bottom()
 
     def _on_finished(self):
-        if self._current_ai_text and self._conversations and 0 <= self._active_idx < len(self._conversations):
-            self._conversations[self._active_idx]["messages"].append(
-                {"role": "assistant", "content": self._current_ai_text}
-            )
+        if self._current_ai_parser is not None:
+            flushed = self._current_ai_parser.finish()
+            self._current_ai_segments = merge_segment_iterables(self._current_ai_segments, flushed)
+            for text, is_thought in flushed:
+                if not is_thought:
+                    self._current_ai_reply_text += text
+            if self._current_ai_label:
+                self._current_ai_label.setHtml(_assistant_segments_to_html(self._current_ai_segments))
+        if self._current_ai_reply_text and self._conversations and 0 <= self._active_idx < len(self._conversations):
+            message = {"role": "assistant", "content": self._current_ai_reply_text}
+            if self._current_ai_text != self._current_ai_reply_text:
+                message["display_content"] = self._current_ai_text
+            self._conversations[self._active_idx]["messages"].append(message)
         self._current_ai_label = None
         self._current_ai_text = ""
+        self._current_ai_reply_text = ""
+        self._current_ai_segments = []
+        self._current_ai_parser = None
         self._streaming = False
         self._send_btn.setEnabled(True)
         self._new_chat_btn.setEnabled(True)

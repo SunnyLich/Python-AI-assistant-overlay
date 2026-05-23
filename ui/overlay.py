@@ -12,39 +12,13 @@ States:
 """
 from __future__ import annotations
 import os
-import glob
-import urllib.parse
 import config
-from core import asset_server as _asset_server
 from PyQt6.QtWidgets import QApplication, QLabel, QMainWindow, QSystemTrayIcon, QMenu
-from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal, QObject, QEvent, QPoint
-from PyQt6.QtGui import QPixmap, QIcon, QAction, QColor
-from doll.animation import DollAnimator
-
-try:
-    from PyQt6.QtWebEngineWidgets import QWebEngineView
-    from PyQt6.QtWebEngineCore import QWebEngineSettings
-
-    class _VRMView(QWebEngineView):
-        """QWebEngineView that forwards click events to a registered handler."""
-
-        def __init__(self, parent=None):
-            super().__init__(parent)
-            self._click_handler = None
-
-        def mousePressEvent(self, event):          # noqa: N802
-            if self._click_handler:
-                self._click_handler(event)
-            super().mousePressEvent(event)
-
-    _WEB_ENGINE_AVAILABLE = True
-except ImportError:
-    _VRMView = None  # type: ignore[assignment]
-    _WEB_ENGINE_AVAILABLE = False
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QEvent, QPoint
+from PyQt6.QtGui import QPixmap, QIcon, QAction
 
 
 _ASSETS_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
-_DOLL_ROOT   = os.path.join(os.path.dirname(os.path.dirname(__file__)), "doll")
 ASSETS_DIR   = os.path.join(_ASSETS_ROOT, "doll")
 
 
@@ -59,7 +33,7 @@ class OverlaySignals(QObject):
     bubble_thinking    = pyqtSignal()      # show animated dots
     bubble_start_reveal = pyqtSignal()     # start word-by-word reveal synced to audio
     bubble_schedule_words = pyqtSignal(list, list)  # (words, start_ms) from Cartesia timestamps
-    bubble_chunk       = pyqtSignal(str)   # buffer additional streamed text chunk
+    bubble_chunk       = pyqtSignal(str, bool)   # (chunk, is_thought)
     bubble_finish      = pyqtSignal()      # response done, start hide countdown
     bubble_clear       = pyqtSignal()      # hide immediately
     show_doll          = pyqtSignal()      # make doll visible
@@ -78,18 +52,12 @@ class DollOverlay(QMainWindow):
 
     @property
     def DOLL_SIZE(self):
-        if getattr(self, '_use_vrm', False):
-            return (config.VRM_WIDTH, config.VRM_HEIGHT)
         s = config.DOLL_SIZE
         return (s, s)
 
     def __init__(self, signals: OverlaySignals):
         super().__init__()
         self.signals = signals
-
-        # Doll disabled — only the speech bubble is used.
-        self._use_vrm = False
-        self._no_doll = True
 
         self._build_window()
         self._build_tray()
@@ -127,11 +95,10 @@ class DollOverlay(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_window(self):
-        # No doll — create a hidden zero-size window just to anchor the tray icon.
-        if self._no_doll:
-            self.setWindowFlags(Qt.WindowType.Tool)
-            self.setFixedSize(0, 0)
-            return
+        # Hidden zero-size window anchors the tray icon. The visible companion is
+        # a small independent QLabel so it can be dragged without a window frame.
+        self.setWindowFlags(Qt.WindowType.Tool)
+        self.setFixedSize(0, 0)
 
     def _build_icon_label(self):
         sz = config.DOLL_SIZE
@@ -152,14 +119,17 @@ class DollOverlay(QMainWindow):
         self._icon_label.move(x, y)
         self._icon_label.setScaledContents(True)
         self._set_icon_pixmap("idle")
-        self._icon_label.show()
+        if config.DOLL_AUTO_HIDE:
+            self._icon_label.hide()
+        else:
+            self._icon_label.show()
         self._icon_label.setCursor(Qt.CursorShape.SizeAllCursor)
         self._icon_label.installEventFilter(self)
         self._icon_drag_offset = None
 
         self._icon_hide_timer = QTimer(self)
         self._icon_hide_timer.setSingleShot(True)
-        self._icon_hide_timer.setInterval(30_000)  # safety backstop only — icon normally hides via _on_bubble_hidden
+        self._icon_hide_timer.setInterval(self._icon_backstop_ms())
         self._icon_hide_timer.timeout.connect(self._icon_label.hide)
 
     def _build_tray(self):
@@ -177,12 +147,6 @@ class DollOverlay(QMainWindow):
     def _build_tray_menu(self) -> QMenu:
         menu = QMenu()
 
-        if self._use_vrm:
-            tuner_action = QAction("VRM Tuner…", self)
-            tuner_action.triggered.connect(self._open_vrm_tuner)
-            menu.addAction(tuner_action)
-            menu.addSeparator()
-
         from ui.agent_task_mockup import make_agent_history_action, make_agent_task_action
 
         menu.addAction(make_agent_task_action(self, parent=self))
@@ -193,6 +157,8 @@ class DollOverlay(QMainWindow):
         new_chat_action.triggered.connect(self.signals.show_new_chat.emit)
         last_chat_action = QAction("Last chat", self)
         last_chat_action.triggered.connect(self.signals.show_last_chat.emit)
+        hide_doll_action = QAction("Hide doll", self)
+        hide_doll_action.triggered.connect(self._hide_doll_now)
         memory_action = QAction("Memory…", self)
         memory_action.triggered.connect(self.signals.show_memory_viewer.emit)
         settings_action = QAction("Settings", self)
@@ -201,6 +167,7 @@ class DollOverlay(QMainWindow):
         quit_action.triggered.connect(QApplication.quit)
         menu.addAction(new_chat_action)
         menu.addAction(last_chat_action)
+        menu.addAction(hide_doll_action)
         menu.addSeparator()
         menu.addAction(memory_action)
         menu.addSeparator()
@@ -208,37 +175,6 @@ class DollOverlay(QMainWindow):
         menu.addSeparator()
         menu.addAction(quit_action)
         return menu
-
-    # ------------------------------------------------------------------
-    # VRM Tuner
-    # ------------------------------------------------------------------
-
-    def _open_vrm_tuner(self):
-        from doll.vrm_tuner import TunerWindow
-
-        def _on_saved(json_str: str) -> None:
-            config_path = os.path.join(_DOLL_ROOT, "vrm_config.json")
-            try:
-                with open(config_path, "w", encoding="utf-8") as f:
-                    f.write(json_str)
-                print("[tuner] Saved vrm_config.json")
-            except Exception as exc:
-                print(f"[tuner] Save error: {exc}")
-                return
-            # Live-push new config to the overlay without restart
-            self._webview.page().runJavaScript(
-                f"if(window.applyConfig)applyConfig({json_str})"
-            )
-
-        if not hasattr(self, "_tuner_window") or not self._tuner_window.isVisible():
-            self._tuner_window = TunerWindow(self._vrm_path, _on_saved,
-                                             asset_port=getattr(self, "_asset_port", 0))
-        self._tuner_window.show()
-        self._tuner_window.raise_()
-
-    # ------------------------------------------------------------------
-    # State machine
-    # ------------------------------------------------------------------
 
     def _set_icon_pixmap(self, state: str):
         p = os.path.join(ASSETS_DIR, f"{state}.png")
@@ -253,20 +189,9 @@ class DollOverlay(QMainWindow):
         if icon:
             self._tray.setIcon(icon)
         self._set_icon_pixmap(state)
-        if self._no_doll:
-            return
-        if self._use_vrm:
-            self._webview.page().runJavaScript(f"if(window.setState)setState('{state}')")
-        else:
-            self._animator.play(state, self._update_pixmap)
 
     def _on_mouth_amp(self, amp: float):
-        if self._use_vrm:
-            self._webview.page().runJavaScript(f"if(window.setMouthAmp)window.setMouthAmp({amp:.3f})")
-
-    def _update_pixmap(self, pixmap: QPixmap):
-        if not self._use_vrm:
-            self._label.setPixmap(pixmap)
+        pass
 
     def apply_settings(self):
         """Apply settings that affect existing overlay widgets without restart."""
@@ -278,6 +203,8 @@ class DollOverlay(QMainWindow):
             self._bubble.apply_config()
             if hasattr(self, "_icon_label"):
                 self._on_doll_dragged(self._icon_label.pos())
+        if hasattr(self, "_icon_hide_timer"):
+            self._icon_hide_timer.setInterval(self._icon_backstop_ms())
 
     # ------------------------------------------------------------------
     # Popup
@@ -287,6 +214,28 @@ class DollOverlay(QMainWindow):
         from ui.popup import TextPopup
         popup = TextPopup(text, parent=None)
         popup.show()
+
+    def notify_agent_approval(self, text: str, *, resolved: bool = False) -> None:
+        """Raise the doll/icon and show an agent approval notice bubble."""
+        if hasattr(self, "_icon_hide_timer"):
+            self._icon_hide_timer.stop()
+        if hasattr(self, "_icon_label"):
+            self._set_icon_pixmap("thinking" if not resolved else "idle")
+            self._icon_label.show()
+            self._icon_label.raise_()
+        if hasattr(self, "_bubble"):
+            timeout = 4500 if resolved else 15000
+            self._bubble.show_notice(text, timeout_ms=timeout)
+        if hasattr(self, "_tray"):
+            self._tray.showMessage(
+                "Agent permission" if not resolved else "Agent permission resolved",
+                text,
+                QSystemTrayIcon.MessageIcon.Warning if not resolved else QSystemTrayIcon.MessageIcon.Information,
+                10000 if not resolved else 4000,
+            )
+        if hasattr(self, "_icon_hide_timer"):
+            self._icon_hide_timer.setInterval(15000 if not resolved else self._icon_backstop_ms())
+            self._icon_hide_timer.start()
 
     def _open_settings(self):
         from ui.settings import open_settings
@@ -301,6 +250,7 @@ class DollOverlay(QMainWindow):
             return
         self._icon_hide_timer.stop()
         self._icon_label.show()
+        self._icon_hide_timer.start()
 
     def _hide_doll(self):
         if not hasattr(self, '_icon_hide_timer'):
@@ -309,6 +259,18 @@ class DollOverlay(QMainWindow):
         # the bubble via _on_bubble_hidden, but this covers cases where the bubble
         # is never shown (e.g. empty voice transcription).
         self._icon_hide_timer.start()
+
+    def _hide_doll_now(self):
+        if not hasattr(self, '_icon_hide_timer') or not hasattr(self, '_icon_label'):
+            return
+        self._icon_hide_timer.stop()
+        if hasattr(self, "_bubble"):
+            self._bubble.clear()
+        self._icon_label.hide()
+
+    @staticmethod
+    def _icon_backstop_ms() -> int:
+        return max(500, int(getattr(config, "DOLL_ICON_BACKSTOP_MS", 5000)))
 
     def _on_bubble_hidden(self):
         """Called by SpeechBubble.hideEvent — hides the icon in lockstep with the bubble."""

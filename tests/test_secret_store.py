@@ -41,24 +41,29 @@ class SecretStoreTests(unittest.TestCase):
 
     def test_migrate_env_secrets_writes_missing_keys(self):
         fake = FakeKeyring()
-        env = {"OPENAI_API_KEY": "sk-test", "GROQ_API_KEY": ""}
+        env = {"OPENAI_API_KEY": "sk-test", "GOOGLE_API_KEY": "google-test", "GROQ_API_KEY": ""}
         with patch.dict(sys.modules, {"keyring": fake}):
             migrated = secret_store.migrate_env_secrets(env)
 
-        self.assertEqual(migrated, ["OPENAI_API_KEY"])
+        self.assertEqual(migrated, ["OPENAI_API_KEY", "GOOGLE_API_KEY"])
         self.assertEqual(
             fake.get_password("python-ai-overlay", "openai_api_key"),
             "sk-test",
+        )
+        self.assertEqual(
+            fake.get_password("python-ai-overlay", "google_api_key"),
+            "google-test",
         )
 
     def test_secret_source_reports_keychain_env_or_none(self):
         fake = FakeKeyring()
         fake.set_password("python-ai-overlay", "openai_api_key", "keychain-value")
         with patch.dict(sys.modules, {"keyring": fake}), patch.dict(
-            "os.environ", {"ANTHROPIC_API_KEY": "env-value"}, clear=False
+            "os.environ", {"ANTHROPIC_API_KEY": "env-value", "GOOGLE_API_KEY": "google-env"}, clear=False
         ):
             self.assertEqual(secret_store.secret_source("OPENAI_API_KEY"), "keychain")
             self.assertEqual(secret_store.secret_source("ANTHROPIC_API_KEY"), "env")
+            self.assertEqual(secret_store.secret_source("GOOGLE_API_KEY"), "env")
             self.assertEqual(secret_store.secret_source("GROQ_API_KEY"), "none")
 
     def test_configured_marker_counts_as_has_secret_for_display(self):

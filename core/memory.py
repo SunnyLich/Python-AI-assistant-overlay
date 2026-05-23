@@ -620,12 +620,17 @@ class MemoryManager:
         model    = config.MEMORY_LLM_MODEL
 
         try:
-            if provider in ("groq", "openai"):
+            if provider in ("groq", "openai", "google"):
                 from openai import OpenAI
                 if provider == "groq":
                     client = OpenAI(
                         api_key=config.GROQ_API_KEY,
                         base_url="https://api.groq.com/openai/v1",
+                    )
+                elif provider == "google":
+                    client = OpenAI(
+                        api_key=config.GOOGLE_API_KEY,
+                        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
                     )
                 else:
                     client = OpenAI(api_key=config.OPENAI_API_KEY)

@@ -1,6 +1,7 @@
 .env
 private/
 doll/
+tmp_debug_agent/
 
 # Memory (vector store + fallback JSON — contains personal user data)
 memory/
@@ -8,6 +9,7 @@ memory/
 
 # Python
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *.pyo
 .venv/

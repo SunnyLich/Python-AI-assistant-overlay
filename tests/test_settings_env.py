@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from ui import settings
+from ui import settings_env
 
 
 class SettingsEnvTests(unittest.TestCase):
@@ -14,8 +14,8 @@ class SettingsEnvTests(unittest.TestCase):
                 "OPENAI_API_KEY=old\nLLM_MODEL=old-model\n# comment\n",
                 encoding="utf-8",
             )
-            with patch.object(settings, "ENV_PATH", env_path):
-                settings._write_env(
+            with patch.object(settings_env, "ENV_PATH", env_path):
+                settings_env.write_settings_env(
                     {"LLM_MODEL": "new-model"},
                     remove_keys={"OPENAI_API_KEY"},
                 )

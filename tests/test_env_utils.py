@@ -1,10 +1,10 @@
-import os
+﻿import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from core.env_utils import env_bool, env_float, env_int, write_env_file
+from core.system.env_utils import env_bool, env_float, env_int, write_env_file
 
 
 class EnvUtilsTests(unittest.TestCase):
@@ -36,3 +36,4 @@ class EnvUtilsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

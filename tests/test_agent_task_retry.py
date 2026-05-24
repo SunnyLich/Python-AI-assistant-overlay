@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
-from ui.agent_task_mockup import continue_spec_from_run, role_responsibility, retry_spec_from_run
+from core.agent.task_spec import continue_spec_from_run, role_responsibility, retry_spec_from_run
 
 
 class AgentTaskRetryTests(unittest.TestCase):
@@ -70,3 +70,4 @@ class AgentTaskRetryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -1,10 +1,10 @@
-"""
-main.py — Entry point for Wisp.
+﻿"""
+main.py â€” Entry point for Wisp.
 
 Flow:
-  Ctrl+E → IntentOverlay appears (WASD picker)
-  WASD key → capture input → LLM stream → TTS stream → audio out
-  Click doll → show full reply popup
+  Ctrl+E â†’ IntentOverlay appears (WASD picker)
+  WASD key â†’ capture input â†’ LLM stream â†’ TTS stream â†’ audio out
+  Click doll â†’ show full reply popup
 """
 import sys
 import os
@@ -17,76 +17,17 @@ from core import capture, llm, audio, context_fetcher, stt
 from core.assistant_text import ThoughtStreamParser
 from core import tts as tts_module
 from core import memory as memory_module
+from core.system.app_platform import configure_windows_app_identity
+from core.memory_store.commands import extract_remember_fact
 from ui.overlay import DollOverlay, OverlaySignals
 from ui.intent_overlay import IntentOverlay
 from ui.snip_overlay import SnipOverlay
 from ui.chat_window import ChatWindow
 
 
-def _configure_windows_app_identity() -> None:
-    if os.name != "nt":
-        return
-    try:
-        import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "Sunny.Wisp"
-        )
-    except Exception:
-        pass
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-import re as _re
-
-# Matches only unambiguous imperative memory commands at the START of a message.
-# The (?=[a-zA-Z]) after ^ explicitly rejects messages that begin with a
-# quotation mark, symbol, or any non-letter character before the trigger word.
-# Also deliberately excludes: "I remember...", "do you remember...?",
-# "can you remember...", "help me remember..." — those are conversation, not storage.
-_REMEMBER_RE = _re.compile(
-    r"""^(?=[a-zA-Z])(?:
-        (?:please\s+)?remember\s+(?:that\s+|this[:\-\s]+|these[:\-\s]+)
-        |(?:please\s+)?remember\s*[:\-]\s*
-        |(?:please\s+)?note\s+that\s+
-        |(?:please\s+)?note\s*[:\-]\s*
-        |save\s+(?:this|that)\s*[:\-\s]+
-        |keep\s+in\s+mind\s+(?:that\s+)?
-        |keep\s+in\s+mind\s*[:\-]\s*
-        |don'?t\s+forget\s+(?:that\s+)?
-        |make\s+(?:a\s+)?note\s+(?:that\s+|of\s+)?
-        |make\s+(?:a\s+)?note\s*[:\-]\s*
-        |store\s+(?:this|that)\s*[:\-\s]+
-    )""",
-    _re.IGNORECASE | _re.VERBOSE,
-)
-
-
-def _extract_remember_fact(text: str) -> str | None:
-    """
-    Return the fact text if the message is an imperative memory command,
-    otherwise None.
-
-    Triggers: "remember that X", "remember: X", "note that X", "note: X",
-              "keep in mind X", "don't forget X", "make a note of X",
-              "save this: X", "store that: X"  (and "please ..." variants).
-
-    Does NOT trigger: "I remember X", "do you remember X?",
-                      "can you remember X", "help me remember X".
-    """
-    t = text.strip()
-    m = _REMEMBER_RE.match(t)
-    if m:
-        fact = t[m.end():].strip()
-        if fact:
-            return fact
-    return None
-
-
 class App:
     def __init__(self):
-        _configure_windows_app_identity()
+        configure_windows_app_identity()
         self._qt = QApplication(sys.argv)
         self._qt.setApplicationName("Wisp")
         self._qt.setApplicationDisplayName("Wisp")
@@ -158,7 +99,7 @@ class App:
         print("[main] Connections pre-warmed.")
 
     # ------------------------------------------------------------------
-    # Settings applied — reload config + re-register hotkeys live
+    # Settings applied â€” reload config + re-register hotkeys live
     # ------------------------------------------------------------------
 
     def _on_settings_applied(self):
@@ -178,11 +119,11 @@ class App:
         print("[main] Config reloaded and hotkeys re-registered.")
 
     # ------------------------------------------------------------------
-    # Hotkey → show intent picker (runs in keyboard listener thread)
+    # Hotkey â†’ show intent picker (runs in keyboard listener thread)
     # ------------------------------------------------------------------
 
     def _on_add_context(self):
-        """Alt+Q — capture selected text and append to context buffer."""
+        """Alt+Q â€” capture selected text and append to context buffer."""
         text = capture.get_selected_text()
         if text:
             with self._context_buffer_lock:
@@ -190,13 +131,13 @@ class App:
             print(f"[main] Context buffer: {len(self._context_buffer)} item(s) queued.")
 
     def _on_clear_context(self):
-        """Alt+W — clear the context buffer."""
+        """Alt+W â€” clear the context buffer."""
         with self._context_buffer_lock:
             self._context_buffer.clear()
         print("[main] Context buffer cleared.")
 
     def _steal_foreground(self) -> None:
-        """AttachThreadInput + SetForegroundWindow — must be called from the keyboard-hook thread."""
+        """AttachThreadInput + SetForegroundWindow â€” must be called from the keyboard-hook thread."""
         if not self._overlay_hwnd:
             return
         try:
@@ -215,7 +156,7 @@ class App:
             pass
 
     def _on_snip_hotkey(self):
-        """Ctrl+Alt+Q — show the region selector, then the intent picker."""
+        """Ctrl+Alt+Q â€” show the region selector, then the intent picker."""
         try:
             import ctypes
             self._pending_intent_target = ctypes.windll.user32.GetForegroundWindow()
@@ -290,7 +231,7 @@ class App:
     # ------------------------------------------------------------------
 
     def _on_voice_start(self):
-        """F9 key-down — start recording."""
+        """F9 key-down â€” start recording."""
         if self._voice_active:
             return  # ignore held-down repeat events
         self._voice_active = True
@@ -302,11 +243,11 @@ class App:
         self._signals.bubble_listening.emit()
 
     def _on_voice_stop(self):
-        """F9 key-up — stop recording, transcribe, and query."""
+        """F9 key-up â€” stop recording, transcribe, and query."""
         if not self._voice_active:
             return
         self._voice_active = False
-        # Transcription is blocking (~200–600 ms) — run off the hotkey thread.
+        # Transcription is blocking (~200â€“600 ms) â€” run off the hotkey thread.
         threading.Thread(target=self._voice_transcribe_and_query, daemon=True).start()
 
     def _voice_transcribe_and_query(self):
@@ -335,7 +276,7 @@ class App:
         self._intent_picker.cancelled.connect(self._on_intent_cancelled)
         self._intent_picker.show()
 
-        # Second focus grab from the Qt main thread — by now the picker has a
+        # Second focus grab from the Qt main thread â€” by now the picker has a
         # real HWND and Qt has had a chance to process the show event.
         try:
             import ctypes
@@ -479,14 +420,14 @@ class App:
             else ""
         )
 
-        # Build final message — intent prompt only; context goes into the system
+        # Build final message â€” intent prompt only; context goes into the system
         # prompt so it is sent exactly once and not repeated in every follow-up turn.
         with self._context_buffer_lock:
             context_items = self._context_buffer.copy()
             self._context_buffer.clear()
 
         all_contexts = context_items + ([selected] if selected else [])
-        user_message = intent_prompt  # clean turn — no embedded context
+        user_message = intent_prompt  # clean turn â€” no embedded context
         if all_contexts:
             # Merge selected / buffered text into ambient_ctx (system-prompt layer).
             ctx_block = (
@@ -497,7 +438,7 @@ class App:
             ambient_ctx = f"{ambient_ctx}\n\n---\n{ctx_block}" if ambient_ctx else ctx_block
 
         # Proactively read the active document (if any) so the model has full context
-        # without needing a tool round-trip.  Only for text queries — vision queries
+        # without needing a tool round-trip.  Only for text queries â€” vision queries
         # already have a screenshot as context.
         if not screenshot_b64 and caller.get("context_documents", True):
             doc_text = llm.read_active_document_for_context()
@@ -512,7 +453,7 @@ class App:
 
         # Memory: check for explicit "remember that" command, then retrieve
         # relevant LTM facts and the current STM session summary.
-        remember_fact = _extract_remember_fact(user_message)
+        remember_fact = extract_remember_fact(user_message)
         if remember_fact:
             self._memory.add_explicit_fact(remember_fact)
 
@@ -526,7 +467,7 @@ class App:
             memory_ctx_parts.append("[Session context]\n" + stm_ctx)
         memory_context = "\n\n".join(memory_ctx_parts)
 
-        # Fresh query — reset streamed text accumulator.
+        # Fresh query â€” reset streamed text accumulator.
         full_text = ""
         reply_text = ""
         llm_chunk_q: queue.Queue[str | None] = queue.Queue()
@@ -551,7 +492,7 @@ class App:
                             reply_text += part
                             llm_chunk_q.put(part)
                     if gen_id != self._gen_id:
-                        break  # a newer query started — stop feeding stale chunks to the bubble
+                        break  # a newer query started â€” stop feeding stale chunks to the bubble
             finally:
                 for part, is_thought in parser.finish():
                     if not part:
@@ -585,7 +526,7 @@ class App:
                 yield chunk
 
         def on_audio_start():
-            # Called when first PCM chunk hits the speaker — start word reveal + speaking anim.
+            # Called when first PCM chunk hits the speaker â€” start word reveal + speaking anim.
             if gen_id != self._gen_id:
                 return
             self._signals.set_state.emit("speaking")
@@ -595,7 +536,7 @@ class App:
             self._signals.set_mouth_amp.emit(amp)
 
         def on_word_timestamps(words, start_ms):
-            # Real word timings from Cartesia — drives precise bubble sync.
+            # Real word timings from Cartesia â€” drives precise bubble sync.
             if gen_id == self._gen_id:
                 self._signals.bubble_schedule_words.emit(words, start_ms)
 
@@ -623,7 +564,7 @@ class App:
         threading.Thread(target=tts_consumer, daemon=True).start()
 
     # ------------------------------------------------------------------
-    # Doll click → show popup
+    # Doll click â†’ show popup
     # ------------------------------------------------------------------
 
     def _open_or_raise_chat(self, auto_message: str | None = None, force_new: bool = False) -> None:
@@ -648,11 +589,11 @@ class App:
         self._open_or_raise_chat(auto_message=auto_msg)
 
     def _on_show_last_chat(self):
-        """Tray menu 'Last chat' — open or raise the chat window."""
+        """Tray menu 'Last chat' â€” open or raise the chat window."""
         self._open_or_raise_chat()
 
     def _on_show_new_chat(self):
-        """Tray menu 'New chat' — open the chat window on a fresh thread."""
+        """Tray menu 'New chat' â€” open the chat window on a fresh thread."""
         self._open_or_raise_chat(force_new=True)
 
     def _make_memory_send_fn(self):
@@ -689,8 +630,8 @@ class App:
 def main():
     # Our clipboard helper (capture.get_selected_text) injects a synthetic Ctrl+C
     # via keyboard.send("ctrl+c") while the terminal is still the foreground window.
-    # On Windows, this delivers CTRL_C_EVENT to every process in the console group —
-    # including us — which becomes KeyboardInterrupt in the Qt event loop.
+    # On Windows, this delivers CTRL_C_EVENT to every process in the console group â€”
+    # including us â€” which becomes KeyboardInterrupt in the Qt event loop.
     # Ignore CTRL_C_EVENT at the Win32 level so the app can never be killed this way.
     # (The tray "Quit" action is the intended exit path.)
     try:
@@ -708,3 +649,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

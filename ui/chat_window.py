@@ -1,5 +1,5 @@
-"""
-ui/chat_window.py — Multi-turn chat window with conversation history sidebar.
+﻿"""
+ui/chat_window.py â€” Multi-turn chat window with conversation history sidebar.
 
 Left sidebar lists all past conversations; clicking one selects it so you can
 continue that thread.
@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer
 from PyQt6.QtGui import QFont, QPixmap, QShortcut, QKeySequence
 from core.assistant_text import ThoughtStreamParser, merge_segment_iterables, split_tagged_text
-from ui.window_utils import enable_standard_window_controls, fit_window_to_screen
+from ui.shared.window_utils import enable_standard_window_controls, fit_window_to_screen
 
 _W          = 680
 _H          = 520
@@ -108,7 +108,7 @@ class ChatWindow(QWidget):
             auto_message:  If set, automatically sent when the window opens.
         """
         super().__init__()
-        self._conversations = conversations  # live reference — NOT a copy
+        self._conversations = conversations  # live reference â€” NOT a copy
         self._send_fn = send_fn
         self._streaming = False
         self._current_ai_label: _MessageTextView | None = None
@@ -177,7 +177,7 @@ class ChatWindow(QWidget):
         )
         new_chat.clicked.connect(self.start_new_conversation)
         self._new_chat_btn = new_chat
-        close = QPushButton("✕")
+        close = QPushButton("âœ•")
         close.setFixedSize(26, 26)
         close.setStyleSheet(
             "QPushButton { background: transparent; color: #888; border: none; font-size: 13px; }"
@@ -251,10 +251,10 @@ class ChatWindow(QWidget):
         first_user = next((m for m in conv["messages"] if m["role"] == "user"), None)
         raw = first_user["content"] if first_user else f"Conversation {idx+1}"
         has_image = bool(first_user and first_user.get("image_base64"))
-        prefix = "📷 " if has_image else ""
+        prefix = "ðŸ“· " if has_image else ""
         title = (prefix + raw.strip().replace("\n", " "))
         if len(title) > 42:
-            title = title[:42] + "…"
+            title = title[:42] + "â€¦"
         is_latest = (idx == len(self._conversations) - 1)
         is_active = (idx == self._active_idx)
         btn = QPushButton(title)
@@ -377,7 +377,7 @@ class ChatWindow(QWidget):
 
         self._input = QTextEdit()
         self._input.setFixedHeight(62)
-        self._input.setPlaceholderText("Message… (Enter to send, Shift+Enter for newline)")
+        self._input.setPlaceholderText("Messageâ€¦ (Enter to send, Shift+Enter for newline)")
         self._input.setStyleSheet(
             f"QTextEdit {{ background: rgba(255,255,255,8); border: 1px solid {_BORDER};"
             f" border-radius: 6px; color: {_TEXT}; padding: 6px 8px; font-size: 10pt; }}"
@@ -494,7 +494,7 @@ class ChatWindow(QWidget):
         self._current_ai_reply_text = ""
         self._current_ai_segments = []
         self._current_ai_parser = ThoughtStreamParser()
-        self._current_ai_label = self._bubble(layout, "…", "assistant") if layout else None
+        self._current_ai_label = self._bubble(layout, "â€¦", "assistant") if layout else None
         self._scroll_bottom()
 
         # Inject stored context into system prompt so it is available for every
@@ -568,3 +568,4 @@ class ChatWindow(QWidget):
     def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
         self._center_on_screen()
+

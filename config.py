@@ -5,10 +5,12 @@ import os
 from dotenv import load_dotenv
 from core import secret_store
 from core.env_utils import env_bool, env_float, env_int
+from core.paths import FILLER_AUDIO_DIR as DEFAULT_FILLER_AUDIO_DIR
+from core.paths import REPO_ROOT, TOOLS_INSTALLED_DIR
 
 load_dotenv()
 
-BASE_DIR = os.path.dirname(__file__)
+BASE_DIR = str(REPO_ROOT)
 
 # --- API Keys ---
 GROQ_API_KEY = secret_store.get_secret("GROQ_API_KEY")
@@ -145,7 +147,7 @@ CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS = env_int("CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS
 CONTEXT_TOOL_DOCUMENT_MAX_CHARS = env_int("CONTEXT_TOOL_DOCUMENT_MAX_CHARS", 50000)
 TOOL_PLUGIN_DIR = os.getenv(
     "TOOL_PLUGIN_DIR",
-    os.path.join(BASE_DIR, "tools", "installed"),
+    str(TOOLS_INSTALLED_DIR),
 )
 TOOL_GIT_ROOT = os.getenv("TOOL_GIT_ROOT", BASE_DIR)
 
@@ -175,7 +177,7 @@ MEMORY_TOP_K                    = env_int("MEMORY_TOP_K", 3)
 MEMORY_STM_TOKEN_BUDGET         = env_int("MEMORY_STM_TOKEN_BUDGET", 4000)
 
 # --- Audio ---
-FILLER_AUDIO_DIR = os.path.join(BASE_DIR, "assets", "filler")
+FILLER_AUDIO_DIR = str(DEFAULT_FILLER_AUDIO_DIR)
 FILLER_MAX_DURATION_MS = 1000   # filler clips must be < 1s
 
 # --- Latency targets (ms) ---
@@ -251,7 +253,7 @@ def reload() -> None:
     CONTEXT_TOOL_DOCUMENT_MAX_CHARS = env_int("CONTEXT_TOOL_DOCUMENT_MAX_CHARS", 50000)
     TOOL_PLUGIN_DIR = os.getenv(
         "TOOL_PLUGIN_DIR",
-        os.path.join(BASE_DIR, "tools", "installed"),
+        str(TOOLS_INSTALLED_DIR),
     )
     TOOL_GIT_ROOT = os.getenv("TOOL_GIT_ROOT", BASE_DIR)
 

@@ -1,12 +1,12 @@
-"""
-ui/memory_viewer.py — Long-term memory viewer / editor.
+﻿"""
+ui/memory_viewer.py â€” Long-term memory viewer / editor.
 
 Provides two surfaces:
 
   MemoryPanel(QWidget)
       Embeddable widget containing the full fact browser (scroll area + add-fact
       row + refresh button).  Used both inside MemoryViewer and as the embedded
-      panel in the Settings → Memory tab.
+      panel in the Settings â†’ Memory tab.
 
   MemoryViewer(QDialog)
       Standalone dialog that wraps MemoryPanel.  Opened from the tray menu.
@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
-from ui.window_utils import enable_standard_window_controls, fit_window_to_screen
+from ui.shared.window_utils import enable_standard_window_controls, fit_window_to_screen
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -82,7 +82,7 @@ class _FactRow(QWidget):
         source_label.setToolTip(f"Source: {fact.get('source', 'unknown')}")
         layout.addWidget(source_label)
 
-        del_btn = QPushButton("✕")
+        del_btn = QPushButton("âœ•")
         del_btn.setFixedWidth(28)
         del_btn.setToolTip("Delete this fact")
         del_btn.clicked.connect(self._on_delete)
@@ -124,7 +124,7 @@ class MemoryPanel(QWidget):
     Embeddable widget: scrollable fact browser + add-fact row + refresh button.
 
     Used as the content of MemoryViewer (dialog) and embedded directly in the
-    Settings → Memory tab.
+    Settings â†’ Memory tab.
     """
 
     def __init__(self, manager: "MemoryManager", parent=None):
@@ -158,7 +158,7 @@ class MemoryPanel(QWidget):
         add_layout.addWidget(add_lbl)
 
         self._add_text = QLineEdit()
-        self._add_text.setPlaceholderText("Enter a new fact…")
+        self._add_text.setPlaceholderText("Enter a new factâ€¦")
         self._add_text.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
@@ -251,7 +251,7 @@ class MemoryPanel(QWidget):
 class MemoryViewer(QDialog):
     """
     Standalone dialog wrapping MemoryPanel.
-    Opened from tray icon → Memory… or from Settings → Memory tab.
+    Opened from tray icon â†’ Memoryâ€¦ or from Settings â†’ Memory tab.
     """
 
     def __init__(self, manager: "MemoryManager", parent=None):
@@ -292,3 +292,4 @@ class MemoryViewer(QDialog):
     def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
         fit_window_to_screen(self, preferred_width=620, preferred_height=520)
+

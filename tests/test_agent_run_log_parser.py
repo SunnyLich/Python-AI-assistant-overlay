@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import unittest
 
-from ui.agent_run_log_parser import log_body, parse_live_log_event
+from ui.agent.log_parser import log_body, parse_live_log_event
 
 
 class AgentRunLogParserTests(unittest.TestCase):
@@ -23,3 +23,4 @@ class AgentRunLogParserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -176,6 +176,9 @@ class App:
         fg_hwnd = ctypes.windll.user32.GetForegroundWindow()
         target_hwnd = fg_hwnd if paste_back else 0
 
+        if config.DOLL_AUTO_HIDE:
+            self._signals.show_doll.emit()
+
         self._pending_context = context_fetcher.fetch_and_save()
         selected = capture.get_selected_text()
         screenshot_b64 = None
@@ -217,6 +220,9 @@ class App:
             "context_tools": config.SNIP_CONTEXT_TOOLS,
         }
         self._pending_paste_target = 0
+
+        if config.DOLL_AUTO_HIDE:
+            self._signals.show_doll.emit()
 
         audio.play_filler()
         self._signals.set_state.emit("listening")

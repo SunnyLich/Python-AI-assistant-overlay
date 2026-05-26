@@ -513,6 +513,13 @@ class App:
                             llm_chunk_q.put(part)
                     if gen_id != self._gen_id:
                         break  # a newer query started -" stop feeding stale chunks to the bubble
+            except Exception as exc:
+                import time as _time
+                print(f"[llm {_time.strftime('%H:%M:%S')}] LLM error: {exc}")
+                err_msg = f"[Error: {exc}]"
+                self._signals.bubble_chunk.emit(err_msg, False)
+                reply_text += err_msg
+                llm_chunk_q.put(err_msg)
             finally:
                 for part, is_thought in parser.finish():
                     if not part:

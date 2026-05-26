@@ -20,6 +20,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
 VENV_DIR="$ROOT/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
 

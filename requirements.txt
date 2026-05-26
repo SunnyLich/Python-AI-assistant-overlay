@@ -30,8 +30,10 @@ sentence-transformers>=3.0.0 # all-MiniLM-L6-v2 embeddings (used by chromadb Def
 # --- Utilities ---
 python-dotenv>=1.2.2      # .env config loading
 keyring>=24.0.0           # OS keychain storage for ChatGPT OAuth tokens
-pywin32>=311              # Windows-specific APIs (clipboard, window focus)
-comtypes>=1.4.0           # Windows UI Automation (read selected text without clipboard)
+pywin32>=311; sys_platform == "win32"      # Windows-specific APIs (clipboard, window focus)
+comtypes>=1.4.0; sys_platform == "win32"  # Windows UI Automation (read selected text without clipboard)
+python-xlib>=0.33; sys_platform == "linux"  # X11 display connection (required by ewmh)
+ewmh>=0.1.6; sys_platform == "linux"        # active window / focus management on X11 (replaces xdotool)
 psutil>=6.0.0             # process name / exe path lookup (context fetcher)
 watchdog>=4.0.0           # file system event watcher (context fetcher)
 requests>=2.32.0          # browser page fetching (context fetcher)

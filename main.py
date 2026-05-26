@@ -10,6 +10,8 @@ import sys
 import os
 import threading
 from PyQt6.QtWidgets import QApplication
+
+_IS_WIN = sys.platform == "win32"
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.screen=false")
 import config
 from core.hotkeys import HotkeyListener
@@ -141,43 +143,43 @@ class App:
         print("[main] Context buffer cleared.")
 
     def _steal_foreground(self) -> None:
-        """AttachThreadInput + SetForegroundWindow -” must be called from the keyboard-hook thread."""
-        if not self._overlay_hwnd:
-            return
-        try:
-            import ctypes
-            user32   = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-            fg_hwnd  = user32.GetForegroundWindow()
-            fg_tid   = user32.GetWindowThreadProcessId(fg_hwnd, None)
-            our_tid  = kernel32.GetCurrentThreadId()
-            if fg_tid and fg_tid != our_tid:
-                user32.AttachThreadInput(fg_tid, our_tid, True)
-            user32.SetForegroundWindow(self._overlay_hwnd)
-            if fg_tid and fg_tid != our_tid:
-                user32.AttachThreadInput(fg_tid, our_tid, False)
-        except Exception:
-            pass
+        “””Bring the overlay to the foreground from the keyboard-hook thread.”””
+        if _IS_WIN:
+            if not self._overlay_hwnd:
+                return
+            try:
+                import ctypes
+                user32   = ctypes.windll.user32
+                kernel32 = ctypes.windll.kernel32
+                fg_hwnd  = user32.GetForegroundWindow()
+                fg_tid   = user32.GetWindowThreadProcessId(fg_hwnd, None)
+                our_tid  = kernel32.GetCurrentThreadId()
+                if fg_tid and fg_tid != our_tid:
+                    user32.AttachThreadInput(fg_tid, our_tid, True)
+                user32.SetForegroundWindow(self._overlay_hwnd)
+                if fg_tid and fg_tid != our_tid:
+                    user32.AttachThreadInput(fg_tid, our_tid, False)
+            except Exception:
+                pass
+        else:
+            self._signals.raise_overlay.emit()
 
     def _on_snip_hotkey(self):
-        """Ctrl+Alt+Q -” show the region selector, then the intent picker."""
-        try:
-            import ctypes
-            self._pending_intent_target = ctypes.windll.user32.GetForegroundWindow()
-        except Exception:
-            self._pending_intent_target = 0
+        “””Ctrl+Alt+Q — show the region selector, then the intent picker.”””
+        from core.platform_utils import get_foreground_window
+        self._pending_intent_target = get_foreground_window()
         self._steal_foreground()
         self._signals.show_snip_overlay.emit()
 
     def _on_caller_hotkey(self, caller_idx: int):
         """Called when any caller hotkey fires. Dispatches based on caller's paste_back flag."""
-        import ctypes
+        from core.platform_utils import get_foreground_window
         caller = config.CALLER_ROWS[caller_idx] if caller_idx < len(config.CALLER_ROWS) else {}
         paste_back = caller.get("paste_back", False)
 
-        # Save the foreground HWND BEFORE stealing focus so the picker can open
+        # Save the foreground window ID BEFORE stealing focus so the picker can open
         # on the same monitor and paste-back callers can restore focus correctly.
-        fg_hwnd = ctypes.windll.user32.GetForegroundWindow()
+        fg_hwnd = get_foreground_window()
         target_hwnd = fg_hwnd if paste_back else 0
 
         if config.DOLL_AUTO_HIDE:
@@ -295,11 +297,11 @@ class App:
         self._intent_picker.cancelled.connect(self._on_intent_cancelled)
         self._intent_picker.show()
 
-        # Second focus grab from the Qt main thread -” by now the picker has a
-        # real HWND and Qt has had a chance to process the show event.
+        # Second focus grab from the Qt main thread — by now the picker has a
+        # real window ID and Qt has had a chance to process the show event.
         try:
-            import ctypes
-            ctypes.windll.user32.SetForegroundWindow(int(self._intent_picker.winId()))
+            from core.platform_utils import set_foreground_window
+            set_foreground_window(int(self._intent_picker.winId()))
         except Exception:
             pass
 
@@ -342,7 +344,6 @@ class App:
 
     def _rewrite_and_paste(self, intent_prompt: str, capture_data: tuple | None, target_hwnd: int, gen_id: int = 0):
         """Worker: stream LLM rewrite using intent_prompt, then paste into the original window."""
-        import ctypes
         import time
         import pyperclip
 
@@ -389,11 +390,11 @@ class App:
 
         # Paste result back into the original window (replaces the selection).
         try:
+            from core.platform_utils import set_foreground_window, send_keys
             pyperclip.copy(reply_text)
-            ctypes.windll.user32.SetForegroundWindow(target_hwnd)
+            set_foreground_window(target_hwnd)
             time.sleep(0.15)   # let the focus switch settle
-            import keyboard
-            keyboard.send("ctrl+v")
+            send_keys("ctrl+v")
         except Exception as exc:
             print(f"[main] Paste-back error: {exc}")
 
@@ -647,17 +648,15 @@ class App:
 
 
 def main():
-    # Our clipboard helper (capture.get_selected_text) injects a synthetic Ctrl+C
-    # via keyboard.send("ctrl+c") while the terminal is still the foreground window.
-    # On Windows, this delivers CTRL_C_EVENT to every process in the console group -”
-    # including us -” which becomes KeyboardInterrupt in the Qt event loop.
-    # Ignore CTRL_C_EVENT at the Win32 level so the app can never be killed this way.
-    # (The tray "Quit" action is the intended exit path.)
-    try:
-        import ctypes
-        ctypes.windll.kernel32.SetConsoleCtrlHandler(None, True)
-    except Exception:
-        pass
+    # On Windows, synthesising Ctrl+C via keyboard.send() also delivers
+    # CTRL_C_EVENT to our own process, becoming a KeyboardInterrupt in Qt.
+    # Block it at the Win32 level; the tray “Quit” action is the exit path.
+    if _IS_WIN:
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(None, True)
+        except Exception:
+            pass
 
     app = App()
     try:

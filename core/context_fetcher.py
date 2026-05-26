@@ -35,18 +35,19 @@ Usage:
 from __future__ import annotations
 
 import config
-import ctypes
-import ctypes.wintypes
 import json
 import os
 import re
+import sys
 import tempfile
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from threading import Lock
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
+
+_IS_WIN = sys.platform == "win32"
 
 # ---------------------------------------------------------------------------
 # Snapshot data classes
@@ -362,13 +363,26 @@ def _search_online(query: str, max_results: int = 5) -> list[dict]:
 # Source: Active Window
 # ---------------------------------------------------------------------------
 
-_BROWSER_PROCS = frozenset({
+_BROWSER_PROCS_WIN = frozenset({
     "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe",
     "opera.exe", "vivaldi.exe", "arc.exe",
 })
 
+_BROWSER_PROCS_LINUX = frozenset({
+    "chrome", "chromium", "chromium-browser", "firefox",
+    "firefox-esr", "brave", "brave-browser", "opera", "vivaldi",
+})
+
+_BROWSER_PROCS = _BROWSER_PROCS_WIN if _IS_WIN else _BROWSER_PROCS_LINUX
+
 
 def _fetch_active_window() -> WindowInfo:
+    return _fetch_active_window_win() if _IS_WIN else _fetch_active_window_linux()
+
+
+def _fetch_active_window_win() -> WindowInfo:
+    import ctypes
+    import ctypes.wintypes
     info = WindowInfo()
     try:
         user32 = ctypes.windll.user32
@@ -376,13 +390,11 @@ def _fetch_active_window() -> WindowInfo:
         if not hwnd:
             return info
 
-        # Window title
         length = user32.GetWindowTextLengthW(hwnd) + 1
         buf = ctypes.create_unicode_buffer(length)
         user32.GetWindowTextW(hwnd, buf, length)
         info.title = buf.value.strip()
 
-        # Process name + exe path via psutil
         pid = ctypes.wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         try:
@@ -396,7 +408,6 @@ def _fetch_active_window() -> WindowInfo:
         except Exception:
             pass
 
-        # Browser URL via UIA address bar
         if info.process_name.lower() in _BROWSER_PROCS:
             info.url = _get_browser_url_uia(hwnd) or ""
 
@@ -406,11 +417,35 @@ def _fetch_active_window() -> WindowInfo:
     return info
 
 
+def _fetch_active_window_linux() -> WindowInfo:
+    from core.platform_utils import get_foreground_window, get_window_title, get_window_pid
+    info = WindowInfo()
+    try:
+        wid = get_foreground_window()
+        if not wid:
+            return info
+        info.title = get_window_title(wid)
+        pid = get_window_pid(wid)
+        if pid:
+            try:
+                import psutil
+                proc = psutil.Process(pid)
+                info.process_name = proc.name()
+                try:
+                    info.exe_path = proc.exe()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return info
+
+
 def _get_browser_url_uia(hwnd: int) -> str | None:
-    """
-    Walk the UIA tree of a browser window to find the address-bar Edit control
-    and return its current value if it looks like a URL.
-    """
+    """Walk the UIA tree of a browser window to find the address-bar URL (Windows only)."""
+    if not _IS_WIN:
+        return None
     try:
         import comtypes.client
         import comtypes.gen.UIAutomationClient as uiac  # type: ignore
@@ -458,6 +493,10 @@ _CF_DIB = 8
 
 
 def _fetch_clipboard() -> ClipboardInfo:
+    return _fetch_clipboard_win() if _IS_WIN else _fetch_clipboard_linux()
+
+
+def _fetch_clipboard_win() -> ClipboardInfo:
     info = ClipboardInfo()
     try:
         import win32clipboard  # type: ignore
@@ -475,10 +514,23 @@ def _fetch_clipboard() -> ClipboardInfo:
                 info.fmt = "other"
         finally:
             win32clipboard.CloseClipboard()
-
     except Exception:
         info.fmt = "empty"
+    return info
 
+
+def _fetch_clipboard_linux() -> ClipboardInfo:
+    info = ClipboardInfo()
+    try:
+        import pyperclip  # type: ignore
+        text = pyperclip.paste()
+        if text:
+            info.text = _redact(text.strip())
+            info.fmt = "text"
+        else:
+            info.fmt = "empty"
+    except Exception:
+        info.fmt = "empty"
     return info
 
 
@@ -528,6 +580,8 @@ def _get_uia():
 
 def _fetch_ui_focused() -> UIElementInfo:
     info = UIElementInfo()
+    if not _IS_WIN:
+        return info
     uia = _get_uia()
     if uia is None:
         return info
@@ -607,10 +661,11 @@ def _fetch_ui_focused() -> UIElementInfo:
 # ---------------------------------------------------------------------------
 
 def _fetch_recent_files(max_files: int = 10) -> list[str]:
-    """
-    Return the display names (and resolved target paths where possible) of the
-    most recently touched files from %APPDATA%\\Microsoft\\Windows\\Recent.
-    """
+    return _fetch_recent_files_win(max_files) if _IS_WIN else _fetch_recent_files_linux(max_files)
+
+
+def _fetch_recent_files_win(max_files: int = 10) -> list[str]:
+    """Return recently touched files from %APPDATA%\\Microsoft\\Windows\\Recent."""
     results: list[str] = []
     try:
         recent_dir = os.path.join(
@@ -625,14 +680,12 @@ def _fetch_recent_files(max_files: int = 10) -> list[str]:
                 continue
             full = os.path.join(recent_dir, name)
             try:
-                mtime = os.path.getmtime(full)
-                entries.append((mtime, full))
+                entries.append((os.path.getmtime(full), full))
             except OSError:
                 pass
 
         entries.sort(reverse=True)
 
-        # Attempt to resolve .lnk → actual target path via WScript.Shell
         shell = None
         try:
             import win32com.client  # type: ignore
@@ -650,12 +703,37 @@ def _fetch_recent_files(max_files: int = 10) -> list[str]:
                         continue
                 except Exception:
                     pass
-            # Fallback: strip .lnk from display name
             results.append(os.path.splitext(os.path.basename(lnk_path))[0])
 
     except Exception:
         pass
 
+    return results
+
+
+def _fetch_recent_files_linux(max_files: int = 10) -> list[str]:
+    """Return recently touched files from ~/.local/share/recently-used.xbel."""
+    import xml.etree.ElementTree as ET
+
+    xbel = os.path.expanduser("~/.local/share/recently-used.xbel")
+    if not os.path.isfile(xbel):
+        return []
+    results: list[str] = []
+    try:
+        tree = ET.parse(xbel)
+        root = tree.getroot()
+        bookmarks: list[tuple[str, str]] = []
+        for bm in root.iter("bookmark"):
+            href = bm.get("href", "")
+            visited = bm.get("visited") or bm.get("modified") or ""
+            if href.startswith("file://"):
+                path = unquote(href[7:])
+                if os.path.isfile(path):
+                    bookmarks.append((visited, path))
+        bookmarks.sort(reverse=True)
+        results = [p for _, p in bookmarks[:max_files]]
+    except Exception:
+        pass
     return results
 
 
@@ -814,26 +892,47 @@ _DOC_APP_TITLE_SUFFIXES: list[str] = [
     " \u2013 Android Studio",
 ]
 
-# Maps VS Code-like process names to their storage.json path under %APPDATA%.
-_VSCODE_LIKE_STORAGE: dict[str, str] = {
-    "code.exe":            r"Code\User\globalStorage\storage.json",
-    "code - insiders.exe": r"Code - Insiders\User\globalStorage\storage.json",
-    "cursor.exe":          r"Cursor\User\globalStorage\storage.json",
-    "windsurf.exe":        r"Windsurf\User\globalStorage\storage.json",
-}
+def _config_dir() -> str:
+    """Return the per-user config base directory (%APPDATA% on Windows, ~/.config on Linux)."""
+    if _IS_WIN:
+        return os.environ.get("APPDATA", "")
+    return os.path.join(os.path.expanduser("~"), ".config")
 
-_JETBRAINS_PROCS = frozenset({
-    "pycharm64.exe", "pycharm.exe",
-    "idea64.exe",    "idea.exe",
-    "webstorm64.exe", "webstorm.exe",
-    "goland64.exe",  "goland.exe",
-    "clion64.exe",   "clion.exe",
-    "rider64.exe",   "rider.exe",
-    "rubymine64.exe", "rubymine.exe",
-    "phpstorm64.exe", "phpstorm.exe",
-    "datagrip64.exe", "datagrip.exe",
-    "studio64.exe",   # Android Studio
-})
+
+# Maps VS Code-like process names to their storage.json path under the config dir.
+if _IS_WIN:
+    _VSCODE_LIKE_STORAGE: dict[str, str] = {
+        "code.exe":            r"Code\User\globalStorage\storage.json",
+        "code - insiders.exe": r"Code - Insiders\User\globalStorage\storage.json",
+        "cursor.exe":          r"Cursor\User\globalStorage\storage.json",
+        "windsurf.exe":        r"Windsurf\User\globalStorage\storage.json",
+    }
+else:
+    _VSCODE_LIKE_STORAGE = {
+        "code":            "Code/User/globalStorage/storage.json",
+        "code-insiders":   "Code - Insiders/User/globalStorage/storage.json",
+        "cursor":          "Cursor/User/globalStorage/storage.json",
+        "windsurf":        "Windsurf/User/globalStorage/storage.json",
+    }
+
+if _IS_WIN:
+    _JETBRAINS_PROCS = frozenset({
+        "pycharm64.exe", "pycharm.exe",
+        "idea64.exe",    "idea.exe",
+        "webstorm64.exe", "webstorm.exe",
+        "goland64.exe",  "goland.exe",
+        "clion64.exe",   "clion.exe",
+        "rider64.exe",   "rider.exe",
+        "rubymine64.exe", "rubymine.exe",
+        "phpstorm64.exe", "phpstorm.exe",
+        "datagrip64.exe", "datagrip.exe",
+        "studio64.exe",
+    })
+else:
+    _JETBRAINS_PROCS = frozenset({
+        "pycharm", "idea", "webstorm", "goland", "clion",
+        "rider", "rubymine", "phpstorm", "datagrip", "studio",
+    })
 
 _VSCODE_TITLE_MARKERS: tuple[str, ...] = (
     " - Visual Studio Code - Insiders",
@@ -844,15 +943,18 @@ _VSCODE_TITLE_MARKERS: tuple[str, ...] = (
 
 
 def _decode_vscode_uri(uri: str) -> str:
-    """Convert a VS Code file:/// URI to a Windows filesystem path."""
-    from urllib.parse import unquote
+    """Convert a VS Code file:/// URI to a filesystem path (cross-platform)."""
     if not uri.startswith("file:///"):
         return ""
-    path = unquote(uri[8:]).replace("/", os.sep)
-    # Normalize drive letter: "c:" -> "C:"
-    if len(path) >= 2 and path[1] == ":":
-        path = path[0].upper() + path[1:]
-    return path
+    if _IS_WIN:
+        # file:///C:/Users/... → C:\Users\...
+        path = unquote(uri[8:]).replace("/", os.sep)
+        if len(path) >= 2 and path[1] == ":":
+            path = path[0].upper() + path[1:]
+        return path
+    else:
+        # file:///home/user/... → /home/user/...
+        return unquote(uri[7:])
 
 
 def _vscode_find_file(filename: str, workspace_hint: str = "", storage_path: str = "") -> str:
@@ -866,9 +968,7 @@ def _vscode_find_file(filename: str, workspace_hint: str = "", storage_path: str
     import json
 
     if not storage_path:
-        storage_path = os.path.join(
-            os.environ.get("APPDATA", ""), "Code", "User", "globalStorage", "storage.json"
-        )
+        storage_path = os.path.join(_config_dir(), "Code", "User", "globalStorage", "storage.json")
     try:
         with open(storage_path, encoding="utf-8") as f:
             data = json.load(f)
@@ -977,20 +1077,28 @@ def _jetbrains_find_file(filename: str, project_hint: str = "") -> str:
     import glob as _glob
     import xml.etree.ElementTree as ET
 
-    appdata = os.environ.get("APPDATA", "")
+    cfg = _config_dir()
     xml_paths: list[str] = []
 
-    jb_base = os.path.join(appdata, "JetBrains")
+    jb_base = os.path.join(cfg, "JetBrains")
     if os.path.isdir(jb_base):
         xml_paths.extend(
             _glob.glob(os.path.join(jb_base, "*", "options", "recentProjectDirectories.xml"))
         )
 
-    google_base = os.path.join(appdata, "Google")
-    if os.path.isdir(google_base):
-        xml_paths.extend(
-            _glob.glob(os.path.join(google_base, "AndroidStudio*", "options", "recentProjectDirectories.xml"))
-        )
+    if _IS_WIN:
+        google_base = os.path.join(cfg, "Google")
+        if os.path.isdir(google_base):
+            xml_paths.extend(
+                _glob.glob(os.path.join(google_base, "AndroidStudio*", "options", "recentProjectDirectories.xml"))
+            )
+    else:
+        # Android Studio on Linux stores config under ~/.config/Google/AndroidStudio* or
+        # the legacy ~/.AndroidStudio* location.
+        for base in (os.path.join(cfg, "Google"), os.path.expanduser("~")):
+            xml_paths.extend(
+                _glob.glob(os.path.join(base, "AndroidStudio*", "options", "recentProjectDirectories.xml"))
+            )
 
     project_dirs: list[str] = []
     home = os.path.expanduser("~")
@@ -1046,7 +1154,7 @@ def _obsidian_find_note(stripped_title: str) -> str:
     if not note_name:
         return ""
 
-    storage = os.path.join(os.environ.get("APPDATA", ""), "obsidian", "obsidian.json")
+    storage = os.path.join(_config_dir(), "obsidian", "obsidian.json")
     try:
         with open(storage, encoding="utf-8") as f:
             data = json.load(f)
@@ -1084,7 +1192,7 @@ def _extract_doc_name_from_window(win: WindowInfo) -> str:
 
     proc_lower = (win.process_name or "").lower()
 
-    if proc_lower == "obsidian.exe":
+    if proc_lower in ("obsidian.exe", "obsidian"):
         return re.sub(
             r"\s*-\s*Obsidian\s+v[\d.]+.*$", "", title, flags=re.IGNORECASE
         ).strip()
@@ -1119,7 +1227,7 @@ def _resolve_doc_path(win: WindowInfo) -> str:
         if not doc_name:
             return ""
 
-        if proc_lower == "obsidian.exe":
+        if proc_lower in ("obsidian.exe", "obsidian"):
             return _obsidian_find_note(doc_name)
 
         # Strip bracketed modifiers like "[Compatibility Mode]"
@@ -1137,9 +1245,7 @@ def _resolve_doc_path(win: WindowInfo) -> str:
                 workspace_hint = re.sub(r"\s*\(Workspace\)\s*$", "", parts[1]).strip()
             if not doc_name:
                 return ""
-            storage_path = os.path.join(
-                os.environ.get("APPDATA", ""), _VSCODE_LIKE_STORAGE[proc_lower]
-            )
+            storage_path = os.path.join(_config_dir(), _VSCODE_LIKE_STORAGE[proc_lower])
             vscode_path = _vscode_find_file(doc_name, workspace_hint, storage_path)
             if not vscode_path:
                 vscode_path = _search_filename_in_folders(
@@ -1200,8 +1306,14 @@ def _enumerate_open_doc_windows() -> list[WindowInfo]:
     """
     Return a WindowInfo for every visible top-level window whose title matches
     a known doc-app suffix or the Obsidian version pattern.
-    Uses EnumWindows so it covers background windows regardless of focus.
     """
+    return _enumerate_open_doc_windows_win() if _IS_WIN else _enumerate_open_doc_windows_linux()
+
+
+def _enumerate_open_doc_windows_win() -> list[WindowInfo]:
+    import ctypes
+    import ctypes.wintypes
+
     results: list[WindowInfo] = []
     WNDENUMPROC = ctypes.WINFUNCTYPE(
         ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM
@@ -1232,6 +1344,31 @@ def _enumerate_open_doc_windows() -> list[WindowInfo]:
         return True
 
     ctypes.windll.user32.EnumWindows(WNDENUMPROC(_callback), 0)
+    return results
+
+
+def _enumerate_open_doc_windows_linux() -> list[WindowInfo]:
+    from core.platform_utils import list_visible_windows, get_window_title, get_window_pid
+
+    results: list[WindowInfo] = []
+    for wid in list_visible_windows()[:60]:
+        try:
+            title = get_window_title(wid)
+            if not title:
+                continue
+            pid = get_window_pid(wid)
+            proc_name = ""
+            if pid:
+                try:
+                    import psutil
+                    proc_name = psutil.Process(pid).name()
+                except Exception:
+                    pass
+            win = WindowInfo(title=title, process_name=proc_name)
+            if _extract_doc_name_from_window(win):
+                results.append(win)
+        except Exception:
+            pass
     return results
 
 

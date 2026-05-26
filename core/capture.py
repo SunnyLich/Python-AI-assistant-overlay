@@ -59,10 +59,10 @@ def _get_selected_text_uia() -> str | None:
 
 def _get_selected_text_clipboard() -> str | None:
     """Fallback: Ctrl+C with save/restore so existing clipboard is preserved."""
-    import keyboard
+    from core.platform_utils import send_keys
 
     previous = _safe_get_clipboard()
-    keyboard.send("ctrl+c")
+    send_keys("ctrl+c")
     time.sleep(0.08)
     text = pyperclip.paste().strip()
 

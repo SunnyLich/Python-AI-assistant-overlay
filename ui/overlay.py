@@ -38,6 +38,7 @@ class OverlaySignals(QObject):
     bubble_clear       = pyqtSignal()      # hide immediately
     show_doll          = pyqtSignal()      # make doll visible
     hide_doll          = pyqtSignal()      # hide doll after short delay
+    raise_overlay      = pyqtSignal()      # bring overlay to foreground (Linux)
     settings_applied   = pyqtSignal()      # settings were applied; re-register hotkeys etc.
     show_new_chat      = pyqtSignal()      # tray "New chat" clicked
     show_last_chat     = pyqtSignal()      # tray "Last chat" clicked
@@ -85,6 +86,7 @@ class DollOverlay(QMainWindow):
         signals.bubble_clear.connect(self._icon_label_clear)
         signals.show_doll.connect(self._show_doll)
         signals.hide_doll.connect(self._hide_doll)
+        signals.raise_overlay.connect(self._raise_overlay)
 
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
@@ -246,6 +248,11 @@ class DollOverlay(QMainWindow):
     # ------------------------------------------------------------------
     # Doll visibility
     # ------------------------------------------------------------------
+
+    def _raise_overlay(self):
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     def _show_doll(self):
         if not hasattr(self, '_icon_hide_timer') or not hasattr(self, '_icon_label'):

@@ -7,7 +7,7 @@ Custom Prompt row (config.HOTKEY_CUSTOM_PROMPT_KEY).
 Press the matching key to pick, Escape to cancel.
 """
 from __future__ import annotations
-import ctypes
+import sys
 from PyQt6.QtWidgets import QWidget, QApplication, QLineEdit
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPoint, QRect
 from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QBrush
@@ -110,18 +110,28 @@ class IntentOverlay(QWidget):
     def _resolve_screen_geometry(self) -> QRect:
         app = QApplication.instance()
         if self._target_hwnd:
-            try:
-                rect = ctypes.wintypes.RECT()
-                if ctypes.windll.user32.GetWindowRect(self._target_hwnd, ctypes.byref(rect)):
-                    center = QPoint(
-                        (rect.left + rect.right) // 2,
-                        (rect.top + rect.bottom) // 2,
-                    )
-                    screen = app.screenAt(center) if app is not None else None
-                    if screen is not None:
-                        return screen.geometry()
-            except Exception:
-                pass
+            if sys.platform == "win32":
+                try:
+                    import ctypes
+                    import ctypes.wintypes
+                    rect = ctypes.wintypes.RECT()
+                    if ctypes.windll.user32.GetWindowRect(self._target_hwnd, ctypes.byref(rect)):
+                        center = QPoint(
+                            (rect.left + rect.right) // 2,
+                            (rect.top + rect.bottom) // 2,
+                        )
+                        screen = app.screenAt(center) if app is not None else None
+                        if screen is not None:
+                            return screen.geometry()
+                except Exception:
+                    pass
+            else:
+                # On Linux use the current cursor position to find the right screen
+                from PyQt6.QtGui import QCursor
+                cursor_pos = QCursor.pos()
+                screen = app.screenAt(cursor_pos) if app is not None else None
+                if screen is not None:
+                    return screen.geometry()
         primary = QApplication.primaryScreen()
         return primary.geometry() if primary is not None else QRect(0, 0, _W, self._normal_h)
 

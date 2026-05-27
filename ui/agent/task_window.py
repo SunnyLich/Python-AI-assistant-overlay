@@ -23,9 +23,9 @@ import html
 import json
 import math
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QBrush, QColor, QDesktopServices, QFont, QPainterPath, QPen, QTextCursor
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtGui import QAction, QBrush, QColor, QDesktopServices, QFont, QPainterPath, QPen, QTextCursor
+from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
@@ -1899,10 +1899,10 @@ class AgentNudgeDialog(QDialog):
 class AgentRunWindow(QDialog):
     """Small live log window for a background agent run."""
 
-    log_line = pyqtSignal(str)
-    trace_entry = pyqtSignal(str)
-    finished = pyqtSignal(str)
-    approval_requested = pyqtSignal(dict, object)
+    log_line = Signal(str)
+    trace_entry = Signal(str)
+    finished = Signal(str)
+    approval_requested = Signal(dict, object)
 
     def __init__(
         self,

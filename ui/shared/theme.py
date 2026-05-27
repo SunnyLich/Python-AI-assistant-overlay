@@ -1,11 +1,28 @@
-"""Shared Qt application theme helpers."""
+﻿"""Shared Qt application theme helpers."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPalette
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPalette
+from PySide6.QtWidgets import QApplication
 
 import config
+
+
+def is_dark_mode() -> bool:
+    """Return True if dark mode should be active right now."""
+    mode = getattr(config, "THEME_MODE", "system")
+    if mode == "dark":
+        return True
+    if mode == "light":
+        return False
+    # "system" — ask Qt for the OS colour scheme
+    app = QApplication.instance()
+    if app is None:
+        return False
+    try:
+        return app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+    except AttributeError:
+        return False
 
 
 def apply_app_theme(app: QApplication | None = None) -> None:
@@ -14,7 +31,7 @@ def apply_app_theme(app: QApplication | None = None) -> None:
     if app is None:
         return
 
-    if config.DARK_MODE:
+    if is_dark_mode():
         palette = QPalette()
         palette.setColor(QPalette.ColorRole.Window, QColor("#202127"))
         palette.setColor(QPalette.ColorRole.WindowText, QColor("#f0f0f2"))
@@ -36,6 +53,10 @@ def apply_app_theme(app: QApplication | None = None) -> None:
         app.setPalette(palette)
         app.setStyleSheet(
             """
+        QWidget {
+            background-color: #202127;
+            color: #f0f0f2;
+        }
         QToolTip {
             color: #f6f6f7;
             background-color: #2e3038;

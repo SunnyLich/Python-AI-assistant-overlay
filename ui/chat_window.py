@@ -10,13 +10,13 @@ from __future__ import annotations
 import html
 import threading
 import config
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QLabel, QTextEdit, QPushButton, QFrame, QApplication, QTextBrowser,
     QSizePolicy, QStackedWidget, QSplitter,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer
-from PyQt6.QtGui import QFont, QPixmap, QShortcut, QKeySequence
+from PySide6.QtCore import Qt, Signal, QObject, QTimer
+from PySide6.QtGui import QFont, QPixmap, QShortcut, QKeySequence
 from core.assistant_text import ThoughtStreamParser, merge_segment_iterables, split_tagged_text
 from ui.shared.window_utils import enable_standard_window_controls, fit_window_to_screen
 
@@ -35,8 +35,8 @@ _SEL_BG     = "rgba(160,160,255,18)"
 
 
 class _StreamSignals(QObject):
-    chunk     = pyqtSignal(str)
-    finished  = pyqtSignal()
+    chunk     = Signal(str)
+    finished  = Signal()
 
 
 class _MessageTextView(QTextBrowser):
@@ -552,7 +552,7 @@ class ChatWindow(QWidget):
     # ------------------------------------------------------------------ Events
 
     def eventFilter(self, obj, event):
-        from PyQt6.QtCore import QEvent
+        from PySide6.QtCore import QEvent
         if obj is self._input and event.type() == QEvent.Type.KeyPress:
             if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
                     and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier)):

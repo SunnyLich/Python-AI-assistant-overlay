@@ -1215,7 +1215,7 @@ def _stream_openai_compat(
         model=model,
         messages=messages,
         stream=True,
-        max_tokens=max_tokens or 256,
+        max_tokens=max_tokens or 2048,
         temperature=0.5 if temperature is None else temperature,
     ) as stream:
         for chunk in stream:
@@ -1407,7 +1407,7 @@ def _stream_anthropic(
     if not use_tools:
         request = {
             "model": model,
-            "max_tokens": max_tokens or 256,
+            "max_tokens": max_tokens or 2048,
             "system": system,
             "messages": [{"role": "user", "content": content}],
         }
@@ -1425,7 +1425,7 @@ def _stream_anthropic(
 
     request = {
         "model": model,
-        "max_tokens": max_tokens or 512,
+        "max_tokens": max_tokens or 2048,
         "system": system,
         "messages": messages,
         "tools": _get_tool_schemas(),

@@ -1,13 +1,13 @@
-"""
+﻿"""
 ui/popup.py — Transient text popup for the full LLM reply.
 
 Appears near the doll, auto-dismisses after a timeout, or on click.
 """
 from __future__ import annotations
 import config
-from PyQt6.QtWidgets import QLabel, QWidget, QApplication, QVBoxLayout
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PySide6.QtWidgets import QLabel, QWidget, QApplication, QVBoxLayout
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont
 
 
 POPUP_WIDTH = 320

@@ -1,4 +1,4 @@
-"""
+﻿"""
 ui/bubble.py — Live speech bubble next to the doll icon.
 
 Shows the last 2 word-wrapped lines of streaming LLM text.
@@ -6,9 +6,9 @@ Positioned to the left of the doll, tail points right toward it.
 Auto-hides a few seconds after the response finishes.
 """
 from __future__ import annotations
-from PyQt6.QtWidgets import QWidget, QApplication
-from PyQt6.QtCore import Qt, QTimer, QElapsedTimer
-from PyQt6.QtGui import (
+from PySide6.QtWidgets import QWidget, QApplication
+from PySide6.QtCore import Qt, QTimer, QElapsedTimer
+from PySide6.QtGui import (
     QPainter, QColor, QFont, QFontMetrics,
     QBrush, QPen, QPainterPath,
 )
@@ -162,7 +162,7 @@ class SpeechBubble(QWidget):
 
     def doll_pos_for_bubble(self, bubble_pos, doll_size: int):
         """Given this bubble's top-left position, return where the doll icon should sit."""
-        from PyQt6.QtCore import QPoint
+        from PySide6.QtCore import QPoint
         doll_x = bubble_pos.x() + self._bubble_w + _TAIL_W + 6
         doll_y = bubble_pos.y() - (doll_size - self._bubble_h) // 2
         return QPoint(doll_x, doll_y)

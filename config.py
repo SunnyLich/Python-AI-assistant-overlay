@@ -33,9 +33,9 @@ _CALLER_DEFAULTS: list[dict] = [
         "context_tools": True,
         "context_screenshot": False,
         "intents": [
-            {"key": "w", "label": "What is this?",      "prompt": "What is this? Give me a clear, plain-English explanation in 2-3 sentences."},
-            {"key": "a", "label": "Explain simply",     "prompt": "Explain this as simply as possible. Assume I have no technical background whatsoever."},
-            {"key": "d", "label": "How do I fix this?", "prompt": "How do I fix this? Give me: 1, what error is this in 1 sentence; 2, concise, actionable steps I can follow right now."},
+            {"key": "w", "label": "What is this?",      "hint": "Quick explanation, plain English",  "prompt": "What is this? Give me a clear, plain-English explanation in 2-3 sentences."},
+            {"key": "a", "label": "Explain simply",     "hint": "ELI5 — no jargon",                 "prompt": "Explain this as simply as possible. Assume I have no technical background whatsoever."},
+            {"key": "d", "label": "How do I fix this?", "hint": "Debug, fix, or rewrite it",         "prompt": "How do I fix this? Give me: 1, what error is this in 1 sentence; 2, concise, actionable steps I can follow right now."},
         ],
     },
     {
@@ -48,9 +48,9 @@ _CALLER_DEFAULTS: list[dict] = [
         "context_tools": False,
         "context_screenshot": False,
         "intents": [
-            {"key": "w", "label": "Fix grammar",   "prompt": "Fix the grammar and spelling of the following text. Output ONLY the corrected text."},
-            {"key": "a", "label": "Simplify",      "prompt": "Simplify the following text for a general audience. Output ONLY the simplified text."},
-            {"key": "d", "label": "Improve tone",  "prompt": "Rewrite the following text to sound more professional and polished. Output ONLY the rewritten text."},
+            {"key": "w", "label": "Fix grammar",  "hint": "Correct spelling and grammar",     "prompt": "Fix the grammar and spelling of the following text. Output ONLY the corrected text."},
+            {"key": "a", "label": "Simplify",     "hint": "Make it easier to read",           "prompt": "Simplify the following text for a general audience. Output ONLY the simplified text."},
+            {"key": "d", "label": "Improve tone", "hint": "Polish for clarity and style",     "prompt": "Rewrite the following text to sound more professional and polished. Output ONLY the rewritten text."},
         ],
     },
 ]
@@ -72,6 +72,7 @@ def _load_caller_rows() -> list[dict]:
             intents.append({
                 "key":    os.getenv(f"CALLER_{n}_INTENT_{m}_KEY",    d_intent.get("key", "")),
                 "label":  os.getenv(f"CALLER_{n}_INTENT_{m}_LABEL",  d_intent.get("label", "")),
+                "hint":   os.getenv(f"CALLER_{n}_INTENT_{m}_HINT",   d_intent.get("hint", "")),
                 "prompt": os.getenv(f"CALLER_{n}_INTENT_{m}_PROMPT", d_intent.get("prompt", "")),
             })
         rows.append({
@@ -99,7 +100,7 @@ def _load_config() -> None:
     global CHAT_LLM_PROVIDER, CHAT_LLM_MODEL, CHAT_LLM_FALLBACKS, TOOL_LLM_MODEL
     global VISION_LLM_PROVIDER, VISION_LLM_MODEL, VISION_LLM_FALLBACKS
     global TTS_PROVIDER, CARTESIA_VOICE_ID
-    global DARK_MODE, DOLL_AUTO_HIDE, CHAT_AUTO_ELABORATE, CHAT_ELABORATE_PROMPT
+    global THEME_MODE, DARK_MODE, DOLL_AUTO_HIDE, CHAT_AUTO_ELABORATE, CHAT_ELABORATE_PROMPT
     global GITHUB_DEFAULT_CLIENT_ID, GITHUB_CLIENT_ID, GITHUB_OAUTH_SCOPES
     global COPILOT_CLI_URL, COPILOT_CLI_PATH
     global HOTKEY_ADD_CONTEXT, HOTKEY_CLEAR_CONTEXT, HOTKEY_SNIP, HOTKEY_VOICE
@@ -155,7 +156,8 @@ def _load_config() -> None:
     CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "")
 
     # --- App behaviour ---
-    DARK_MODE             = env_bool("DARK_MODE", False)
+    THEME_MODE            = os.getenv("THEME_MODE", "system")  # "dark" | "light" | "system"
+    DARK_MODE             = (THEME_MODE == "dark")
     DOLL_AUTO_HIDE        = env_bool("DOLL_AUTO_HIDE", True)
     CHAT_AUTO_ELABORATE   = env_bool("CHAT_AUTO_ELABORATE", True)
     CHAT_ELABORATE_PROMPT = os.getenv("CHAT_ELABORATE_PROMPT", "Please elaborate on that.")

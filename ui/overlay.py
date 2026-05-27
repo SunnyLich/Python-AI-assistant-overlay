@@ -14,9 +14,9 @@ from __future__ import annotations
 import os
 import config
 from core.system.paths import DOLL_ASSETS_DIR
-from PyQt6.QtWidgets import QApplication, QLabel, QMainWindow, QSystemTrayIcon, QMenu
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QEvent, QPoint
-from PyQt6.QtGui import QPixmap, QIcon, QAction
+from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QSystemTrayIcon, QMenu
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QEvent, QPoint
+from PySide6.QtGui import QPixmap, QIcon, QAction
 
 
 ASSETS_DIR = str(DOLL_ASSETS_DIR)
@@ -24,25 +24,25 @@ ASSETS_DIR = str(DOLL_ASSETS_DIR)
 
 class OverlaySignals(QObject):
     """Thread-safe signals for updating the overlay from worker threads."""
-    set_state          = pyqtSignal(str)   # "idle" | "listening" | "thinking" | "speaking"
-    set_mouth_amp      = pyqtSignal(float)  # 0.0-“1.0 amplitude for lip sync
-    show_text_popup    = pyqtSignal(str)   # full reply text
-    show_intent_picker = pyqtSignal(int)  # caller index â†’ show WASD picker for that caller
-    show_snip_overlay  = pyqtSignal()      # show full-screen region selector
-    bubble_listening   = pyqtSignal()      # show mic/recording indicator
-    bubble_thinking    = pyqtSignal()      # show animated dots
-    bubble_start_reveal = pyqtSignal()     # start word-by-word reveal synced to audio
-    bubble_schedule_words = pyqtSignal(list, list)  # (words, start_ms) from Cartesia timestamps
-    bubble_chunk       = pyqtSignal(str, bool)   # (chunk, is_thought)
-    bubble_finish      = pyqtSignal()      # response done, start hide countdown
-    bubble_clear       = pyqtSignal()      # hide immediately
-    show_doll          = pyqtSignal()      # make doll visible
-    hide_doll          = pyqtSignal()      # hide doll after short delay
-    raise_overlay      = pyqtSignal()      # bring overlay to foreground (Linux)
-    settings_applied   = pyqtSignal()      # settings were applied; re-register hotkeys etc.
-    show_new_chat      = pyqtSignal()      # tray "New chat" clicked
-    show_last_chat     = pyqtSignal()      # tray "Last chat" clicked
-    show_memory_viewer = pyqtSignal()      # tray "Memory-¦" clicked
+    set_state          = Signal(str)   # "idle" | "listening" | "thinking" | "speaking"
+    set_mouth_amp      = Signal(float)  # 0.0-“1.0 amplitude for lip sync
+    show_text_popup    = Signal(str)   # full reply text
+    show_intent_picker = Signal(int)  # caller index â†’ show WASD picker for that caller
+    show_snip_overlay  = Signal()      # show full-screen region selector
+    bubble_listening   = Signal()      # show mic/recording indicator
+    bubble_thinking    = Signal()      # show animated dots
+    bubble_start_reveal = Signal()     # start word-by-word reveal synced to audio
+    bubble_schedule_words = Signal(list, list)  # (words, start_ms) from Cartesia timestamps
+    bubble_chunk       = Signal(str, bool)   # (chunk, is_thought)
+    bubble_finish      = Signal()      # response done, start hide countdown
+    bubble_clear       = Signal()      # hide immediately
+    show_doll          = Signal()      # make doll visible
+    hide_doll          = Signal()      # hide doll after short delay
+    raise_overlay      = Signal()      # bring overlay to foreground (Linux)
+    settings_applied   = Signal()      # settings were applied; re-register hotkeys etc.
+    show_new_chat      = Signal()      # tray "New chat" clicked
+    show_last_chat     = Signal()      # tray "Last chat" clicked
+    show_memory_viewer = Signal()      # tray "Memory-¦" clicked
 
 
 class DollOverlay(QMainWindow):
@@ -134,6 +134,10 @@ class DollOverlay(QMainWindow):
         self._icon_hide_timer.setInterval(self._icon_backstop_ms())
         self._icon_hide_timer.timeout.connect(self._icon_label.hide)
 
+    def _update_tray_context_menu(self) -> None:
+        if hasattr(self, "_tray") and hasattr(self, "_tray_menu"):
+            self._tray.setContextMenu(self._tray_menu)
+
     def _build_tray(self):
         self._state_icons: dict[str, QIcon] = {}
         for state in ("idle", "listening", "thinking", "speaking"):
@@ -143,7 +147,7 @@ class DollOverlay(QMainWindow):
 
         self._tray = QSystemTrayIcon(icon, self)
         self._tray_menu = self._build_tray_menu()
-        self._tray.setContextMenu(self._tray_menu)
+        self._update_tray_context_menu()
         self._tray.show()
 
     def _build_tray_menu(self) -> QMenu:
@@ -209,6 +213,7 @@ class DollOverlay(QMainWindow):
                 self._on_doll_dragged(self._icon_label.pos())
         if hasattr(self, "_icon_hide_timer"):
             self._icon_hide_timer.setInterval(self._icon_backstop_ms())
+        self._update_tray_context_menu()
 
     # ------------------------------------------------------------------
     # Popup

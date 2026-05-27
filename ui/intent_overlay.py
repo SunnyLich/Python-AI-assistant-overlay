@@ -1,4 +1,4 @@
-"""
+﻿"""
 ui/intent_overlay.py — Compact intent picker shown on Ctrl+Q.
 
 Small floating widget centred on screen — no background dim.
@@ -8,13 +8,12 @@ Press the matching key to pick, Escape to cancel.
 """
 from __future__ import annotations
 import sys
-from PyQt6.QtWidgets import QWidget, QApplication, QLineEdit
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPoint, QRect
-from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QBrush
+from PySide6.QtWidgets import QWidget, QApplication, QLineEdit
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QRect
+from PySide6.QtGui import QPainter, QColor, QFont, QPen, QBrush, QPainterPath
 import config
 
 _IS_WIN = sys.platform == "win32"
-
 
 
 def _build_rows(caller_idx: int = 0) -> list[dict]:
@@ -25,45 +24,60 @@ def _build_rows(caller_idx: int = 0) -> list[dict]:
         rows.append({
             "glyph":     r["key"].upper() if r["key"] else "?",
             "label":     r["label"],
+            "hint":      r.get("hint", ""),
             "prompt":    r["prompt"],
             "is_custom": False,
         })
-    # Custom prompt row always appended last
     custom_key = caller.get("custom_key", "s")
     rows.append({
         "glyph":     custom_key.upper(),
         "label":     "Custom prompt",
+        "hint":      "Ask anything",
         "prompt":    "",
         "is_custom": True,
     })
     return rows
 
 
-_W             = 230
-_ROW_H         = 36
-_PADDING       = 14
-_RADIUS        = 10
+# ── Layout constants ────────────────────────────────────────────────────────
+_W             = 300
+_ROW_H         = 64
+_PAD_V         = 10       # vertical padding around all rows
+_PAD_H         = 10       # horizontal margin inside the widget
+_RADIUS        = 14       # widget corner radius
+_ROW_RADIUS    = 9        # per-row highlight corner radius
+_BADGE_W       = 38
+_BADGE_H       = 38
+_BADGE_R       = 8        # badge corner radius
+_BADGE_X       = 12       # badge left offset inside row
+_TEXT_X        = _BADGE_X + _BADGE_W + 12
 _AUTO_CLOSE_MS = 5000
-_INPUT_EXTRA   = 54   # extra height when custom-input mode is active
+_INPUT_EXTRA   = 54
 
-_BG     = QColor(28, 28, 36, 230)
-_ROW_HL = QColor(255, 255, 255, 22)
-_ARROW  = QColor(160, 160, 255, 220)
-_LABEL  = QColor(230, 230, 230, 230)
-_HINT   = QColor(120, 120, 140, 180)
+# ── Palette ─────────────────────────────────────────────────────────────────
+_BG         = QColor(20, 20, 30, 248)
+_BORDER     = QColor(255, 255, 255, 18)
+_ROW_HL     = QColor(255, 255, 255, 16)
+_BADGE_BG   = QColor(38, 38, 54, 255)
+_BADGE_HL   = QColor(100, 90, 200, 60)   # tinted badge on hover
+_KEY_COLOR  = QColor(155, 140, 255, 240) # accent purple
+_LABEL      = QColor(238, 238, 250, 228)
+_HINT       = QColor(135, 130, 160, 180)
+_HINT_ESC   = QColor(100, 96, 118, 140)
+_SEP        = QColor(255, 255, 255, 14)
 
 
 class IntentOverlay(QWidget):
-    intent_chosen = pyqtSignal(str, str)   # (direction_key, prompt)
-    cancelled     = pyqtSignal()
-    _raw_key      = pyqtSignal(str)        # keyboard hook thread → Qt main thread
+    intent_chosen = Signal(str, str)
+    cancelled     = Signal()
+    _raw_key      = Signal(str)
 
     def __init__(self, caller_idx: int = 0, target_hwnd: int = 0, parent=None):
         super().__init__(parent)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Popup   # auto-focuses on Windows; closes on click-outside
+            | Qt.WindowType.Popup
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -71,7 +85,7 @@ class IntentOverlay(QWidget):
 
         self._rows = _build_rows(caller_idx)
         n_rows = len(self._rows)
-        h = _PADDING * 2 + _ROW_H * n_rows + 28   # 28px for ESC hint
+        h = _PAD_V * 2 + _ROW_H * n_rows + 26   # 26px ESC hint
         self._normal_h = h
         self.setFixedSize(_W, h)
         self._target_hwnd = target_hwnd
@@ -86,17 +100,16 @@ class IntentOverlay(QWidget):
         self._drop_next_keypress = False
         self._raw_key.connect(self._on_raw_key)
 
-        # Inline text input (shown only in custom mode)
         self._input_line = QLineEdit(self)
         self._input_line.installEventFilter(self)
-        self._input_line.setPlaceholderText("Type your prompt, press Enter...")
+        self._input_line.setPlaceholderText("Type your prompt, press Enter…")
         self._input_line.setStyleSheet(
             "QLineEdit {"
-            "  background: rgba(255,255,255,12);"
-            "  border: 1px solid rgba(255,255,255,55);"
-            "  border-radius: 5px;"
-            "  color: #e6e6e6;"
-            "  padding: 4px 8px;"
+            "  background: rgba(255,255,255,10);"
+            "  border: 1px solid rgba(155,140,255,80);"
+            "  border-radius: 6px;"
+            "  color: #eeeef8;"
+            "  padding: 4px 10px;"
             "  font-size: 10pt;"
             "}"
         )
@@ -127,8 +140,7 @@ class IntentOverlay(QWidget):
                 except Exception:
                     pass
             else:
-                # On Linux use the current cursor position to find the right screen
-                from PyQt6.QtGui import QCursor
+                from PySide6.QtGui import QCursor
                 cursor_pos = QCursor.pos()
                 screen = app.screenAt(cursor_pos) if app is not None else None
                 if screen is not None:
@@ -143,58 +155,94 @@ class IntentOverlay(QWidget):
             screen.y() + (screen.height() - height) // 2,
         )
 
-    # ------------------------------------------------------------------
-    # Paint
-    # ------------------------------------------------------------------
+    # ── Paint ─────────────────────────────────────────────────────────────
 
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        p.setBrush(QBrush(_BG))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawRoundedRect(0, 0, _W, self.height(), _RADIUS, _RADIUS)
+        # Widget background with border
+        path = QPainterPath()
+        path.addRoundedRect(0.5, 0.5, _W - 1, self.height() - 1, _RADIUS, _RADIUS)
+        p.fillPath(path, QBrush(_BG))
+        p.setPen(QPen(_BORDER, 1))
+        p.drawPath(path)
 
-        key_font   = QFont("Segoe UI", 13, QFont.Weight.Bold)
-        label_font = QFont("Segoe UI", 10)
+        label_font = QFont("Segoe UI", 10, QFont.Weight.DemiBold)
         hint_font  = QFont("Segoe UI", 8)
+        key_font   = QFont("Segoe UI", 12, QFont.Weight.Bold)
+        esc_font   = QFont("Segoe UI", 7)
 
-        y = _PADDING
+        y = _PAD_V
         for i, row in enumerate(self._rows):
-            if i == self._hovered:
-                p.setBrush(QBrush(_ROW_HL))
-                p.setPen(Qt.PenStyle.NoPen)
-                p.drawRoundedRect(6, y, _W - 12, _ROW_H, 6, 6)
+            row_rect = QRect(_PAD_H, y, _W - _PAD_H * 2, _ROW_H)
+            hovered  = (i == self._hovered)
 
+            # Row highlight
+            if hovered:
+                rp = QPainterPath()
+                rp.addRoundedRect(
+                    _PAD_H, y, _W - _PAD_H * 2, _ROW_H,
+                    _ROW_RADIUS, _ROW_RADIUS,
+                )
+                p.fillPath(rp, QBrush(_ROW_HL))
+
+            # Separator above (skip first row)
+            if i > 0:
+                p.setPen(QPen(_SEP, 1))
+                p.drawLine(_PAD_H + _BADGE_W + 12, y, _W - _PAD_H, y)
+
+            # Badge background
+            badge_y = y + (_ROW_H - _BADGE_H) // 2
+            bp = QPainterPath()
+            bp.addRoundedRect(_BADGE_X, badge_y, _BADGE_W, _BADGE_H, _BADGE_R, _BADGE_R)
+            p.fillPath(bp, QBrush(_BADGE_HL if hovered else _BADGE_BG))
+
+            # Key letter
             p.setFont(key_font)
-            p.setPen(QPen(_ARROW))
-            p.drawText(12, y, 28, _ROW_H, Qt.AlignmentFlag.AlignCenter, row["glyph"])
+            p.setPen(QPen(_KEY_COLOR))
+            p.drawText(_BADGE_X, badge_y, _BADGE_W, _BADGE_H,
+                       Qt.AlignmentFlag.AlignCenter, row["glyph"])
 
+            # Label
             p.setFont(label_font)
             p.setPen(QPen(_LABEL))
-            p.drawText(46, y, _W - 52, _ROW_H,
+            text_w = _W - _PAD_H - _TEXT_X
+            label_y = y + (_ROW_H // 2) - 12
+            p.drawText(_TEXT_X, label_y, text_w, 20,
                        Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                        row["label"])
 
+            # Hint / subtitle
+            if row.get("hint"):
+                p.setFont(hint_font)
+                p.setPen(QPen(_HINT))
+                hint_y = y + (_ROW_H // 2) + 2
+                p.drawText(_TEXT_X, hint_y, text_w, 18,
+                           Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                           row["hint"])
+
             y += _ROW_H
 
-        p.setFont(hint_font)
-        p.setPen(QPen(_HINT))
-        hint_y = y + (_INPUT_EXTRA if self._custom_mode else 4)
-        p.drawText(0, hint_y, _W, 20, Qt.AlignmentFlag.AlignCenter, "ESC to cancel")
+        # ESC hint
+        if self._custom_mode:
+            esc_y = y + _INPUT_EXTRA + 4
+        else:
+            esc_y = y + 4
+        p.setFont(esc_font)
+        p.setPen(QPen(_HINT_ESC))
+        p.drawText(0, esc_y, _W, 18, Qt.AlignmentFlag.AlignCenter, "ESC to cancel")
 
         p.end()
 
-    # ------------------------------------------------------------------
-    # Key input
-    # ------------------------------------------------------------------
+    # ── Key input ─────────────────────────────────────────────────────────
 
     def _select(self, idx: int):
         if self._handled:
             return
         if self._rows[idx]["is_custom"]:
             self._hovered = idx
-            self._unhook()  # release grabKeyboard; Qt handles typing in QLineEdit
+            self._unhook()
             QTimer.singleShot(0, self._enter_custom_mode)
             return
         self._handled = True
@@ -204,22 +252,24 @@ class IntentOverlay(QWidget):
 
     def _enter_custom_mode(self):
         self._custom_mode = True
-        self._timer.stop()   # don't auto-close while the user is typing
+        self._timer.stop()
         new_h = self._normal_h + _INPUT_EXTRA
         self.setFixedSize(_W, new_h)
         self._move_to_screen_center(new_h)
-        self._input_line.setGeometry(10, self._normal_h - 24, _W - 20, 32)
+        self._input_line.setGeometry(
+            _PAD_H, self._normal_h - 20, _W - _PAD_H * 2, 34
+        )
         self._input_line.show()
         self._input_line.setFocus()
         self.update()
         self._drop_next_keypress = True
 
     def eventFilter(self, obj, event):
-        from PyQt6.QtCore import QEvent
+        from PySide6.QtCore import QEvent
         if obj is self._input_line and self._drop_next_keypress:
             if event.type() == QEvent.Type.KeyPress:
                 self._drop_next_keypress = False
-                return True  # consume the triggering key so it never reaches the field
+                return True
         return super().eventFilter(obj, event)
 
     def _fire_custom(self):
@@ -234,7 +284,6 @@ class IntentOverlay(QWidget):
         self.close()
 
     def _on_raw_key(self, name: str):
-        """Runs on Qt main thread (dispatched from keyboard hook thread via signal)."""
         if self._custom_mode:
             return
         if name in ('escape', 'esc'):
@@ -246,7 +295,6 @@ class IntentOverlay(QWidget):
                 return
 
     def keyPressEvent(self, event):
-        """Fallback: handles keys if Qt does receive focus."""
         key_map: dict[Qt.Key, int] = {}
         for i, row in enumerate(self._rows):
             qt_key = getattr(Qt.Key, f"Key_{row['glyph']}", None)
@@ -270,7 +318,6 @@ class IntentOverlay(QWidget):
                 suppress=False,
             )
         else:
-            # pynput Listener uses Xlib — no root required (unlike the keyboard library)
             from pynput import keyboard as _kb  # type: ignore
 
             def _on_press(key):
@@ -288,12 +335,10 @@ class IntentOverlay(QWidget):
             listener.start()
             self._kb_hook = listener
 
-    # ------------------------------------------------------------------
-    # Cleanup / fire
-    # ------------------------------------------------------------------
+    # ── Cleanup / fire ────────────────────────────────────────────────────
 
     def _unhook(self):
-        self._closed = True  # guard lambda against late keyboard events after C++ deletion
+        self._closed = True
         if self._kb_hook is not None:
             try:
                 if _IS_WIN:
@@ -310,7 +355,6 @@ class IntentOverlay(QWidget):
             pass
 
     def closeEvent(self, event):
-        """Unhook keyboard listener whenever the widget closes (including Popup auto-close)."""
         self._unhook()
         super().closeEvent(event)
 

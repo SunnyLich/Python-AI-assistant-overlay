@@ -1,4 +1,4 @@
-"""
+﻿"""
 main.py -" Entry point for Wisp.
 
 Flow:
@@ -9,10 +9,37 @@ Flow:
 import sys
 import os
 import threading
-from PyQt6.QtWidgets import QApplication
+import logging
+import traceback
+from PySide6.QtWidgets import QApplication
 
 _IS_WIN = sys.platform == "win32"
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.screen=false")
+
+# --- File logging setup -----------------------------------------------------------
+_LOG_PATH = os.path.join(os.path.dirname(__file__), "wisp.log")
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(_LOG_PATH, encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+log = logging.getLogger("wisp")
+
+def _thread_excepthook(args):
+    """Capture unhandled exceptions in daemon threads and write them to the log file."""
+    if args.exc_type is SystemExit:
+        return
+    log.error(
+        "Unhandled exception in thread %s:\n%s",
+        args.thread.name if args.thread else "<unknown>",
+        "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_tb)),
+    )
+
+threading.excepthook = _thread_excepthook
+# ---------------------------------------------------------------------------------
 import config
 from core.hotkeys import HotkeyListener
 from core import capture, audio, context_fetcher, stt
@@ -201,13 +228,19 @@ class App:
         # Move file I/O and optional screenshot off the hook thread.
         # Emit the picker only after all capture work is complete.
         def _fetch_and_show():
-            self._pending_context = context_fetcher.fetch_and_save()
-            screenshot_b64 = None
-            if caller.get("context_screenshot") and not selected:
-                img = capture.get_screen_snippet()
-                screenshot_b64 = capture.image_to_base64(img)
-            self._pending_capture = (selected, screenshot_b64)
-            self._signals.show_intent_picker.emit(caller_idx)
+            try:
+                self._pending_context = context_fetcher.fetch_and_save()
+                screenshot_b64 = None
+                if caller.get("context_screenshot") and not selected:
+                    img = capture.get_screen_snippet()
+                    screenshot_b64 = capture.image_to_base64(img)
+                self._pending_capture = (selected, screenshot_b64)
+                self._signals.show_intent_picker.emit(caller_idx)
+            except Exception:
+                log.exception("_fetch_and_show crashed")
+                self._signals.set_state.emit("idle")
+                if config.DOLL_AUTO_HIDE:
+                    self._signals.hide_doll.emit()
 
         threading.Thread(target=_fetch_and_show, daemon=True).start()
 
@@ -290,7 +323,13 @@ class App:
 
     def _show_intent_picker(self, caller_idx: int):
         if self._intent_picker is not None:
-            return  # already showing
+            try:
+                if self._intent_picker.isVisible():
+                    return  # already showing — raise it and bail
+            except RuntimeError:
+                pass  # underlying C++ object was destroyed without emitting cancelled
+            # Orphaned picker (closed without signal) — discard it and open fresh
+            self._intent_picker = None
 
         self._intent_picker = IntentOverlay(caller_idx, target_hwnd=self._pending_intent_target)
         self._intent_picker.intent_chosen.connect(self._on_intent_chosen)
@@ -512,31 +551,38 @@ class App:
                             reply_text += part
                             llm_chunk_q.put(part)
                     if gen_id != self._gen_id:
-                        break  # a newer query started -" stop feeding stale chunks to the bubble
+                        break  # a newer query started — stop feeding stale chunks to the bubble
+            except Exception:
+                log.exception("llm_producer crashed (gen_id=%d)", gen_id)
             finally:
-                for part, is_thought in parser.finish():
-                    if not part:
-                        continue
-                    self._signals.bubble_chunk.emit(part, is_thought)
-                    if not is_thought:
-                        reply_text += part
-                        llm_chunk_q.put(part)
-                llm_chunk_q.put(None)
+                # Guarantee sentinel even if parser.finish() throws, so tts_consumer never hangs.
+                try:
+                    for part, is_thought in parser.finish():
+                        if not part:
+                            continue
+                        self._signals.bubble_chunk.emit(part, is_thought)
+                        if not is_thought:
+                            reply_text += part
+                            llm_chunk_q.put(part)
+                except Exception:
+                    log.exception("parser.finish() crashed (gen_id=%d)", gen_id)
+                finally:
+                    llm_chunk_q.put(None)
             # Store context separately so the chat window can inject it into
             # the system prompt for follow-ups without re-embedding it in turns.
-            assistant_msg = {"role": "assistant", "content": reply_text}
-            if full_text != reply_text:
-                assistant_msg["display_content"] = full_text
-            self._all_conversations.append({
-                "messages": [
-                    {"role": "user", "content": user_message,
-                     **({"image_base64": screenshot_b64} if screenshot_b64 else {})},
-                    assistant_msg,
-                ],
-                "context": ambient_ctx,
-            })
-            # Record the completed turn in short-term memory.
-            self._memory.record_turn(user_message, reply_text, ambient_ctx)
+            if reply_text:
+                assistant_msg = {"role": "assistant", "content": reply_text}
+                if full_text != reply_text:
+                    assistant_msg["display_content"] = full_text
+                self._all_conversations.append({
+                    "messages": [
+                        {"role": "user", "content": user_message,
+                         **({"image_base64": screenshot_b64} if screenshot_b64 else {})},
+                        assistant_msg,
+                    ],
+                    "context": ambient_ctx,
+                })
+                self._memory.record_turn(user_message, reply_text, ambient_ctx)
 
         def llm_chunk_iter():
             while True:
@@ -572,13 +618,20 @@ class App:
                     if config.DOLL_AUTO_HIDE:
                         self._signals.hide_doll.emit()
 
-            audio.play_tts_stream_from_chunks(
-                llm_chunk_iter(),
-                on_done=_on_done,
-                on_audio_start=on_audio_start,
-                on_amplitude=on_amplitude,
-                on_word_timestamps=on_word_timestamps,
-            )
+            try:
+                audio.play_tts_stream_from_chunks(
+                    llm_chunk_iter(),
+                    on_done=_on_done,
+                    on_audio_start=on_audio_start,
+                    on_amplitude=on_amplitude,
+                    on_word_timestamps=on_word_timestamps,
+                )
+            except Exception:
+                log.exception("tts_consumer crashed (gen_id=%d)", gen_id)
+                if gen_id == self._gen_id:
+                    self._signals.set_state.emit("idle")
+                    if config.DOLL_AUTO_HIDE:
+                        self._signals.hide_doll.emit()
 
         threading.Thread(target=llm_producer, daemon=True).start()
         threading.Thread(target=tts_consumer, daemon=True).start()

@@ -9,14 +9,14 @@ from __future__ import annotations
 import os
 import threading
 from contextlib import contextmanager
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QLineEdit, QTextEdit, QComboBox, QCheckBox,
-    QPushButton, QTabWidget, QWidget, QFrame, QMessageBox,
+    QPushButton, QTabWidget, QWidget, QFrame, QGroupBox, QMessageBox,
     QScrollArea, QSizePolicy, QCompleter,
 )
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont
 from core import secret_store
 import ui.settings_panel.env as settings_env
 from ui.settings_panel.hotkey_capture import HotkeyCaptureEdit
@@ -25,6 +25,15 @@ from ui.shared.window_utils import enable_standard_window_controls, fit_window_t
 
 ENV_PATH = settings_env.ENV_PATH
 _settings_dialog: "SettingsDialog | None" = None
+
+
+class _NoScrollCombo(QComboBox):
+    """QComboBox that ignores wheel events unless it already has focus."""
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
 
 
 def _read_env() -> dict[str, str]:
@@ -110,7 +119,7 @@ class SettingsDialog(QDialog):
 
     def changeEvent(self, event):               # noqa: N802
         """Cancel any active hotkey recording when the window is deactivated."""
-        from PyQt6.QtCore import QEvent
+        from PySide6.QtCore import QEvent
         if event.type() == QEvent.Type.WindowDeactivate:
             for w in self.findChildren(HotkeyCaptureEdit):
                 if w._recording:
@@ -121,7 +130,112 @@ class SettingsDialog(QDialog):
         super().showEvent(event)
         fit_window_to_screen(self, preferred_width=620, preferred_height=620)
 
+    _LIGHT_STYLE = """
+        QDialog { background: #f2f2f7; }
+        QTabWidget::pane { border: none; background: transparent; }
+        QTabBar { background: transparent; border: none; }
+        QTabBar::tab {
+            color: #636366; padding: 6px 14px; border-radius: 8px;
+            font-size: 9pt; margin: 2px 2px; background: transparent;
+        }
+        QTabBar::tab:selected { background: white; color: #5856d6; font-weight: 600; }
+        QTabBar::tab:hover:!selected { background: rgba(88,86,214,0.07); }
+        QFrame#card {
+            background: white; border: 1px solid #e5e5ea; border-radius: 12px;
+        }
+        QLabel#sectionHeader {
+            color: #8e8e93; font-size: 8pt; font-weight: 700;
+            letter-spacing: 0.5px; padding: 0px;
+        }
+        QScrollArea { background: transparent; border: none; }
+        QScrollArea > QWidget > QWidget { background: transparent; }
+        QLineEdit {
+            background: white; border: 1px solid #d1d1d6; border-radius: 8px;
+            padding: 5px 10px; font-size: 10pt; color: #1c1c1e;
+        }
+        QLineEdit:focus { border-color: #5856d6; }
+        QComboBox {
+            background: white; border: 1px solid #d1d1d6; border-radius: 8px;
+            padding: 5px 10px; font-size: 10pt; color: #1c1c1e; min-height: 22px;
+        }
+        QComboBox:focus { border-color: #5856d6; }
+        QComboBox::drop-down { border: none; width: 20px; }
+        QPushButton {
+            border: 1.5px solid #5856d6; color: #5856d6; border-radius: 8px;
+            padding: 5px 16px; background: transparent; font-size: 10pt;
+        }
+        QPushButton:hover { background: rgba(88,86,214,0.06); }
+        QPushButton:pressed { background: rgba(88,86,214,0.12); }
+        QPushButton:flat { border: none; color: #5856d6; background: transparent; }
+        QPushButton:flat:hover { color: #3634a3; background: transparent; }
+        QCheckBox { color: #1c1c1e; }
+        QLabel { color: #1c1c1e; }
+    """
+
+    _DARK_STYLE = """
+        QDialog { background: #1c1e26; }
+        QTabWidget::pane { border: none; background: transparent; }
+        QTabBar { background: transparent; border: none; }
+        QTabBar::tab {
+            color: #9d9daa; padding: 6px 14px; border-radius: 8px;
+            font-size: 9pt; margin: 2px 2px; background: transparent;
+        }
+        QTabBar::tab:selected { background: #2b2d3a; color: #8b87ff; font-weight: 600; }
+        QTabBar::tab:hover:!selected { background: rgba(139,135,255,0.08); }
+        QFrame#card {
+            background: #25273a; border: 1px solid #35374d; border-radius: 12px;
+        }
+        QLabel#sectionHeader {
+            color: #6b6b7e; font-size: 8pt; font-weight: 700;
+            letter-spacing: 0.5px; padding: 0px;
+        }
+        QScrollArea { background: transparent; border: none; }
+        QScrollArea > QWidget > QWidget { background: transparent; }
+        QWidget { background-color: transparent; color: #e8e8f0; }
+        QLineEdit {
+            background: #17181d; border: 1px solid #454854; border-radius: 8px;
+            padding: 5px 10px; font-size: 10pt; color: #e8e8f0;
+        }
+        QLineEdit:focus { border-color: #8b87ff; }
+        QComboBox {
+            background: #17181d; border: 1px solid #454854; border-radius: 8px;
+            padding: 5px 10px; font-size: 10pt; color: #e8e8f0; min-height: 22px;
+        }
+        QComboBox:focus { border-color: #8b87ff; }
+        QComboBox::drop-down { border: none; width: 20px; }
+        QComboBox QAbstractItemView {
+            background: #25273a; color: #e8e8f0; border: 1px solid #454854;
+        }
+        QPushButton {
+            border: 1.5px solid #8b87ff; color: #8b87ff; border-radius: 8px;
+            padding: 5px 16px; background: transparent; font-size: 10pt;
+        }
+        QPushButton:hover { background: rgba(139,135,255,0.10); }
+        QPushButton:pressed { background: rgba(139,135,255,0.20); }
+        QPushButton:flat { border: none; color: #8b87ff; background: transparent; }
+        QPushButton:flat:hover { color: #b0acff; background: transparent; }
+        QCheckBox { color: #e8e8f0; }
+        QLabel { color: #e8e8f0; }
+        QTextEdit, QPlainTextEdit {
+            background: #17181d; border: 1px solid #454854; border-radius: 8px;
+            color: #e8e8f0;
+        }
+        QScrollBar:vertical, QScrollBar:horizontal {
+            background: #1c1e26; border: none;
+        }
+        QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+            background: #454854; border-radius: 4px;
+            min-height: 24px; min-width: 24px;
+        }
+        QScrollBar::add-line, QScrollBar::sub-line { width: 0px; height: 0px; }
+    """
+
+    def _apply_dialog_theme(self):
+        from ui.shared.theme import is_dark_mode
+        self.setStyleSheet(self._DARK_STYLE if is_dark_mode() else self._LIGHT_STYLE)
+
     def _build_ui(self):
+        self._apply_dialog_theme()
         root = QVBoxLayout(self)
         root.setSpacing(12)
 
@@ -154,10 +268,11 @@ class SettingsDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         w = QWidget()
-        f = QFormLayout(w)
-        f.setSpacing(10)
-        f.setContentsMargins(12, 12, 12, 12)
+        outer = QVBoxLayout(w)
+        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setSpacing(12)
 
+        # ── Field creation ────────────────────────────────────────────────
         self._fields["LLM_PROVIDER"] = self._combo(
             ["groq", "openai", "anthropic", "google", "chatgpt", "copilot",
              "deepseek", "openrouter", "mistral", "xai", "together", "cerebras", "ollama",
@@ -169,6 +284,19 @@ class SettingsDialog(QDialog):
             "CHAT_LLM_FALLBACKS": [],
             "VISION_LLM_FALLBACKS": [],
         }
+        self._fields["CHAT_LLM_PROVIDER"] = self._combo(
+            ["groq", "openai", "anthropic", "google", "chatgpt", "copilot",
+             "deepseek", "openrouter", "mistral", "xai", "together", "cerebras", "ollama",
+             "custom"]
+        )
+        self._fields["CHAT_LLM_MODEL"] = self._model_combo()
+        self._fields["VISION_LLM_PROVIDER"] = self._combo(
+            ["", "anthropic", "openai", "google", "chatgpt",
+             "deepseek", "openrouter", "mistral", "xai", "together", "cerebras", "ollama",
+             "custom"]
+        )
+        self._fields["VISION_LLM_MODEL"] = self._model_combo()
+
         self._fields["GROQ_API_KEY"] = self._password()
         self._fields["OPENAI_API_KEY"] = self._password()
         self._fields["ANTHROPIC_API_KEY"] = self._password()
@@ -178,25 +306,17 @@ class SettingsDialog(QDialog):
         self._fields["ANTHROPIC_API_KEY"].setPlaceholderText("Stored in OS keychain")
         self._fields["GOOGLE_API_KEY"].setPlaceholderText("Stored in OS keychain")
 
-        # Additional provider key fields (hidden until expanded)
-        _extra_key_specs = [
+        for name, _label, _url in [
             ("DEEPSEEK_API_KEY",   "DeepSeek",    "https://platform.deepseek.com/api_keys"),
             ("OPENROUTER_API_KEY", "OpenRouter",  "https://openrouter.ai/settings/keys"),
             ("MISTRAL_API_KEY",    "Mistral",     "https://console.mistral.ai/api-keys"),
             ("XAI_API_KEY",        "xAI (Grok)",  "https://console.x.ai"),
             ("TOGETHER_API_KEY",   "Together AI", "https://api.together.xyz/settings/api-keys"),
             ("CEREBRAS_API_KEY",   "Cerebras",    "https://cloud.cerebras.ai"),
-        ]
-        for name, _label, _url in _extra_key_specs:
+        ]:
             field = self._password()
             field.setPlaceholderText("Stored in OS keychain")
             self._fields[name] = field
-
-        self._fields["CHAT_LLM_PROVIDER"] = self._combo(
-            ["groq", "openai", "anthropic", "google", "chatgpt", "copilot",
-             "deepseek", "openrouter", "mistral", "xai", "together", "cerebras", "ollama",
-             "custom"]
-        )
 
         def _update_model_placeholders():
             p = _get(self._fields["LLM_PROVIDER"])
@@ -214,203 +334,214 @@ class SettingsDialog(QDialog):
 
         self._fields["LLM_PROVIDER"].currentTextChanged.connect(lambda _: _update_model_placeholders())
         self._fields["CHAT_LLM_PROVIDER"].currentTextChanged.connect(lambda _: _update_model_placeholders())
-        self._fields["CHAT_LLM_MODEL"] = self._model_combo()
+        self._fields["VISION_LLM_PROVIDER"].currentIndexChanged.connect(lambda _: _update_vision_model())
 
-        f.addRow("Provider", self._fields["LLM_PROVIDER"])
-        f.addRow("Model", self._fields["LLM_MODEL"])
+        # ── MODEL card ────────────────────────────────────────────────────
         self._llm_test_status_lbl = QLabel()
-        self._llm_test_status_lbl.setWordWrap(True)
-        f.addRow("", self._button_row(("Test LLM", self._test_primary_llm_connection)))
-        f.addRow("", self._llm_test_status_lbl)
-        self._add_fallback_section(f, "LLM_FALLBACKS", "Fallback")
-        f.addRow(_sep(), _sep())
-        note = QLabel("<small><i>openai</i>/<i>google</i> = API key (pay-per-token) &nbsp;|&nbsp; <i>chatgpt</i> = your Pro/Plus subscription</small>")
-        note.setWordWrap(True)
-        f.addRow("", note)
-        key_note = QLabel("<small>API keys are saved to the OS keychain. Leave blank to keep the stored key.</small>")
-        key_note.setWordWrap(True)
-        f.addRow("", key_note)
-        f.addRow(_link_label("Groq API key", "https://console.groq.com/keys"), self._fields["GROQ_API_KEY"])
-        f.addRow(_link_label("OpenAI API key", "https://platform.openai.com/api-keys"), self._fields["OPENAI_API_KEY"])
-        f.addRow(_link_label("Anthropic API key", "https://console.anthropic.com/settings/keys"), self._fields["ANTHROPIC_API_KEY"])
-        f.addRow(_link_label("Google AI Studio API key", "https://aistudio.google.com/apikey"), self._fields["GOOGLE_API_KEY"])
+        model_card, model_cv = self._card("Model")
+        model_cv.addWidget(self._provider_model_row(
+            self._fields["LLM_PROVIDER"], self._fields["LLM_MODEL"],
+            self._llm_test_status_lbl, self._test_primary_llm_connection,
+            "LLM_FALLBACKS", "Fallback",
+            test_btn_label="Test LLM",
+        ))
+        outer.addWidget(model_card)
 
-        # ---- Collapsible extra provider keys ----
+        # ── CHAT MODEL card ───────────────────────────────────────────────
+        self._chat_llm_test_status_lbl = QLabel()
+        chat_card, chat_cv = self._card("Chat model")
+        chat_desc = QLabel("<small>Used for the chat window and the Elaborate action.</small>")
+        chat_desc.setWordWrap(True)
+        chat_cv.addWidget(chat_desc)
+        chat_cv.addWidget(self._provider_model_row(
+            self._fields["CHAT_LLM_PROVIDER"], self._fields["CHAT_LLM_MODEL"],
+            self._chat_llm_test_status_lbl, self._test_chat_llm_connection,
+            "CHAT_LLM_FALLBACKS", "Chat fallback",
+            test_btn_label="Test chat",
+        ))
+        outer.addWidget(chat_card)
+
+        # ── VISION MODEL card ─────────────────────────────────────────────
+        self._vision_test_status_lbl = QLabel()
+        vision_card, vision_cv = self._card("Vision model")
+        vision_desc = QLabel("<small>Used when you draw a screen snip with Ctrl+Alt+Q.</small>")
+        vision_desc.setWordWrap(True)
+        vision_cv.addWidget(vision_desc)
+        vision_cv.addWidget(self._provider_model_row(
+            self._fields["VISION_LLM_PROVIDER"], self._fields["VISION_LLM_MODEL"],
+            self._vision_test_status_lbl, self._test_vision_connection,
+            "VISION_LLM_FALLBACKS", "Vision fallback",
+            fallback_providers=["", "anthropic", "openai", "google", "chatgpt",
+                       "deepseek", "openrouter", "mistral", "xai", "together", "cerebras", "ollama",
+                       "custom"],
+            test_btn_label="Test vision",
+        ))
+        outer.addWidget(vision_card)
+
+        # ── CUSTOM PROVIDER card ──────────────────────────────────────────
+        self._fields["CUSTOM_BASE_URL"] = QLineEdit()
+        self._fields["CUSTOM_BASE_URL"].setPlaceholderText("https://api.example.com/v1")
+        self._fields["CUSTOM_API_KEY"] = self._password()
+        self._fields["CUSTOM_API_KEY"].setPlaceholderText("Stored in OS keychain")
+        self._custom_test_status_lbl = QLabel()
+        self._custom_test_status_lbl.setWordWrap(True)
+
+        custom_card, custom_cv = self._card("Custom provider")
+        custom_note = QLabel(
+            "<small>Any OpenAI-compatible endpoint — Ollama, LM Studio, and more. "
+            "Select <b>custom</b> in any provider dropdown above to route requests here.</small>"
+        )
+        custom_note.setWordWrap(True)
+        custom_cv.addWidget(custom_note)
+
+        presets_btn = QPushButton("Presets ▾")
+        presets_btn.setFixedWidth(90)
+        presets_btn.clicked.connect(self._show_custom_presets_menu)
+        base_url_row = QWidget()
+        bur_h = QHBoxLayout(base_url_row)
+        bur_h.setContentsMargins(0, 0, 0, 0)
+        bur_h.setSpacing(6)
+        bur_h.addWidget(self._fields["CUSTOM_BASE_URL"])
+        bur_h.addWidget(presets_btn)
+
+        custom_f_w = QWidget()
+        custom_f = QFormLayout(custom_f_w)
+        custom_f.setContentsMargins(0, 0, 0, 0)
+        custom_f.setSpacing(8)
+        custom_f.addRow("Base URL", base_url_row)
+        custom_f.addRow("API key", self._fields["CUSTOM_API_KEY"])
+        custom_cv.addWidget(custom_f_w)
+
+        test_custom_row = QWidget()
+        tcrh = QHBoxLayout(test_custom_row)
+        tcrh.setContentsMargins(0, 0, 0, 0)
+        tcrh.setSpacing(10)
+        tcrh.addWidget(self._button_row(("Test custom", self._test_custom_connection)))
+        tcrh.addWidget(self._custom_test_status_lbl, 1)
+        custom_cv.addWidget(test_custom_row)
+        outer.addWidget(custom_card)
+
+        # ── AUTHENTICATION card ───────────────────────────────────────────
+        auth_card, auth_cv = self._card("Authentication")
+
+        # ChatGPT
+        chatgpt_hdr = QLabel("ChatGPT Pro / Plus")
+        chatgpt_hdr.setStyleSheet("font-weight: 600; color: #1c1c1e;")
+        auth_cv.addWidget(chatgpt_hdr)
+        self._chatgpt_status_lbl = QLabel()
+        self._chatgpt_status_lbl.setWordWrap(True)
+        self._refresh_chatgpt_status()
+        auth_cv.addWidget(self._chatgpt_status_lbl)
+        cgpt_row = self._button_row(
+            ("Sign in (browser)",   self._chatgpt_login_browser),
+            ("Sign in (headless)",  self._chatgpt_login_device),
+            ("Sign out",            self._chatgpt_logout),
+        )
+        # Keep refs for external callers that may reference these buttons
+        btns = cgpt_row.findChildren(QPushButton)
+        self._cgpt_login_btn, self._cgpt_device_btn, self._cgpt_logout_btn = btns[0], btns[1], btns[2]
+        auth_cv.addWidget(cgpt_row)
+
+        auth_cv.addWidget(_sep(visible=True))
+
+        # GitHub
+        github_hdr = QLabel("GitHub OAuth")
+        github_hdr.setStyleSheet("font-weight: 600; color: #1c1c1e;")
+        auth_cv.addWidget(github_hdr)
+        auth_cv.addWidget(_desc_label("", "Sign in opens GitHub in your browser and links this app to your account."))
+        self._fields["GITHUB_CLIENT_ID"] = QLineEdit()
+        self._fields["GITHUB_CLIENT_ID"].setPlaceholderText("Developer OAuth app client ID override")
+        self._fields["GITHUB_OAUTH_SCOPES"] = QLineEdit()
+        self._fields["GITHUB_OAUTH_SCOPES"].setPlaceholderText("e.g. repo read:user user:email")
+        self._github_status_lbl = QLabel()
+        self._github_status_lbl.setWordWrap(True)
+        self._refresh_github_status()
+        auth_cv.addWidget(self._github_status_lbl)
+        github_row = self._button_row(
+            ("Sign in with GitHub", self._github_login_device),
+            ("Sign out",            self._github_logout),
+        )
+        gh_btns = github_row.findChildren(QPushButton)
+        self._github_login_btn, self._github_logout_btn = gh_btns[0], gh_btns[1]
+        auth_cv.addWidget(github_row)
+
+        auth_cv.addWidget(_sep(visible=True))
+
+        # GitHub Copilot
+        copilot_hdr = QLabel("GitHub Copilot")
+        copilot_hdr.setStyleSheet("font-weight: 600; color: #1c1c1e;")
+        auth_cv.addWidget(copilot_hdr)
+        auth_cv.addWidget(_desc_label("", "Fine-grained PAT with Copilot Requests: Read-only. Stored in OS keychain."))
+        self._copilot_token_edit = self._password()
+        self._copilot_token_edit.setPlaceholderText("github_pat_… (not saved to .env)")
+        copilot_f_w = QWidget()
+        copilot_f = QFormLayout(copilot_f_w)
+        copilot_f.setContentsMargins(0, 0, 0, 0)
+        copilot_f.setSpacing(8)
+        copilot_f.addRow("Token", self._copilot_token_edit)
+        auth_cv.addWidget(copilot_f_w)
+        self._copilot_status_lbl = QLabel()
+        self._copilot_status_lbl.setWordWrap(True)
+        self._refresh_copilot_status()
+        auth_cv.addWidget(self._copilot_status_lbl)
+        copilot_row = self._button_row(
+            ("Save token",       self._copilot_save_token),
+            ("Test token / SDK", self._copilot_test_token),
+            ("Clear token",      self._copilot_clear_token),
+        )
+        cp_btns = copilot_row.findChildren(QPushButton)
+        self._copilot_save_btn, self._copilot_test_btn, self._copilot_clear_btn = cp_btns[0], cp_btns[1], cp_btns[2]
+        auth_cv.addWidget(copilot_row)
+        outer.addWidget(auth_card)
+
+        # ── API KEYS card (bottom) ────────────────────────────────────────
         self._extra_keys_widget = QWidget()
         extra_keys_form = QFormLayout(self._extra_keys_widget)
         extra_keys_form.setContentsMargins(0, 4, 0, 0)
         extra_keys_form.setSpacing(8)
-        _extra_key_specs = [
+        for name, label, url in [
             ("DEEPSEEK_API_KEY",   "DeepSeek API key",    "https://platform.deepseek.com/api_keys"),
             ("OPENROUTER_API_KEY", "OpenRouter API key",  "https://openrouter.ai/settings/keys"),
             ("MISTRAL_API_KEY",    "Mistral API key",     "https://console.mistral.ai/api-keys"),
             ("XAI_API_KEY",        "xAI (Grok) API key",  "https://console.x.ai"),
             ("TOGETHER_API_KEY",   "Together AI API key", "https://api.together.xyz/settings/api-keys"),
             ("CEREBRAS_API_KEY",   "Cerebras API key",    "https://cloud.cerebras.ai"),
-        ]
-        for name, label, url in _extra_key_specs:
+        ]:
             extra_keys_form.addRow(_link_label(label, url), self._fields[name])
-        ollama_note = QLabel("<small><i>Ollama</i> runs locally — no API key needed.</small>")
-        extra_keys_form.addRow("", ollama_note)
+        extra_keys_form.addRow("", QLabel("<small><i>Ollama</i> runs locally — no API key needed.</small>"))
         self._extra_keys_widget.setVisible(False)
 
         self._extra_keys_toggle = QPushButton("▶  More provider keys (DeepSeek, OpenRouter, Mistral, xAI…)")
         self._extra_keys_toggle.setFlat(True)
         self._extra_keys_toggle.setStyleSheet("text-align: left; font-weight: bold;")
         self._extra_keys_toggle.clicked.connect(self._toggle_extra_keys)
-        f.addRow("", self._extra_keys_toggle)
-        f.addRow("", self._extra_keys_widget)
-        f.addRow(_sep(), _sep())
-        f.addRow(QLabel("<i>Chat / Elaborate model</i>"), QLabel(""))
-        f.addRow("Chat provider", self._fields["CHAT_LLM_PROVIDER"])
-        f.addRow("Chat model", self._fields["CHAT_LLM_MODEL"])
-        self._chat_llm_test_status_lbl = QLabel()
-        self._chat_llm_test_status_lbl.setWordWrap(True)
-        f.addRow("", self._button_row(("Test Chat", self._test_chat_llm_connection)))
-        f.addRow("", self._chat_llm_test_status_lbl)
-        self._add_fallback_section(f, "CHAT_LLM_FALLBACKS", "Chat fallback")
-        f.addRow(_sep(), _sep())
-        self._fields["VISION_LLM_PROVIDER"] = self._combo(
-            ["", "anthropic", "openai", "google", "chatgpt",
-             "deepseek", "openrouter", "mistral", "xai", "together", "cerebras", "ollama",
-             "custom"]
-        )
-        self._fields["VISION_LLM_PROVIDER"].currentIndexChanged.connect(lambda _: _update_vision_model())
-        self._fields["VISION_LLM_MODEL"] = self._model_combo()
-        f.addRow(QLabel("<i>Vision model (screen snip)</i>"), QLabel(""))
-        f.addRow("Vision provider", self._fields["VISION_LLM_PROVIDER"])
-        f.addRow("Vision model", self._fields["VISION_LLM_MODEL"])
-        self._vision_test_status_lbl = QLabel()
-        self._vision_test_status_lbl.setWordWrap(True)
-        f.addRow("", self._button_row(("Test Vision", self._test_vision_connection)))
-        f.addRow("", self._vision_test_status_lbl)
-        self._add_fallback_section(f, "VISION_LLM_FALLBACKS", "Vision fallback",
-            providers=["", "anthropic", "openai", "google", "chatgpt",
-                       "deepseek", "openrouter", "mistral", "xai", "together", "cerebras", "ollama",
-                       "custom"])
 
-        # ---- Custom (OpenAI-compatible) provider section ----
-        f.addRow(_sep(), _sep())
-        f.addRow(QLabel("<i>Custom (OpenAI-compatible) provider</i>"), QLabel(""))
-        custom_note = QLabel(
-            "<small>Use any OpenAI-compatible endpoint — DeepSeek, OpenRouter, Mistral, xAI, "
-            "Together AI, Cerebras, Ollama, and more. Select <b>custom</b> in any provider "
-            "dropdown above to route requests here.</small>"
-        )
-        custom_note.setWordWrap(True)
-        f.addRow("", custom_note)
+        keys_card, keys_cv = self._card("API Keys")
+        provider_note = QLabel("<small><i>openai</i> / <i>google</i> = pay-per-token &nbsp;·&nbsp; <i>chatgpt</i> = your Pro/Plus subscription</small>")
+        provider_note.setWordWrap(True)
+        keys_cv.addWidget(provider_note)
 
-        self._fields["CUSTOM_BASE_URL"] = QLineEdit()
-        self._fields["CUSTOM_BASE_URL"].setPlaceholderText("https://api.example.com/v1")
-        self._fields["CUSTOM_API_KEY"] = self._password()
-        self._fields["CUSTOM_API_KEY"].setPlaceholderText("Stored in OS keychain")
+        grid_w = QWidget()
+        grid = QGridLayout(grid_w)
+        grid.setContentsMargins(0, 4, 0, 0)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        grid.addWidget(_link_label("Groq", "https://console.groq.com/keys"), 0, 0)
+        grid.addWidget(_link_label("OpenAI", "https://platform.openai.com/api-keys"), 0, 1)
+        grid.addWidget(self._fields["GROQ_API_KEY"], 1, 0)
+        grid.addWidget(self._fields["OPENAI_API_KEY"], 1, 1)
+        grid.addWidget(_link_label("Anthropic", "https://console.anthropic.com/settings/keys"), 2, 0)
+        grid.addWidget(_link_label("Google AI Studio", "https://aistudio.google.com/apikey"), 2, 1)
+        grid.addWidget(self._fields["ANTHROPIC_API_KEY"], 3, 0)
+        grid.addWidget(self._fields["GOOGLE_API_KEY"], 3, 1)
+        keys_cv.addWidget(grid_w)
+        keys_cv.addWidget(self._extra_keys_toggle)
+        keys_cv.addWidget(self._extra_keys_widget)
+        outer.addWidget(keys_card)
 
-        # Presets button — opens a menu of common providers
-        presets_btn = QPushButton("Presets ▾")
-        presets_btn.setFixedWidth(90)
-        presets_btn.clicked.connect(self._show_custom_presets_menu)
-
-        base_url_row = QWidget()
-        base_url_h = QHBoxLayout(base_url_row)
-        base_url_h.setContentsMargins(0, 0, 0, 0)
-        base_url_h.setSpacing(6)
-        base_url_h.addWidget(self._fields["CUSTOM_BASE_URL"])
-        base_url_h.addWidget(presets_btn)
-
-        f.addRow("Base URL", base_url_row)
-        f.addRow("API key", self._fields["CUSTOM_API_KEY"])
-
-        self._custom_test_status_lbl = QLabel()
-        self._custom_test_status_lbl.setWordWrap(True)
-        f.addRow("", self._button_row(("Test custom", self._test_custom_connection)))
-        f.addRow("", self._custom_test_status_lbl)
-
-        # ---- ChatGPT Pro/Plus OAuth section ----
-        f.addRow(_sep(), _sep())
-        f.addRow(QLabel("<i>ChatGPT Pro/Plus (your subscription)</i>"), QLabel(""))
-
-        self._chatgpt_status_lbl = QLabel()
-        self._chatgpt_status_lbl.setWordWrap(True)
-        self._refresh_chatgpt_status()
-        f.addRow("Status", self._chatgpt_status_lbl)
-
-        cgpt_btn_w = QWidget()
-        cgpt_btn_h = QHBoxLayout(cgpt_btn_w)
-        cgpt_btn_h.setContentsMargins(0, 0, 0, 0)
-        cgpt_btn_h.setSpacing(6)
-        self._cgpt_login_btn    = QPushButton("Sign in (browser)")
-        self._cgpt_device_btn   = QPushButton("Sign in (headless)")
-        self._cgpt_logout_btn   = QPushButton("Sign out")
-        cgpt_btn_h.addWidget(self._cgpt_login_btn)
-        cgpt_btn_h.addWidget(self._cgpt_device_btn)
-        cgpt_btn_h.addWidget(self._cgpt_logout_btn)
-        cgpt_btn_h.addStretch()
-        self._cgpt_login_btn.clicked.connect(self._chatgpt_login_browser)
-        self._cgpt_device_btn.clicked.connect(self._chatgpt_login_device)
-        self._cgpt_logout_btn.clicked.connect(self._chatgpt_logout)
-        f.addRow("", cgpt_btn_w)
-
-        # ---- GitHub OAuth section ----
-        f.addRow(_sep(), _sep())
-        f.addRow(
-            QLabel("<i>GitHub OAuth</i>"),
-            _desc_label("", "Sign in opens GitHub in your browser and links this app to your account."),
-        )
-        self._fields["GITHUB_CLIENT_ID"] = QLineEdit()
-        self._fields["GITHUB_CLIENT_ID"].setPlaceholderText("Developer OAuth app client ID override")
-        self._fields["GITHUB_OAUTH_SCOPES"] = QLineEdit()
-        self._fields["GITHUB_OAUTH_SCOPES"].setPlaceholderText("e.g. repo read:user user:email")
-
-        self._github_status_lbl = QLabel()
-        self._github_status_lbl.setWordWrap(True)
-        self._refresh_github_status()
-        f.addRow("Status", self._github_status_lbl)
-
-        github_btn_w = QWidget()
-        github_btn_h = QHBoxLayout(github_btn_w)
-        github_btn_h.setContentsMargins(0, 0, 0, 0)
-        github_btn_h.setSpacing(6)
-        self._github_login_btn = QPushButton("Sign in with GitHub")
-        self._github_logout_btn = QPushButton("Sign out")
-        github_btn_h.addWidget(self._github_login_btn)
-        github_btn_h.addWidget(self._github_logout_btn)
-        github_btn_h.addStretch()
-        self._github_login_btn.clicked.connect(self._github_login_device)
-        self._github_logout_btn.clicked.connect(self._github_logout)
-        f.addRow("", github_btn_w)
-
-        # ---- GitHub Copilot token section ----
-        f.addRow(_sep(), _sep())
-        f.addRow(
-            QLabel("<i>GitHub Copilot token</i>"),
-            _desc_label("", "Use a fine-grained PAT with Copilot Requests: Read-only. Stored only in the OS keychain."),
-        )
-
-        self._copilot_token_edit = self._password()
-        self._copilot_token_edit.setPlaceholderText("github_pat_... (not saved to .env)")
-        f.addRow("Token", self._copilot_token_edit)
-
-        self._copilot_status_lbl = QLabel()
-        self._copilot_status_lbl.setWordWrap(True)
-        self._refresh_copilot_status()
-        f.addRow("Status", self._copilot_status_lbl)
-
-        copilot_btn_w = QWidget()
-        copilot_btn_h = QHBoxLayout(copilot_btn_w)
-        copilot_btn_h.setContentsMargins(0, 0, 0, 0)
-        copilot_btn_h.setSpacing(6)
-        self._copilot_save_btn = QPushButton("Save token")
-        self._copilot_test_btn = QPushButton("Test token / SDK")
-        self._copilot_clear_btn = QPushButton("Clear token")
-        copilot_btn_h.addWidget(self._copilot_save_btn)
-        copilot_btn_h.addWidget(self._copilot_test_btn)
-        copilot_btn_h.addWidget(self._copilot_clear_btn)
-        copilot_btn_h.addStretch()
-        self._copilot_save_btn.clicked.connect(self._copilot_save_token)
-        self._copilot_test_btn.clicked.connect(self._copilot_test_token)
-        self._copilot_clear_btn.clicked.connect(self._copilot_clear_token)
-        f.addRow("", copilot_btn_w)
-
+        outer.addStretch()
         scroll.setWidget(w)
         return scroll
 
@@ -436,8 +567,8 @@ class SettingsDialog(QDialog):
     ]
 
     def _show_custom_presets_menu(self) -> None:
-        from PyQt6.QtWidgets import QMenu
-        from PyQt6.QtGui import QAction
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QAction
 
         menu = QMenu(self)
         for name, url, model_hint in self._CUSTOM_PRESETS:
@@ -775,7 +906,7 @@ class SettingsDialog(QDialog):
         return w
 
     def _tab_keybinds(self) -> QWidget:
-        from PyQt6.QtWidgets import QScrollArea, QSizePolicy
+        from PySide6.QtWidgets import QScrollArea, QSizePolicy
         container = QWidget()
         self._keybinds_layout = QVBoxLayout(container)
         self._keybinds_layout.setSpacing(6)
@@ -881,7 +1012,7 @@ class SettingsDialog(QDialog):
         intents: "list[dict] | None" = None,
     ) -> None:
         """Add a caller block (framed panel with header + intent rows) to the UI."""
-        from PyQt6.QtWidgets import QSizePolicy
+        from PySide6.QtWidgets import QSizePolicy
         frame = QFrame()
         frame.setFrameShape(QFrame.Shape.StyledPanel)
         frame.setStyleSheet("QFrame { border: 1px solid palette(mid); border-radius: 4px; }")
@@ -945,7 +1076,7 @@ class SettingsDialog(QDialog):
         outer.addWidget(context_row)
 
         # Intent rows column header
-        from PyQt6.QtWidgets import QSizePolicy as SP
+        from PySide6.QtWidgets import QSizePolicy as SP
         int_hdr = QWidget()
         int_hdr_h = QHBoxLayout(int_hdr)
         int_hdr_h.setContentsMargins(0, 2, 0, 0)
@@ -1007,7 +1138,7 @@ class SettingsDialog(QDialog):
         prompt: str = "",
     ) -> None:
         """Append one intent row to a caller block."""
-        from PyQt6.QtWidgets import QSizePolicy
+        from PySide6.QtWidgets import QSizePolicy
         row_w = QWidget()
         h = QHBoxLayout(row_w)
         h.setContentsMargins(0, 1, 0, 1)
@@ -1050,7 +1181,7 @@ class SettingsDialog(QDialog):
 
     def _tab_memory(self) -> QWidget:
         """Memory tab: LTM config knobs + embedded fact browser."""
-        from PyQt6.QtWidgets import QGroupBox, QSizePolicy
+        from PySide6.QtWidgets import QGroupBox, QSizePolicy
 
         w = QWidget()
         root = QVBoxLayout(w)
@@ -1125,7 +1256,7 @@ class SettingsDialog(QDialog):
             panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             browser_layout.addWidget(panel)
         except Exception as exc:
-            from PyQt6.QtCore import Qt
+            from PySide6.QtCore import Qt
             err = QLabel(f"Memory store unavailable:\n{exc}")
             err.setAlignment(Qt.AlignmentFlag.AlignCenter)
             err.setStyleSheet("color: #c00;")
@@ -1156,7 +1287,11 @@ class SettingsDialog(QDialog):
         f.setSpacing(10)
         f.setContentsMargins(12, 12, 12, 12)
 
-        self._fields["DARK_MODE"] = QCheckBox("Dark mode")
+        theme_combo = _NoScrollCombo()
+        theme_combo.addItem("System default", "system")
+        theme_combo.addItem("Light", "light")
+        theme_combo.addItem("Dark", "dark")
+        self._fields["THEME_MODE"] = theme_combo
         self._fields["DOLL_AUTO_HIDE"] = QCheckBox("Auto-hide doll (only visible when active)")
         self._fields["CHAT_AUTO_ELABORATE"] = QCheckBox("Auto-elaborate when opening chat")
         self._fields["CHAT_ELABORATE_PROMPT"] = QLineEdit()
@@ -1183,7 +1318,7 @@ class SettingsDialog(QDialog):
         self._fields["TTS_HOLD_PLAYBACK_RATE"] = QLineEdit()
         self._fields["TTS_HOLD_PLAYBACK_RATE"].setPlaceholderText("e.g. 1.35")
 
-        f.addRow("", self._fields["DARK_MODE"])
+        f.addRow("Theme", self._fields["THEME_MODE"])
         f.addRow("", self._fields["DOLL_AUTO_HIDE"])
         f.addRow("", self._fields["CHAT_AUTO_ELABORATE"])
         f.addRow("Elaborate prompt", self._fields["CHAT_ELABORATE_PROMPT"])
@@ -1206,7 +1341,7 @@ class SettingsDialog(QDialog):
 
     def _model_combo(self, provider: str = "") -> QComboBox:
         models = _PROVIDER_MODELS.get(provider, [])
-        cb = QComboBox()
+        cb = _NoScrollCombo()
         cb.setEditable(True)
         cb.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         cb.addItems(models)
@@ -1218,7 +1353,7 @@ class SettingsDialog(QDialog):
         return cb
 
     def _combo(self, options: list[str], current: str = "") -> QComboBox:
-        cb = QComboBox()
+        cb = _NoScrollCombo()
         for opt in options:
             cb.addItem(_PROVIDER_LABELS.get(opt, opt) if opt else "", opt)
         if current is not None:
@@ -1238,6 +1373,66 @@ class SettingsDialog(QDialog):
             layout.addWidget(btn)
         layout.addStretch()
         return row
+
+    def _card(self, title: str) -> tuple[QFrame, QVBoxLayout]:
+        """Return a styled card frame and its inner VBoxLayout, with a header label."""
+        card = QFrame()
+        card.setObjectName("card")
+        cv = QVBoxLayout(card)
+        cv.setContentsMargins(16, 12, 16, 16)
+        cv.setSpacing(10)
+        if title:
+            hdr = QLabel(title.upper())
+            hdr.setObjectName("sectionHeader")
+            cv.addWidget(hdr)
+        return card, cv
+
+    def _provider_model_row(
+        self,
+        provider_field: QComboBox,
+        model_field: QComboBox,
+        test_label: QLabel,
+        test_slot,
+        fallback_key: str,
+        fallback_prefix: str,
+        fallback_providers: list[str] | None = None,
+        test_btn_label: str = "Test",
+    ) -> QWidget:
+        """Provider | Model side-by-side + test row + fallbacks, returns a widget."""
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(10)
+
+        pm = QWidget()
+        pmh = QHBoxLayout(pm)
+        pmh.setContentsMargins(0, 0, 0, 0)
+        pmh.setSpacing(12)
+
+        pc = QWidget(); pvl = QVBoxLayout(pc)
+        pvl.setContentsMargins(0, 0, 0, 0); pvl.setSpacing(4)
+        pvl.addWidget(QLabel("Provider")); pvl.addWidget(provider_field)
+
+        mc = QWidget(); mvl = QVBoxLayout(mc)
+        mvl.setContentsMargins(0, 0, 0, 0); mvl.setSpacing(4)
+        mvl.addWidget(QLabel("Model")); mvl.addWidget(model_field)
+
+        pmh.addWidget(pc); pmh.addWidget(mc)
+        v.addWidget(pm)
+
+        test_label.setWordWrap(True)
+        tr = QWidget(); trh = QHBoxLayout(tr)
+        trh.setContentsMargins(0, 0, 0, 0); trh.setSpacing(10)
+        trh.addWidget(self._button_row((test_btn_label, test_slot)))
+        trh.addWidget(test_label, 1)
+        v.addWidget(tr)
+
+        fb_w = QWidget(); fb_f = QFormLayout(fb_w)
+        fb_f.setContentsMargins(0, 4, 0, 0); fb_f.setSpacing(8)
+        self._add_fallback_section(fb_f, fallback_key, fallback_prefix, providers=fallback_providers)
+        v.addWidget(fb_w)
+
+        return w
 
     def _password(self) -> QLineEdit:
         le = QLineEdit()
@@ -1420,8 +1615,10 @@ class SettingsDialog(QDialog):
             )
 
         auto_hide = self._env.get("DOLL_AUTO_HIDE", str(cfg.DOLL_AUTO_HIDE)).lower() == "true"
-        dark_mode = self._env.get("DARK_MODE", str(cfg.DARK_MODE)).lower() == "true"
-        self._fields["DARK_MODE"].setChecked(dark_mode)  # type: ignore
+        theme_mode = self._env.get("THEME_MODE", getattr(cfg, "THEME_MODE", "system"))
+        combo = self._fields["THEME_MODE"]
+        idx = combo.findData(theme_mode)  # type: ignore[attr-defined]
+        combo.setCurrentIndex(idx if idx >= 0 else 0)  # type: ignore[attr-defined]
         self._fields["DOLL_AUTO_HIDE"].setChecked(auto_hide)  # type: ignore
 
         auto_elab = self._env.get("CHAT_AUTO_ELABORATE", str(cfg.CHAT_AUTO_ELABORATE)).lower() == "true"
@@ -1585,6 +1782,7 @@ class SettingsDialog(QDialog):
             _llm.reset_clients()
             _tts.reset_connections()
             apply_app_theme()
+            self._apply_dialog_theme()
             if self._on_apply:
                 self._on_apply()
             self.accept()
@@ -1626,7 +1824,7 @@ class SettingsDialog(QDialog):
             "MEMORY_RELEVANCE_MAX_DISTANCE": _get(self._fields["MEMORY_RELEVANCE_MAX_DISTANCE"]),
             "MEMORY_STM_TOKEN_BUDGET":  _get(self._fields["MEMORY_STM_TOKEN_BUDGET"]),
             "CALLER_COUNT":  str(len(self._caller_blocks)),
-            "DARK_MODE":        str(self._fields["DARK_MODE"].isChecked()),  # type: ignore
+            "THEME_MODE":       self._fields["THEME_MODE"].currentData(),  # type: ignore[attr-defined]
             "DOLL_AUTO_HIDE":    str(self._fields["DOLL_AUTO_HIDE"].isChecked()),  # type: ignore
             "CHAT_AUTO_ELABORATE": str(self._fields["CHAT_AUTO_ELABORATE"].isChecked()),  # type: ignore
             "CHAT_ELABORATE_PROMPT": _get(self._fields["CHAT_ELABORATE_PROMPT"]),
@@ -1837,10 +2035,12 @@ def _refresh_model_combo(combo: QComboBox, provider: str) -> None:
     combo.blockSignals(False)
 
 
-def _sep() -> QFrame:
+def _sep(visible: bool = False) -> QFrame:
     line = QFrame()
     line.setFrameShape(QFrame.Shape.HLine)
-    line.setStyleSheet("color: rgba(0,0,0,0);")
+    line.setStyleSheet(
+        "color: #e5e5ea; margin: 2px 0;" if visible else "color: rgba(0,0,0,0);"
+    )
     return line
 
 

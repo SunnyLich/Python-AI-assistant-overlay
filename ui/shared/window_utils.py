@@ -1,11 +1,11 @@
-"""
+﻿"""
 ui/window_utils.py - Small helpers for keeping app windows reachable.
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QCursor
-from PyQt6.QtWidgets import QApplication, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QCursor
+from PySide6.QtWidgets import QApplication, QWidget
 
 
 def enable_standard_window_controls(window: QWidget) -> None:

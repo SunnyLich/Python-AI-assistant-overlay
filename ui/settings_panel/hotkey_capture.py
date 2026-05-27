@@ -1,8 +1,8 @@
-"""Hotkey capture widget used by the settings dialog."""
+﻿"""Hotkey capture widget used by the settings dialog."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLineEdit
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLineEdit
 
 
 _QT_KEY_NAMES: dict[int, str] = {

@@ -1,4 +1,4 @@
-"""
+﻿"""
 ui/snip_overlay.py — Full-screen region selector (Ctrl+Alt+Q).
 
 Covers the entire virtual desktop (all monitors) with a semi-dark overlay.
@@ -7,16 +7,16 @@ region_selected with an mss-compatible region dict on release,
 or cancelled on Escape / zero-size drag.
 """
 from __future__ import annotations
-from PyQt6.QtWidgets import QWidget, QApplication, QRubberBand
-from PyQt6.QtCore import Qt, pyqtSignal, QRect, QPoint, QSize, QTimer
-from PyQt6.QtGui import QPainter, QColor, QFont, QCursor
+from PySide6.QtWidgets import QWidget, QApplication, QRubberBand
+from PySide6.QtCore import Qt, Signal, QRect, QPoint, QSize, QTimer
+from PySide6.QtGui import QPainter, QColor, QFont, QCursor
 
 _DIM_ALPHA = 110   # overlay darkness 0–255
 
 
 class SnipOverlay(QWidget):
-    region_selected = pyqtSignal(dict)   # mss-format: {left, top, width, height}
-    cancelled       = pyqtSignal()
+    region_selected = Signal(dict)   # mss-format: {left, top, width, height}
+    cancelled       = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)

@@ -37,6 +37,12 @@ from typing import Optional
 import config
 from core.system.paths import MEMORY_DIR
 
+try:
+    from core.context_router import ContextChunk, ContextRouter
+    _HAS_ROUTER = True
+except Exception:
+    _HAS_ROUTER = False
+
 _MEMORY_DIR = str(MEMORY_DIR)
 _CHROMA_DIR = os.path.join(_MEMORY_DIR, "chroma")
 _FALLBACK_PATH = os.path.join(_MEMORY_DIR, "facts_fallback.json")
@@ -181,6 +187,9 @@ class MemoryManager:
         self._collection = None             # chromadb collection (None = unavailable)
         self._chroma_ok = False
         self._consolidation_timer: threading.Timer | None = None
+        self._ctx_router = None
+        self._ctx_router_lock = threading.Lock()
+        self._ctx_router_fact_count = -1
 
         self._init_chromadb()
         self._sync_consolidation_timer()
@@ -339,48 +348,114 @@ class MemoryManager:
         self._upsert_fact(text.strip(), category, source="explicit")
         print(f"[memory] Explicit fact stored ({category}): {text!r}")
 
+
     # ------------------------------------------------------------------
-    # Long-term memory -” retrieval
+    # Context router
     # ------------------------------------------------------------------
 
-    def retrieve_relevant(self, query: str, top_k: Optional[int] = None) -> str:
-        """
-        Embed the query and return the top-k most relevant facts as a
-        formatted string for injection into the system prompt.
+    def _get_router(self):
+        # Return the cached ContextRouter, rebuilding when fact count changes.
+        if not _HAS_ROUTER or not self._chroma_ok or self._collection is None:
+            return None
+        try:
+            count = self._collection.count()
+            if count == 0:
+                return None
+            with self._ctx_router_lock:
+                if self._ctx_router is None or count != self._ctx_router_fact_count:
+                    self._rebuild_router(count)
+                return self._ctx_router
+        except Exception:
+            return None
 
-        Returns "" when no facts are stored or chromadb is unavailable.
-        """
+    def _rebuild_router(self, fact_count):
+        # Build a ContextRouter from LTM facts (call while holding _ctx_router_lock).
+        try:
+            results = self._collection.get(
+                where={'archived': {'$eq': False}},
+                include=['documents', 'metadatas'],
+            )
+            chunks = []
+            for doc, meta, fid in zip(
+                results.get('documents', []),
+                results.get('metadatas', []),
+                results.get('ids', []),
+            ):
+                source = meta.get('source', 'memory')
+                chunks.append(ContextChunk.from_text(fid, doc, source))
+            if chunks:
+                self._ctx_router = ContextRouter(chunks)
+                self._ctx_router_fact_count = fact_count
+                print('[memory] Context router rebuilt with %d chunk(s).' % len(chunks))
+        except Exception as exc:
+            print('[memory] Context router build failed: %s' % exc)
+            self._ctx_router = None
+
+    def _invalidate_router(self):
+        # Signal that the router needs a rebuild on next retrieve_relevant call.
+        with self._ctx_router_lock:
+            self._ctx_router_fact_count = -1
+
+    # ------------------------------------------------------------------
+    # Long-term memory -- retrieval
+    # ------------------------------------------------------------------
+
+    def retrieve_relevant(self, query, top_k=None):
         k = top_k if top_k is not None else config.MEMORY_TOP_K
 
         if not self._chroma_ok or self._collection is None:
             return self._fallback_all_facts(query)
 
+        router = self._get_router()
+        if router is not None:
+            try:
+                result = router.route(query)
+                level = result.context_level
+
+                if level == 'none':
+                    return ''
+
+                if level == 'tiny':
+                    k = min(1, k)
+
+                elif level in ('selected', 'full') and result.selected_chunk_ids:
+                    fetched = self._collection.get(
+                        ids=result.selected_chunk_ids,
+                        include=['documents'],
+                    )
+                    docs = fetched.get('documents', [])
+                    if docs:
+                        return '[Memory]\n' + '\n'.join('- ' + d for d in docs)
+
+            except Exception as exc:
+                print('[memory] Router error, falling back to chromadb: %s' % exc)
+
         try:
             count = self._collection.count()
             if count == 0:
-                return ""
+                return ''
             results = self._collection.query(
                 query_texts=[query],
                 n_results=min(k, count),
-                where={"archived": {"$eq": False}},
-                include=["documents", "metadatas", "distances"],
+                where={'archived': {'$eq': False}},
+                include=['documents', 'metadatas', 'distances'],
             )
-            docs: list[str] = results.get("documents", [[]])[0]
-            dists: list[float] = results.get("distances", [[]])[0]
+            docs = results.get('documents', [[]])[0]
+            dists = results.get('distances', [[]])[0]
             if not docs:
-                return ""
+                return ''
             max_dist = config.MEMORY_RELEVANCE_MAX_DISTANCE
             filtered = [
                 doc for doc, dist in zip(docs, dists)
                 if dist <= max_dist or _lexical_overlap(query, doc) > 0
             ]
             if not filtered:
-                return ""
-            lines = [f"- {doc}" for doc in filtered[:k]]
-            return "[Memory]\n" + "\n".join(lines)
+                return ''
+            lines = ['- ' + doc for doc in filtered[:k]]
+            return '[Memory]\n' + '\n'.join(lines)
         except Exception as exc:
-            print(f"[memory] Retrieval error: {exc}")
-            return ""
+            print('[memory] Retrieval error: %s' % exc)
+            return ''
 
     def _fallback_all_facts(self, query: str = "") -> str:
         """Return all active facts as a plain list when chromadb is unavailable."""
@@ -558,6 +633,7 @@ class MemoryManager:
                     "archived": False,
                 }],
             )
+            self._invalidate_router()
             return True
         except Exception as exc:
             print(f"[memory] Upsert error: {exc}")
@@ -651,6 +727,7 @@ class MemoryManager:
             return
         try:
             self._collection.delete(ids=[fact_id])
+            self._invalidate_router()
         except Exception as exc:
             print(f"[memory] delete_fact error: {exc}")
 
@@ -680,6 +757,7 @@ class MemoryManager:
                 documents=[new_text],
                 metadatas=[meta],
             )
+            self._invalidate_router()
         except Exception as exc:
             print(f"[memory] update_fact error: {exc}")
 

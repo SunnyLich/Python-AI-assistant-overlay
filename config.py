@@ -164,7 +164,7 @@ def _load_config() -> None:
 
     # --- App behaviour ---
     THEME_MODE            = os.getenv("THEME_MODE", "system")  # "dark" | "light" | "system"
-    DARK_MODE             = (THEME_MODE == "dark")
+    DARK_MODE             = env_bool("DARK_MODE", THEME_MODE == "dark")
     DOLL_AUTO_HIDE        = env_bool("DOLL_AUTO_HIDE", True)
     CHAT_AUTO_ELABORATE   = env_bool("CHAT_AUTO_ELABORATE", True)
     CHAT_ELABORATE_PROMPT = os.getenv("CHAT_ELABORATE_PROMPT", "Please elaborate on that.")

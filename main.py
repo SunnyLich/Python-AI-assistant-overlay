@@ -29,16 +29,40 @@ logging.basicConfig(
 log = logging.getLogger("wisp")
 
 def _thread_excepthook(args):
-    """Capture unhandled exceptions in daemon threads and write them to the log file."""
+    """Capture unhandled exceptions in daemon threads, log them, and write a crash file."""
     if args.exc_type is SystemExit:
         return
+    thread_name = args.thread.name if args.thread else "<unknown>"
     log.error(
         "Unhandled exception in thread %s:\n%s",
-        args.thread.name if args.thread else "<unknown>",
+        thread_name,
         "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_tb)),
     )
+    from core.crash import write_crash_report
+    path = write_crash_report(
+        args.exc_type, args.exc_value, args.exc_tb, thread_name=thread_name
+    )
+    if path:
+        log.error("Crash report written to: %s", path)
 
 threading.excepthook = _thread_excepthook
+
+
+def _main_excepthook(exc_type, exc_value, exc_tb):
+    """sys.excepthook for unhandled exceptions on the main thread."""
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
+    log.error(
+        "Unhandled main-thread exception:\n%s",
+        "".join(traceback.format_exception(exc_type, exc_value, exc_tb)),
+    )
+    from core.crash import write_crash_report
+    path = write_crash_report(exc_type, exc_value, exc_tb)
+    if path:
+        log.error("Crash report written to: %s", path)
+
+sys.excepthook = _main_excepthook
 # ---------------------------------------------------------------------------------
 import config
 import core.plugin_manager as _plugin_manager_mod

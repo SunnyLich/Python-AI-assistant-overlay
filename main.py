@@ -12,6 +12,7 @@ import threading
 import logging
 import traceback
 from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QIcon
 
 _IS_WIN = sys.platform == "win32"
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.screen=false")
@@ -74,12 +75,24 @@ from core import tts as tts_module
 from core.memory_store import store as memory_module
 from core.query_pipeline import GenerationCounter, ContextInputs, build_context
 from core.system.app_platform import configure_windows_app_identity
+from core.system.paths import ASSETS_DIR
 from core.memory_store.commands import extract_remember_fact
 from ui.overlay import DollOverlay, OverlaySignals
 from ui.intent_overlay import IntentOverlay
 from ui.snip_overlay import SnipOverlay
 from ui.chat_window import ChatWindow
 from ui.shared.theme import apply_app_theme
+
+
+def _build_app_icon() -> QIcon:
+    """Return the best available app icon (app.ico, then idle.png as fallback)."""
+    for name in ("app.ico", "idle.png"):
+        p = str(ASSETS_DIR / name)
+        icon = QIcon(p)
+        if not icon.isNull():
+            return icon
+    idle_p = str(ASSETS_DIR / "doll" / "idle.png")
+    return QIcon(idle_p)
 
 
 class App:
@@ -92,6 +105,9 @@ class App:
         self._qt.setApplicationName("Wisp")
         self._qt.setApplicationDisplayName("Wisp")
         self._qt.setQuitOnLastWindowClosed(False)  # chat/settings closing must not exit the app
+        _app_icon = _build_app_icon()
+        if not _app_icon.isNull():
+            self._qt.setWindowIcon(_app_icon)
         apply_app_theme(self._qt)
         self._signals = OverlaySignals()
         self._overlay = DollOverlay(self._signals)
@@ -628,8 +644,13 @@ class App:
                             llm_chunk_q.put(part)
                     if not self._generations.is_current(gen_id):
                         break  # a newer query started — stop feeding stale chunks to the bubble
-            except Exception:
+            except Exception as exc:
                 log.exception("llm_producer crashed (gen_id=%d)", gen_id)
+                if self._generations.is_current(gen_id):
+                    err_msg = f"[Error: {exc}]"
+                    self._signals.bubble_chunk.emit(err_msg, False)
+                    reply_text += err_msg
+                    llm_chunk_q.put(err_msg)
             finally:
                 # Guarantee sentinel even if parser.finish() throws, so tts_consumer never hangs.
                 try:

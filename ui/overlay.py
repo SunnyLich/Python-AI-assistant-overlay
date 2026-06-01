@@ -92,6 +92,7 @@ class DollOverlay(QMainWindow):
         signals.bubble_schedule_words.connect(self._bubble.schedule_words)
         signals.bubble_chunk.connect(self._bubble.append_chunk)
         signals.bubble_finish.connect(self._bubble.finish)
+        signals.bubble_finish.connect(self._on_bubble_finish)
         signals.bubble_clear.connect(self._bubble.clear)
         signals.bubble_clear.connect(self._icon_label_clear)
         signals.show_doll.connect(self._show_doll)
@@ -127,6 +128,9 @@ class DollOverlay(QMainWindow):
         )
         self._icon_label.setWindowTitle("AI Assistant Doll")
         self._icon_label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        _app_icon = QApplication.instance().windowIcon()
+        if not _app_icon.isNull():
+            self._icon_label.setWindowIcon(_app_icon)
         self._icon_label.setFixedSize(sz, sz)
         self._icon_label.move(x, y)
         self._icon_label.setScaledContents(True)
@@ -300,6 +304,12 @@ class DollOverlay(QMainWindow):
         # the bubble via _on_bubble_hidden, but this covers cases where the bubble
         # is never shown (e.g. empty voice transcription).
         self._icon_hide_timer.start()
+
+    def _on_bubble_finish(self):
+        """Bubble is winding down its reveal — stop the backstop so the doll
+        stays until the bubble actually hides via _on_bubble_hidden."""
+        if hasattr(self, '_icon_hide_timer'):
+            self._icon_hide_timer.stop()
 
     def _hide_doll_now(self):
         if not hasattr(self, '_icon_hide_timer') or not hasattr(self, '_icon_label'):

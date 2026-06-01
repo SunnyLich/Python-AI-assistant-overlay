@@ -273,8 +273,12 @@ class IntentOverlay(QWidget):
         from PySide6.QtCore import QEvent
         if obj is self._input_line and self._drop_next_keypress:
             if event.type() == QEvent.Type.KeyPress:
-                self._drop_next_keypress = False
-                return True
+                custom_key = next((r["glyph"].lower() for r in self._rows if r["is_custom"]), "")
+                if event.text().lower() == custom_key:
+                    self._drop_next_keypress = False
+                    return True  # consume the triggering key so it never reaches the field
+                else:
+                    self._drop_next_keypress = False  # not the trigger key — let it through
         return super().eventFilter(obj, event)
 
     def _fire_custom(self):

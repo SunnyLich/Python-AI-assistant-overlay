@@ -537,8 +537,8 @@ class SpeechBubble(QWidget):
                     if idx:
                         x += self._space_w
                     is_read = (not is_thought) and word_idx is not None and word_idx < self._revealed_count
-                    font = self._bold_font if ((bold and not is_thought) or is_read) else self._font
-                    fm = self._bold_fm if ((bold and not is_thought) or is_read) else self._fm
+                    font = self._bold_font if (bold and not is_thought) else self._font
+                    fm = self._bold_fm if (bold and not is_thought) else self._fm
                     word_w = fm.horizontalAdvance(word)
                     p.setFont(font)
                     if is_thought:
@@ -546,7 +546,7 @@ class SpeechBubble(QWidget):
                     else:
                         pen = self._read_word_color if is_read else self._text_color
                     p.setPen(QPen(pen))
-                    p.drawText(x, y, self._text_w - (x - _PAD), self._line_h,
+                    p.drawText(x, y, self._bubble_w - x, self._line_h,
                                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                                word)
                     x += word_w

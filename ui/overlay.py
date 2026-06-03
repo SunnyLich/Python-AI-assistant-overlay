@@ -28,6 +28,7 @@ class OverlaySignals(QObject):
     set_mouth_amp      = Signal(float)  # 0.0-“1.0 amplitude for lip sync
     show_text_popup    = Signal(str)   # full reply text
     show_intent_picker = Signal(int)  # caller index â†’ show WASD picker for that caller
+    summon_caller      = Signal(int)  # icon clicked → run caller at this index (hotkey-free trigger)
     show_snip_overlay  = Signal()      # show full-screen region selector
     bubble_listening   = Signal()      # show mic/recording indicator
     bubble_thinking    = Signal()      # show animated dots
@@ -151,6 +152,8 @@ class IconOverlay(QMainWindow):
         self._icon_label.setAcceptDrops(True)
         self._icon_label.installEventFilter(self)
         self._icon_drag_offset = None
+        self._icon_press_pos = QPoint()
+        self._icon_dragged = False
 
         self._icon_hide_timer = QTimer(self)
         self._icon_hide_timer.setSingleShot(True)
@@ -388,15 +391,27 @@ class IconOverlay(QMainWindow):
                 self._tray_menu.popup(event.globalPosition().toPoint())
                 return True
             if t == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
-                self._icon_drag_offset = self._icon_label.pos() - event.globalPosition().toPoint()
+                self._icon_press_pos = event.globalPosition().toPoint()
+                self._icon_drag_offset = self._icon_label.pos() - self._icon_press_pos
+                self._icon_dragged = False
                 return True
             elif t == QEvent.Type.MouseMove and self._icon_drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
-                new_pos = event.globalPosition().toPoint() + self._icon_drag_offset
-                self._icon_label.move(new_pos)
-                self._on_icon_dragged(new_pos)
+                cur = event.globalPosition().toPoint()
+                # Only count as a drag once the pointer moves past the OS drag
+                # threshold, so a small jitter during a click still registers as a click.
+                if (cur - self._icon_press_pos).manhattanLength() >= QApplication.startDragDistance():
+                    self._icon_dragged = True
+                self._icon_label.move(cur + self._icon_drag_offset)
+                self._on_icon_dragged(cur + self._icon_drag_offset)
                 return True
             elif t == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                was_drag = self._icon_dragged
                 self._icon_drag_offset = None
+                self._icon_dragged = False
+                # A clean left-click (no drag) summons the prompt — the
+                # permission-free alternative to the global hotkey.
+                if not was_drag:
+                    self.signals.summon_caller.emit(0)
                 return True
 
             # ---- drag-and-drop events ----

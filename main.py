@@ -147,6 +147,7 @@ class App:
         self._signals.chat_new_conversation.connect(self._on_chat_new_conversation)
         self._signals.context_items_dropped.connect(self._on_context_items_dropped)
         self._signals.remove_dropped_item.connect(self._on_remove_dropped_item)
+        self._signals.summon_caller.connect(self._on_summon_caller)
         self._overlay.set_click_handler(self._on_icon_click)
 
         # Pre-warm connections in background
@@ -327,6 +328,17 @@ class App:
         self._pending_intent_target = get_foreground_window()
         self._steal_foreground()
         self._signals.show_snip_overlay.emit()
+
+    def _on_summon_caller(self, caller_idx: int):
+        """Icon clicked — run the caller without a global hotkey (no macOS
+        Accessibility permission required). Dispatched off the Qt main thread
+        because _on_caller_hotkey synthesises a clipboard copy and blocks,
+        mirroring how the hotkey listener invokes callbacks on its own thread."""
+        threading.Thread(
+            target=self._on_caller_hotkey,
+            args=(caller_idx,),
+            daemon=True,
+        ).start()
 
     def _on_caller_hotkey(self, caller_idx: int):
         """Called when any caller hotkey fires. Dispatches based on caller's paste_back flag."""

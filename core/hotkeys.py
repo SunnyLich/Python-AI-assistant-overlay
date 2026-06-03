@@ -386,7 +386,7 @@ if _IS_MAC:
 
     _kEventClassKeyboard     = _four_char_code("keyb")
     _kEventHotKeyPressed     = 6
-    _kEventParamDirectObject = _four_char_code("obj ")
+    _kEventParamDirectObject = _four_char_code("----")  # kEventParamDirectObject is '----'
     _typeEventHotKeyID       = _four_char_code("hkid")
 
     # Loading Carbon only works on a real macOS host. The macOS unit tests reload
@@ -520,9 +520,11 @@ class _CarbonImpl:
         return True
 
     def _dispatch(self, _next_handler, event, _user_data) -> int:
-        # Runs on the main thread (Qt's run loop). Offload to a daemon thread so
-        # the blocking caller work (clipboard copy, network) never stalls the UI,
-        # mirroring the Win32 backend.
+        # Runs on the main thread (Qt's run loop). Unlike the Win32 backend we do
+        # NOT offload to a daemon thread: on macOS the callbacks touch AppKit/Quartz
+        # (get_selected_text synthesises ⌘C, get_foreground_window queries Quartz),
+        # which trace-trap (SIGTRAP) off the main thread. The caller callbacks just
+        # emit a Qt signal, so running them here on the main thread is cheap.
         try:
             hk_id = _EventHotKeyID()
             status = _carbon.GetEventParameter(
@@ -533,7 +535,7 @@ class _CarbonImpl:
                 print(f"[hotkeys] Carbon hotkey fired (id={hk_id.id}).")
                 cb = self._callbacks.get(hk_id.id)
                 if cb:
-                    threading.Thread(target=cb, daemon=True).start()
+                    cb()
         except Exception as exc:
             print(f"[hotkeys] Carbon dispatch error: {exc}")
         return 0  # noErr

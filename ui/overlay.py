@@ -181,6 +181,11 @@ class IconOverlay(QMainWindow):
 
         from ui.agent.task_window import make_agent_history_action, make_agent_task_action
 
+        ask_action = QAction("Ask Wisp", self)
+        ask_action.triggered.connect(lambda: self.signals.summon_caller.emit(0))
+        menu.addAction(ask_action)
+        menu.addSeparator()
+
         menu.addAction(make_agent_task_action(self, parent=self))
         menu.addAction(make_agent_history_action(self, parent=self))
         menu.addSeparator()

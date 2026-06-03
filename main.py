@@ -221,11 +221,12 @@ class App:
             return
         self._hotkey_warning_shown = True
         if sys.platform == "darwin":
-            QMessageBox.warning(
+            QMessageBox.information(
                 self._overlay,
-                "Hotkeys unavailable",
-                "Global hotkeys are unavailable because macOS Accessibility access is not enabled for Wisp.\n\n"
-                "Open System Settings > Privacy & Security > Accessibility and allow Wisp, then relaunch the app.",
+                "Summoning Wisp on macOS",
+                "Global hotkeys could not be registered in this session.\n\n"
+                "You can still summon Wisp anytime by left-clicking the floating icon, "
+                "or by choosing “Ask Wisp” from its right-click / menu bar menu.",
             )
         else:
             QMessageBox.warning(

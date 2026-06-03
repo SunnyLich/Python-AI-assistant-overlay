@@ -225,7 +225,12 @@ class HotkeyListener:
         self._on_voice_start = on_voice_start
         self._on_voice_stop  = on_voice_stop
 
-        self._impl = _Win32Impl(self._hotkey_defs) if _IS_WIN else _PynputImpl(self._hotkey_defs)
+        if _IS_WIN:
+            self._impl = _Win32Impl(self._hotkey_defs)
+        elif _IS_MAC:
+            self._impl = _CarbonImpl(self._hotkey_defs)
+        else:
+            self._impl = _PynputImpl(self._hotkey_defs)
         self._voice_listener = None
         self._voice_key      = None
 
@@ -233,7 +238,10 @@ class HotkeyListener:
         started = self._impl.start()
         if not started:
             return False
-        if config.HOTKEY_VOICE and (self._on_voice_start or self._on_voice_stop):
+        # The push-to-talk listener is a pynput keyboard tap. On macOS that tap
+        # decodes every keystroke off the main thread (HIToolbox keycode_context),
+        # which trace-traps (SIGTRAP) — same flaw as GlobalHotKeys. Skip it there.
+        if not _IS_MAC and config.HOTKEY_VOICE and (self._on_voice_start or self._on_voice_stop):
             self._start_voice_listener()
         return True
 
@@ -345,6 +353,204 @@ class _Win32Impl:
 
         for hk_id in registered:
             _user32.UnregisterHotKey(None, hk_id)
+
+
+# ---------------------------------------------------------------------------
+# macOS implementation — Carbon RegisterEventHotKey
+# ---------------------------------------------------------------------------
+#
+# pynput's GlobalHotKeys installs a CGEventTap that decodes EVERY keystroke via
+# main-thread-only HIToolbox APIs on its own background thread — that trace-traps
+# (SIGTRAP) on macOS. RegisterEventHotKey instead asks the OS to watch for one
+# specific combo and delivers a Carbon event to the application event target;
+# Qt pumps that event on the main run loop, so our handler runs on the main
+# thread. Bonus: registered hot keys need NO Accessibility permission.
+
+if _IS_MAC:
+    import ctypes
+    import ctypes.util
+
+    class _EventTypeSpec(ctypes.Structure):
+        _fields_ = [("eventClass", ctypes.c_uint32), ("eventKind", ctypes.c_uint32)]
+
+    class _EventHotKeyID(ctypes.Structure):
+        _fields_ = [("signature", ctypes.c_uint32), ("id", ctypes.c_uint32)]
+
+    # OSStatus handler(EventHandlerCallRef, EventRef, void *userData)
+    _CARBON_HANDLER = ctypes.CFUNCTYPE(
+        ctypes.c_int32, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p
+    )
+
+    def _four_char_code(s: str) -> int:
+        return (ord(s[0]) << 24) | (ord(s[1]) << 16) | (ord(s[2]) << 8) | ord(s[3])
+
+    _kEventClassKeyboard     = _four_char_code("keyb")
+    _kEventHotKeyPressed     = 6
+    _kEventParamDirectObject = _four_char_code("obj ")
+    _typeEventHotKeyID       = _four_char_code("hkid")
+
+    # Loading Carbon only works on a real macOS host. The macOS unit tests reload
+    # this module with sys.platform faked to "darwin" on Windows/Linux, where the
+    # framework is absent — degrade to None there instead of raising on import.
+    _carbon = None
+    try:
+        _carbon = ctypes.CDLL(ctypes.util.find_library("Carbon") or "Carbon")
+        _carbon.GetApplicationEventTarget.restype = ctypes.c_void_p
+        _carbon.RegisterEventHotKey.argtypes = [
+            ctypes.c_uint32, ctypes.c_uint32, _EventHotKeyID,
+            ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p),
+        ]
+        _carbon.RegisterEventHotKey.restype = ctypes.c_int32
+        _carbon.UnregisterEventHotKey.argtypes = [ctypes.c_void_p]
+        _carbon.UnregisterEventHotKey.restype = ctypes.c_int32
+        _carbon.GetEventParameter.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+            ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p,
+        ]
+        _carbon.GetEventParameter.restype = ctypes.c_int32
+        if hasattr(_carbon, "RemoveEventHandler"):
+            _carbon.RemoveEventHandler.argtypes = [ctypes.c_void_p]
+            _carbon.RemoveEventHandler.restype = ctypes.c_int32
+    except Exception as _carbon_exc:  # noqa: BLE001
+        _carbon = None
+        print(f"[hotkeys] Carbon framework unavailable: {_carbon_exc}")
+
+    # Old-style Carbon modifier masks (NOT the Cocoa CGEventFlags).
+    _CARBON_MODS: dict[str, int] = {
+        "cmd": 0x0100, "command": 0x0100, "win": 0x0100,  # cmdKey
+        "shift": 0x0200,                                   # shiftKey
+        "alt": 0x0800, "option": 0x0800,                   # optionKey
+        "ctrl": 0x1000, "control": 0x1000,                 # controlKey
+    }
+
+    # ANSI virtual keycodes (kVK_*), layout-independent.
+    _CARBON_VK: dict[str, int] = {
+        "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8,
+        "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
+        "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "9": 25,
+        "7": 26, "-": 27, "8": 28, "0": 29, "]": 30, "o": 31, "u": 32, "[": 33,
+        "i": 34, "p": 35, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42,
+        ",": 43, "/": 44, "n": 45, "m": 46, ".": 47, "`": 50,
+        "return": 36, "enter": 36, "tab": 48, "space": 49, "delete": 51,
+        "backspace": 51, "escape": 53, "esc": 53, "home": 115, "end": 119,
+        "pageup": 116, "pagedown": 121, "left": 123, "right": 124, "down": 125,
+        "up": 126,
+        **{f"f{n}": vk for n, vk in {
+            1: 122, 2: 120, 3: 99, 4: 118, 5: 96, 6: 97, 7: 98, 8: 100,
+            9: 101, 10: 109, 11: 103, 12: 111,
+        }.items()},
+    }
+
+    def _parse_hotkey_carbon(hotkey_str: str) -> tuple[int, int] | None:
+        """Return (carbon_modifiers, virtual_keycode) or None if unparseable."""
+        mods = 0
+        keycode: int | None = None
+        for part in hotkey_str.lower().split("+"):
+            part = part.strip()
+            if part in _CARBON_MODS:
+                mods |= _CARBON_MODS[part]
+            elif part in _CARBON_VK:
+                keycode = _CARBON_VK[part]
+        return (mods, keycode) if keycode is not None else None
+
+
+class _CarbonImpl:
+    def __init__(self, hotkey_defs: list[tuple[str, Callable]]):
+        self._hotkey_defs = hotkey_defs
+        self._handler_ref = ctypes.c_void_p()
+        self._hotkey_refs: list = []
+        self._callbacks: dict[int, Callable] = {}
+        self._handler_upp = None  # keep the CFUNCTYPE alive while installed
+        self._signature = _four_char_code("Wisp")
+
+    def start(self) -> bool:
+        if _carbon is None:
+            print("[hotkeys] Carbon backend unavailable; global hotkeys disabled.")
+            return False
+        target = _carbon.GetApplicationEventTarget()
+        if not target:
+            print("[hotkeys] Carbon: no application event target.")
+            return False
+
+        # One handler dispatches all of our registered hot keys.
+        self._handler_upp = _CARBON_HANDLER(self._dispatch)
+        spec = _EventTypeSpec(_kEventClassKeyboard, _kEventHotKeyPressed)
+        install = getattr(_carbon, "InstallEventHandlerUPP", None) or _carbon.InstallEventHandler
+        install.argtypes = [
+            ctypes.c_void_p, _CARBON_HANDLER, ctypes.c_uint32,
+            ctypes.POINTER(_EventTypeSpec), ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        install.restype = ctypes.c_int32
+        status = install(
+            target, self._handler_upp, 1, ctypes.byref(spec), None,
+            ctypes.byref(self._handler_ref),
+        )
+        if status != 0:
+            print(f"[hotkeys] Carbon InstallEventHandler failed (status {status}).")
+            self._handler_upp = None
+            return False
+
+        registered = 0
+        for i, (hotkey_str, cb) in enumerate(self._hotkey_defs):
+            parsed = _parse_hotkey_carbon(hotkey_str)
+            if parsed is None:
+                print(f"[hotkeys] Carbon: cannot parse {hotkey_str!r}.")
+                continue
+            mods, keycode = parsed
+            hk_id = i + 1
+            ref = ctypes.c_void_p()
+            status = _carbon.RegisterEventHotKey(
+                keycode, mods, _EventHotKeyID(self._signature, hk_id),
+                target, 0, ctypes.byref(ref),
+            )
+            if status != 0:
+                print(f"[hotkeys] Carbon RegisterEventHotKey({hotkey_str!r}) failed (status {status}).")
+                continue
+            self._callbacks[hk_id] = cb
+            self._hotkey_refs.append(ref)
+            registered += 1
+
+        if registered == 0:
+            print("[hotkeys] Carbon: no hotkeys registered.")
+            self.stop()
+            return False
+        print(f"[hotkeys] Registered {registered} hotkey(s) via Carbon RegisterEventHotKey.")
+        return True
+
+    def _dispatch(self, _next_handler, event, _user_data) -> int:
+        # Runs on the main thread (Qt's run loop). Offload to a daemon thread so
+        # the blocking caller work (clipboard copy, network) never stalls the UI,
+        # mirroring the Win32 backend.
+        try:
+            hk_id = _EventHotKeyID()
+            status = _carbon.GetEventParameter(
+                event, _kEventParamDirectObject, _typeEventHotKeyID, None,
+                ctypes.sizeof(hk_id), None, ctypes.byref(hk_id),
+            )
+            if status == 0 and hk_id.signature == self._signature:
+                cb = self._callbacks.get(hk_id.id)
+                if cb:
+                    threading.Thread(target=cb, daemon=True).start()
+        except Exception as exc:
+            print(f"[hotkeys] Carbon dispatch error: {exc}")
+        return 0  # noErr
+
+    def stop(self) -> None:
+        for ref in self._hotkey_refs:
+            try:
+                _carbon.UnregisterEventHotKey(ref)
+            except Exception:
+                pass
+        self._hotkey_refs = []
+        self._callbacks = {}
+        if self._handler_ref and hasattr(_carbon, "RemoveEventHandler"):
+            try:
+                _carbon.RemoveEventHandler(self._handler_ref)
+            except Exception:
+                pass
+        self._handler_ref = ctypes.c_void_p()
+        self._handler_upp = None
 
 
 # ---------------------------------------------------------------------------

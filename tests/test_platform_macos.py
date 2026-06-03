@@ -147,6 +147,18 @@ class MacHotkeyTests(unittest.TestCase):
             ["<cmd>+<shift>+q"],
         )
 
+    def test_carbon_hotkey_parser_maps_modifiers_and_keycode(self):
+        # cmdKey=0x100, shiftKey=0x200, controlKey=0x1000; 'q' is virtual keycode 12.
+        self.assertEqual(
+            self.hotkeys._parse_hotkey_carbon("ctrl+shift+q"),
+            (0x1000 | 0x200, 12),
+        )
+        # 'cmd'/'win' both map to cmdKey; space is keycode 49.
+        self.assertEqual(self.hotkeys._parse_hotkey_carbon("cmd+space"), (0x100, 49))
+
+    def test_carbon_hotkey_parser_rejects_modifier_only(self):
+        self.assertIsNone(self.hotkeys._parse_hotkey_carbon("ctrl+shift"))
+
     def test_accessibility_check_uses_application_services_trust(self):
         class FakeAppServices:
             def __init__(self):

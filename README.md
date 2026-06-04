@@ -16,6 +16,23 @@ Press `Ctrl+Q`. Wisp reads what's on your screen, thinks out loud, and answers i
 
 ---
 
+## Quick start
+
+Download the repo and **double-click one file**:
+
+- **macOS / Linux** — `Start Wisp.command`
+- **Windows** — `Start Wisp.bat`
+
+The first time, it installs everything Wisp needs (a local `.venv` built from
+`requirements.txt`) and then starts the app. Every time after, it just launches.
+That's the whole setup.
+
+> Requires **Python 3.12** (pinned in `.python-version`). The launcher finds it
+> automatically — install via [pyenv](https://github.com/pyenv/pyenv)
+> (`pyenv install 3.12.13`) on macOS, or from [python.org](https://www.python.org/downloads/release/python-31213/) on Windows.
+
+---
+
 ## What it does
 
 Wisp lives as a small animated icon in the corner of your screen — always on top, never in your way. Hit the hotkey and a slick intent picker drops in. Pick an action or type your own, and Wisp immediately:

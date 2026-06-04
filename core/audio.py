@@ -240,6 +240,21 @@ def _stream_and_play_chunks(text_chunks, on_done: callable | None,
                             on_audio_start: callable | None,
                             on_word_timestamps: callable | None,
                             on_amplitude: callable | None):
+    provider = config.TTS_PROVIDER.lower()
+    if provider == "none":
+        # No audio device should be opened in text-only mode. On macOS, even an
+        # unused PortAudio stream can enter CoreAudio and crash under Qt/Cocoa.
+        if on_audio_start:
+            try:
+                on_audio_start()
+            except Exception:
+                pass
+        for _ in text_chunks:
+            pass
+        if on_done:
+            on_done()
+        return
+
     chunk_q: queue.Queue[bytes | None] = queue.Queue()
 
     # Register this playback as the current one so stop() can abort it.
@@ -265,7 +280,6 @@ def _stream_and_play_chunks(text_chunks, on_done: callable | None,
     # Derive playback params from the configured provider so that ElevenLabs
     # (22050 Hz int16) and Cartesia (44100 Hz float32) both play correctly,
     # regardless of which was used last.
-    provider = config.TTS_PROVIDER.lower()
     if provider == "elevenlabs":
         sample_rate = tts_module._EL_SAMPLE_RATE
         channels    = tts_module.CHANNELS

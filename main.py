@@ -943,9 +943,6 @@ class App(QObject):
                 self._signals.bubble_schedule_words.emit(words, start_ms)
 
         def tts_consumer():
-            if config.TTS_PROVIDER.lower() == "none":
-                on_audio_start()
-
             def _on_done():
                 self._last_reply = reply_text
                 if self._generations.is_current(gen_id):

@@ -101,6 +101,34 @@ class AudioStreamTests(unittest.TestCase):
         self._run([_pcm()], stream)
         self.assertIsNone(audio._current_stop_event)
 
+    def test_tts_none_drains_text_without_opening_audio_stream(self):
+        started = []
+        done = []
+        drained = []
+
+        def text_chunks():
+            drained.append("a")
+            yield "hello"
+            drained.append("b")
+            yield " world"
+
+        with mock.patch.object(config, "TTS_PROVIDER", "none"), \
+             mock.patch.object(audio.sd, "RawOutputStream",
+                               side_effect=AssertionError("no audio stream in TTS=none")), \
+             mock.patch.object(tts_module, "stream_audio_from_chunks",
+                               side_effect=AssertionError("audio TTS generator should not run")):
+            audio._stream_and_play_chunks(
+                text_chunks(),
+                on_done=lambda: done.append(1),
+                on_audio_start=lambda: started.append(1),
+                on_word_timestamps=None,
+                on_amplitude=None,
+            )
+
+        self.assertEqual(drained, ["a", "b"])
+        self.assertEqual(started, [1])
+        self.assertEqual(done, [1])
+
 
 class FillerPrecacheTests(unittest.TestCase):
     def test_prewarm_decodes_wavs_into_memory(self):

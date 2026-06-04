@@ -16,6 +16,9 @@ secrets.*
 doll/
 tmp_debug_agent/
 
+# Local planning docs (living, not for VCS)
+MACOS_NATIVE_PLAN.md
+
 # Memory (vector store + fallback JSON; contains personal user data)
 memory/
 !memory/.gitkeep

@@ -520,11 +520,15 @@ class _CarbonImpl:
         return True
 
     def _dispatch(self, _next_handler, event, _user_data) -> int:
-        # Runs on the main thread (Qt's run loop). Unlike the Win32 backend we do
-        # NOT offload to a daemon thread: on macOS the callbacks touch AppKit/Quartz
-        # (get_selected_text synthesises ⌘C, get_foreground_window queries Quartz),
-        # which trace-trap (SIGTRAP) off the main thread. The caller callbacks just
-        # emit a Qt signal, so running them here on the main thread is cheap.
+        # This handler runs in the HIToolbox Carbon event-dispatch context on the
+        # main thread. Offload the callback to a daemon thread (mirroring the Win32
+        # backend) — do NOT run it inline here: the callbacks do heavy/blocking work
+        # (STT, LLM streaming, screen capture) and touch CoreAudio/AppKit/Quartz, and
+        # re-entering those native frameworks from inside the Carbon callback (rather
+        # than cleanly on the run loop) segfaults. The individual native sub-ops are
+        # already hopped onto the main thread by core.system.main_thread.run_on_main
+        # (see core.platform_utils / core.capture / core.stt), so running the callback
+        # on a worker thread is safe — the main-thread-only work still lands on main.
         try:
             hk_id = _EventHotKeyID()
             status = _carbon.GetEventParameter(
@@ -535,7 +539,7 @@ class _CarbonImpl:
                 print(f"[hotkeys] Carbon hotkey fired (id={hk_id.id}).")
                 cb = self._callbacks.get(hk_id.id)
                 if cb:
-                    cb()
+                    threading.Thread(target=cb, daemon=True).start()
         except Exception as exc:
             print(f"[hotkeys] Carbon dispatch error: {exc}")
         return 0  # noErr

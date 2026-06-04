@@ -1,18 +1,12 @@
 import AppKit
 
-// Executable entry point. `.accessory` keeps Wisp out of the Dock / app switcher
-// (a menubar + floating-overlay assistant, not a windowed app).
-@main
-@MainActor
-enum WispMain {
-    private static var delegate: AppDelegate?
-
-    static func main() {
-        let app = NSApplication.shared
-        let appDelegate = AppDelegate()
-        delegate = appDelegate
-        app.delegate = appDelegate
-        app.setActivationPolicy(.accessory)
-        app.run()
-    }
+// SwiftPM treats a file named `main.swift` as the executable's top-level entry
+// point. Keep this as top-level code and explicitly enter MainActor before
+// touching AppKit or constructing the main-actor app delegate.
+MainActor.assumeIsolated {
+    let app = NSApplication.shared
+    let delegate = AppDelegate()
+    app.delegate = delegate
+    app.setActivationPolicy(.accessory)
+    app.run()
 }

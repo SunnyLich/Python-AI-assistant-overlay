@@ -26,3 +26,14 @@ def test_memory_manager_tolerates_storage_directory_creation_failure():
 
     assert manager._collection is None
     assert manager._chroma_ok is False
+
+
+def test_macos_memory_uses_json_fallback_when_safe_mode_is_disabled():
+    with patch.object(store.macos_safety.sys, "platform", "darwin"), \
+         patch.dict(store.macos_safety.os.environ, {"WISP_MACOS_SAFE_MODE": "0"}, clear=True), \
+         patch.object(store.os, "makedirs", return_value=None), \
+         patch.object(store.MemoryManager, "_sync_consolidation_timer", autospec=True, return_value=None):
+        manager = store.MemoryManager()
+
+    assert manager._collection is None
+    assert manager._chroma_ok is False

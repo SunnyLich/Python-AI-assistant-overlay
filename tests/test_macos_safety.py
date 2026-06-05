@@ -24,8 +24,8 @@ class MacOSSafetyTests(unittest.TestCase):
             self.assertFalse(macos_safety.safe_mode_enabled())
             self.assertTrue(macos_safety.audio_enabled())
             self.assertTrue(macos_safety.fs_watcher_enabled())
-            self.assertTrue(macos_safety.chromadb_enabled())
-            self.assertTrue(macos_safety.memory_background_llm_enabled())
+            self.assertFalse(macos_safety.chromadb_enabled())
+            self.assertFalse(macos_safety.memory_background_llm_enabled())
             self.assertTrue(macos_safety.openai_compat_streaming_enabled("openai"))
             self.assertTrue(macos_safety.openai_compat_tools_enabled())
 

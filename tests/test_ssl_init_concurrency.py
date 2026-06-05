@@ -183,6 +183,36 @@ class DynamicClientCachingTests(unittest.TestCase):
         self.assertEqual(llm._dynamic_openai_clients, {})
         self.assertIsNone(llm._dynamic_anthropic_client_cache)
 
+    def test_stdlib_openai_compat_request_runs_under_native_lock(self):
+        probe = self
+
+        class _FakeResponse:
+            def __init__(self):
+                self.headers = {"Content-Encoding": ""}
+
+            def read(self):
+                probe.assertTrue(native_locks._ssl_init_lock.locked())
+                return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakeOpener:
+            def open(self, _request, timeout=0):
+                return _FakeResponse()
+
+        with mock.patch.object(native_locks, "_IS_MAC", True), \
+             mock.patch.object(llm, "_openai_compat_base_url", return_value="https://example.test"), \
+             mock.patch.object(llm, "_openai_compat_api_key", return_value="k"), \
+             mock.patch("urllib.request.build_opener", return_value=_FakeOpener()):
+            self.assertEqual(
+                llm._openai_compat_stdlib_completion_text("google", {"model": "m", "messages": []}),
+                "ok",
+            )
+
 
 class PrewarmTests(unittest.TestCase):
     def setUp(self):

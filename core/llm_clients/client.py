@@ -14,7 +14,7 @@ import config
 from pathlib import Path
 from core.tool_registry import ToolRegistry, ToolSpec
 from core.system import macos_safety
-from core.system.native_locks import ssl_init_lock
+from core.system.native_locks import native_init_lock, ssl_init_lock
 from core.system import sdk_clients
 from core.llm_clients.routes import (
     GOOGLE_OPENAI_BASE_URL as _GOOGLE_OPENAI_BASE_URL,
@@ -889,47 +889,51 @@ def _openai_compat_stdlib_completion_text(provider: str, kwargs: dict) -> str:
     import urllib.error
     import urllib.request
 
-    base_url = _openai_compat_base_url(provider).rstrip("/")
-    if not base_url:
-        raise ValueError(f"No OpenAI-compatible base URL configured for {provider!r}")
-    api_key = _openai_compat_api_key(provider)
-    url = f"{base_url}/chat/completions"
-    body = _json.dumps(kwargs).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
-    if api_key and provider != "ollama":
-        headers["Authorization"] = f"Bearer {api_key}"
-    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    try:
-        with opener.open(request, timeout=60) as response:
-            raw = response.read()
-            encoding = response.headers.get("Content-Encoding", "")
-    except urllib.error.HTTPError as exc:
-        raw = exc.read()
-        encoding = exc.headers.get("Content-Encoding", "") if exc.headers else ""
+    def _request_completion() -> str:
+        base_url = _openai_compat_base_url(provider).rstrip("/")
+        if not base_url:
+            raise ValueError(f"No OpenAI-compatible base URL configured for {provider!r}")
+        api_key = _openai_compat_api_key(provider)
+        url = f"{base_url}/chat/completions"
+        body = _json.dumps(kwargs).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if api_key and provider != "ollama":
+            headers["Authorization"] = f"Bearer {api_key}"
+        request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        try:
+            with opener.open(request, timeout=60) as response:
+                raw = response.read()
+                encoding = response.headers.get("Content-Encoding", "")
+        except urllib.error.HTTPError as exc:
+            raw = exc.read()
+            encoding = exc.headers.get("Content-Encoding", "") if exc.headers else ""
+            if "gzip" in encoding.lower() and raw:
+                raw = gzip.decompress(raw)
+            message = raw.decode("utf-8", errors="replace") if raw else str(exc)
+            raise RuntimeError(f"Error code: {exc.code} - {message}") from exc
         if "gzip" in encoding.lower() and raw:
             raw = gzip.decompress(raw)
-        message = raw.decode("utf-8", errors="replace") if raw else str(exc)
-        raise RuntimeError(f"Error code: {exc.code} - {message}") from exc
-    if "gzip" in encoding.lower() and raw:
-        raw = gzip.decompress(raw)
-    payload = _json.loads(raw.decode("utf-8"))
-    choices = payload.get("choices") or []
-    if not choices:
-        return ""
-    message = choices[0].get("message") or {}
-    content = message.get("content") or ""
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                parts.append(str(item.get("text") or ""))
-            else:
-                parts.append(str(getattr(item, "text", "") or ""))
-        return "".join(parts).strip()
-    return str(content).strip()
+        payload = _json.loads(raw.decode("utf-8"))
+        choices = payload.get("choices") or []
+        if not choices:
+            return ""
+        message = choices[0].get("message") or {}
+        content = message.get("content") or ""
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    parts.append(str(item.get("text") or ""))
+                else:
+                    parts.append(str(getattr(item, "text", "") or ""))
+            return "".join(parts).strip()
+        return str(content).strip()
+
+    with native_init_lock():
+        return _request_completion()
 
 
 # Per-provider cache for the route/fallback clients. Building these on every

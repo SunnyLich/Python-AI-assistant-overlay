@@ -169,3 +169,97 @@ def paste_text(text: str, paste_combo: str = "cmd+v", *, settle_seconds: float =
         return False
     time.sleep(max(0.0, settle_seconds))
     return send_key_combo(paste_combo)
+
+
+def list_document_windows() -> list[dict]:
+        """Return visible app windows via System Events in a separate process.
+
+        Each row contains: {process_name, pid, frontmost, title}. The document
+        scanner uses this instead of driving AppKit/Quartz in-process.
+        """
+        if not IS_MAC:
+                return []
+        script = r'''
+const se = Application("System Events");
+let frontName = "";
+try {
+    const front = se.applicationProcesses.whose({ frontmost: true })();
+    if (front.length) {
+        frontName = String(front[0].name() || "");
+    }
+} catch (e) {}
+let processes = [];
+try {
+    processes = se.applicationProcesses.whose({ backgroundOnly: false })();
+} catch (e) {}
+const rows = [];
+for (const proc of processes) {
+    let procName = "";
+    let pid = 0;
+    try {
+        procName = String(proc.name() || "");
+        pid = Number(proc.unixId() || 0);
+    } catch (e) {
+        continue;
+    }
+    let titles = [];
+    try {
+        titles = proc.windows.name();
+    } catch (e) {
+        titles = [];
+    }
+    for (const rawTitle of titles) {
+        const title = String(rawTitle || "");
+        if (!title) {
+            continue;
+        }
+        rows.push({
+            process_name: procName,
+            pid: pid,
+            frontmost: procName === frontName,
+            title: title,
+        });
+    }
+}
+JSON.stringify(rows);
+'''
+        try:
+                result = subprocess.run(
+                        ["/usr/bin/osascript", "-l", "JavaScript", "-e", script],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        timeout=3.0,
+                        check=False,
+                )
+        except Exception:
+                return []
+        if result.returncode != 0:
+                return []
+        try:
+                rows = json.loads(result.stdout or "[]")
+        except Exception:
+                return []
+        if not isinstance(rows, list):
+                return []
+        parsed: list[dict] = []
+        for row in rows:
+                if not isinstance(row, dict):
+                        continue
+                process_name = str(row.get("process_name") or "").strip()
+                title = str(row.get("title") or "").strip()
+                if not process_name or not title:
+                        continue
+                try:
+                        pid = int(row.get("pid") or 0)
+                except Exception:
+                        pid = 0
+                parsed.append(
+                        {
+                                "process_name": process_name,
+                                "pid": pid,
+                                "frontmost": bool(row.get("frontmost")),
+                                "title": title,
+                        }
+                )
+        return parsed

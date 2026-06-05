@@ -48,6 +48,21 @@ class MacosNativeHelperTests(unittest.TestCase):
         set_clip.assert_called_once_with("hello")
         send.assert_called_once_with("cmd+v")
 
+    def test_list_document_windows_parses_jxa_json(self):
+        result = types.SimpleNamespace(
+            returncode=0,
+            stdout='[{"process_name":"TextEdit","pid":123,"frontmost":true,"title":"Notes.txt - TextEdit"}]',
+            stderr="",
+        )
+        with mock.patch.object(macos_native, "IS_MAC", True), \
+             mock.patch.object(macos_native.subprocess, "run", return_value=result) as run:
+            rows = macos_native.list_document_windows()
+        self.assertEqual(
+            rows,
+            [{"process_name": "TextEdit", "pid": 123, "frontmost": True, "title": "Notes.txt - TextEdit"}],
+        )
+        self.assertEqual(run.call_args.args[0][:3], ["/usr/bin/osascript", "-l", "JavaScript"])
+
 
 if __name__ == "__main__":
     unittest.main()

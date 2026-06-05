@@ -62,6 +62,7 @@ _IS_MAC = sys.platform == "darwin"
 class WindowInfo:
     title: str = ""
     process_name: str = ""
+    pid: int = 0
     exe_path: str = ""
     url: str = ""          # browser address-bar URL if detectable
 
@@ -414,6 +415,7 @@ def _fetch_active_window_win() -> WindowInfo:
 
         pid = ctypes.wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        info.pid = pid.value
         try:
             import psutil
             proc = psutil.Process(pid.value)
@@ -443,6 +445,7 @@ def _fetch_active_window_linux() -> WindowInfo:
             return info
         info.title = get_window_title(wid)
         pid = get_window_pid(wid)
+        info.pid = pid
         if pid:
             try:
                 import psutil
@@ -900,6 +903,10 @@ _DOC_APP_TITLE_SUFFIXES: list[str] = [
     " - WPS Spreadsheet",
     " - WPS Presentation",
     # Plain text / Markdown editors
+    " - TextEdit",
+    " - CotEditor",
+    " - BBEdit",
+    " - TextMate",
     " - Notepad",
     " - Notepad++",
     " - Sublime Text",
@@ -909,6 +916,8 @@ _DOC_APP_TITLE_SUFFIXES: list[str] = [
     " - GNU Emacs",
     " - GVIM",
     # PDF viewers / editors
+    " - Preview",
+    " - Skim",
     " - Adobe Acrobat",
     " - Adobe Reader",
     " - Foxit PDF Reader",
@@ -923,6 +932,10 @@ _DOC_APP_TITLE_SUFFIXES: list[str] = [
     " - GNU Image Manipulation Program",  # GIMP
     " - draw.io",
     " - Blender",
+    # Apple productivity apps
+    " - Pages",
+    " - Numbers",
+    " - Keynote",
     # VS Code family  (Insiders must come before plain VS Code)
     " - Visual Studio Code - Insiders",
     " - Visual Studio Code",
@@ -1324,6 +1337,11 @@ def _resolve_doc_path(win: WindowInfo) -> str:
                 return jb_path
             # Fall through to generic recent-files lookup below
 
+        if _IS_MAC and win.pid:
+            mac_path = _mac_match_open_file(win.pid, doc_name)
+            if mac_path:
+                return mac_path
+
         # If it looks like an absolute path already, trust it.
         if os.path.isfile(doc_name):
             return doc_name
@@ -1361,7 +1379,11 @@ def _enumerate_open_doc_windows() -> list[WindowInfo]:
     Return a WindowInfo for every visible top-level window whose title matches
     a known doc-app suffix or the Obsidian version pattern.
     """
-    return _enumerate_open_doc_windows_win() if _IS_WIN else _enumerate_open_doc_windows_linux()
+    if _IS_WIN:
+        return _enumerate_open_doc_windows_win()
+    if _IS_MAC:
+        return _enumerate_open_doc_windows_macos()
+    return _enumerate_open_doc_windows_linux()
 
 
 def _enumerate_open_doc_windows_win() -> list[WindowInfo]:
@@ -1392,7 +1414,7 @@ def _enumerate_open_doc_windows_win() -> list[WindowInfo]:
             proc_name = psutil.Process(pid.value).name()
         except Exception:
             pass
-        win = WindowInfo(title=title, process_name=proc_name)
+        win = WindowInfo(title=title, process_name=proc_name, pid=pid.value)
         if _extract_doc_name_from_window(win):
             results.append(win)
         return True
@@ -1418,12 +1440,106 @@ def _enumerate_open_doc_windows_linux() -> list[WindowInfo]:
                     proc_name = psutil.Process(pid).name()
                 except Exception:
                     pass
-            win = WindowInfo(title=title, process_name=proc_name)
+            win = WindowInfo(title=title, process_name=proc_name, pid=pid)
             if _extract_doc_name_from_window(win):
                 results.append(win)
         except Exception:
             pass
     return results
+
+
+def _enumerate_open_doc_windows_macos() -> list[WindowInfo]:
+    from core.platform import macos_native
+
+    results: list[WindowInfo] = []
+    rows = macos_native.list_document_windows()
+    rows.sort(key=lambda row: (not bool(row.get("frontmost")), str(row.get("title") or "")))
+    seen: set[tuple[int, str]] = set()
+    for row in rows:
+        title = str(row.get("title") or "").strip()
+        if not title:
+            continue
+        try:
+            pid = int(row.get("pid") or 0)
+        except Exception:
+            pid = 0
+        proc_name = ""
+        if pid:
+            try:
+                import psutil
+                proc_name = psutil.Process(pid).name()
+            except Exception:
+                proc_name = ""
+        if not proc_name:
+            proc_name = str(row.get("process_name") or "")
+        key = (pid, title)
+        if key in seen:
+            continue
+        seen.add(key)
+        win = WindowInfo(title=title, process_name=proc_name, pid=pid)
+        if _extract_doc_name_from_window(win):
+            results.append(win)
+    return results
+
+
+def _mac_open_files_for_pid(pid: int) -> list[str]:
+    if not _IS_MAC or pid <= 0:
+        return []
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["/usr/sbin/lsof", "-Fn", "-p", str(pid)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except Exception:
+        return []
+    if result.returncode not in (0, 1):
+        return []
+    paths: list[str] = []
+    seen: set[str] = set()
+    for line in (result.stdout or "").splitlines():
+        if not line.startswith("n"):
+            continue
+        path = line[1:].strip()
+        if not path or not path.startswith("/"):
+            continue
+        if path in seen or not os.path.isfile(path):
+            continue
+        seen.add(path)
+        paths.append(path)
+    return paths
+
+
+def _mac_match_open_file(pid: int, doc_name: str) -> str:
+    candidates = _mac_open_files_for_pid(pid)
+    if not candidates:
+        return ""
+    target = os.path.basename((doc_name or "").strip()).lower()
+    if not target:
+        return ""
+    target_stem = os.path.splitext(target)[0]
+    exact: list[str] = []
+    stem_matches: list[str] = []
+    partial: list[str] = []
+    for path in candidates:
+        name = os.path.basename(path).lower()
+        stem = os.path.splitext(name)[0]
+        path_lower = path.lower()
+        if name == target or path_lower == target:
+            exact.append(path)
+        elif stem == target_stem:
+            stem_matches.append(path)
+        elif target in path_lower or (target_stem and target_stem in stem):
+            partial.append(path)
+    for group in (exact, stem_matches, partial):
+        if group:
+            return group[0]
+    return ""
 
 
 def get_all_open_document_paths(max_docs: int = 5) -> list[str]:

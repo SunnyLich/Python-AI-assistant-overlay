@@ -1,8 +1,8 @@
 # Wisp Code Overview
 
-Wisp is a Windows-first desktop assistant. The app is organized around a small
-PyQt overlay, global hotkeys, context capture, model routing, streaming audio,
-and local memory.
+Wisp is a cross-platform desktop assistant with one shared Python/Qt product UI
+on Windows and macOS. The app is organized around a small overlay, global
+hotkeys, context capture, model routing, streaming audio, and local memory.
 
 ## Top-Level Layout
 
@@ -22,7 +22,7 @@ and local memory.
   parsing for LLM requests.
 - `core/memory_store/` contains memory storage and explicit memory-command
   parsing.
-- `ui/` contains PyQt widgets and dialogs: the icon overlay, chat window,
+- `ui/` contains Qt widgets and dialogs: the icon overlay, chat window,
   settings, intent picker, snip overlay, memory viewer, and agent task UI.
 - `ui/agent/`, `ui/settings_panel/`, and `ui/shared/` group the largest UI
   domains and shared widget helpers.

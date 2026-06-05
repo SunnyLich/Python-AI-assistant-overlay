@@ -8,8 +8,8 @@
 
 Press `Ctrl+Q`. Wisp reads what's on your screen, thinks out loud, and answers in under two seconds — spoken aloud, word by word, right where you're working. No switching apps. No copy-pasting. No waiting.
 
-[![Platform](https://img.shields.io/badge/platform-Windows%2011%20%C2%B7%20Linux-555?style=flat-square)](#install)
-[![Python](https://img.shields.io/badge/python-3.10%2B-3572A5?style=flat-square)](#install)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-555?style=flat-square)](#install)
+[![Python](https://img.shields.io/badge/python-3.12%2B-3572A5?style=flat-square)](#install)
 [![License](https://img.shields.io/badge/license-MIT-9F7AEA?style=flat-square)](LICENSE)
 
 </div>
@@ -23,9 +23,9 @@ Download the repo and **double-click one file**:
 - **macOS / Linux** — `Start Wisp.command`
 - **Windows** — `Start Wisp.bat`
 
-The first time, it installs everything Wisp needs (a local `.venv` built from
-`requirements.txt`) and then starts the app. Every time after, it just launches.
-That's the whole setup.
+The first time, it installs everything Wisp needs and then starts the app. On
+macOS the launcher uses `requirements-macos.lock`; Windows and Linux use
+`requirements.txt`. Every time after, it just launches. That's the whole setup.
 
 > Requires **Python 3.12** (pinned in `.python-version`). The launcher finds it
 > automatically — install via [pyenv](https://github.com/pyenv/pyenv)
@@ -93,7 +93,7 @@ Wisp: "That's a CAPTCHA verification step — click the checkbox
 
 ## Install
 
-**Requirements:** Python 3.10+, Windows 11 or Linux (X11)
+**Requirements:** Python 3.12+, Windows 10/11, macOS, or Linux (X11)
 
 ```bash
 git clone https://github.com/your-org/wisp.git
@@ -245,7 +245,7 @@ On every query, the top-k most relevant facts are pulled by semantic similarity 
 | Windows 10 | Supported |
 | Linux (X11) | Functional; no native tray integration |
 | Linux (Wayland) | In progress |
-| macOS | Stubs only; not usable yet |
+| macOS | Shared Qt UI parity in progress; platform-specific backend paths live under `core/platform*` |
 
 ---
 

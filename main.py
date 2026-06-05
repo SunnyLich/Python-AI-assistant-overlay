@@ -875,6 +875,21 @@ class App(QObject):
         reply_text = ""
         llm_chunk_q: queue.Queue[str | None] = queue.Queue()
         parser = ThoughtStreamParser()
+        text_only_playback = (
+            config.TTS_PROVIDER.lower() == "none"
+            or not macos_safety.audio_enabled()
+        )
+
+        def finish_text_only_response():
+            self._last_reply = reply_text
+            if not self._generations.is_current(gen_id):
+                return
+            if not reply_text:
+                self._signals.bubble_chunk.emit(
+                    "⚠️ No reply from model. Check model name / API key in Settings.", False
+                )
+            self._signals.bubble_finish.emit()
+            self._set_idle()
 
         def llm_producer():
             nonlocal full_text, reply_text
@@ -929,8 +944,16 @@ class App(QObject):
                 assistant_msg["content"] = reply_text
                 if full_text != reply_text:
                     assistant_msg["display_content"] = full_text
-                self._memory.record_turn(user_message, reply_text, ambient_ctx)
-                self._plugin_manager.after_response(reply_text)
+                try:
+                    self._memory.record_turn(user_message, reply_text, ambient_ctx)
+                except Exception:
+                    log.exception("memory.record_turn crashed (gen_id=%d)", gen_id)
+                try:
+                    self._plugin_manager.after_response(reply_text)
+                except Exception:
+                    log.exception("plugin after_response dispatch crashed (gen_id=%d)", gen_id)
+            if text_only_playback:
+                finish_text_only_response()
 
         def llm_chunk_iter():
             while True:
@@ -978,7 +1001,8 @@ class App(QObject):
                 self._finish_idle(gen_id)
 
         threading.Thread(target=llm_producer, daemon=True).start()
-        threading.Thread(target=tts_consumer, daemon=True).start()
+        if not text_only_playback:
+            threading.Thread(target=tts_consumer, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Icon click â†' show popup

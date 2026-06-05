@@ -126,7 +126,7 @@ class AudioStreamTests(unittest.TestCase):
             )
 
         self.assertEqual(drained, ["a", "b"])
-        self.assertEqual(started, [1])
+        self.assertEqual(started, [])
         self.assertEqual(done, [1])
 
     def test_macos_audio_disabled_drains_text_without_opening_stream(self):

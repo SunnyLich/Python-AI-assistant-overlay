@@ -296,11 +296,6 @@ def _stream_and_play_chunks(text_chunks, on_done: callable | None,
     if provider == "none":
         # No audio device should be opened in text-only mode. On macOS, even an
         # unused PortAudio stream can enter CoreAudio and crash under Qt/Cocoa.
-        if on_audio_start:
-            try:
-                on_audio_start()
-            except Exception:
-                pass
         for _ in text_chunks:
             pass
         if on_done:

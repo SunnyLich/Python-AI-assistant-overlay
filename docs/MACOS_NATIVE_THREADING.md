@@ -43,6 +43,11 @@ Known protected boundaries:
   segfault during `stream=True`; set `WISP_MACOS_OPENAI_COMPAT_STREAMING=1` only
   while validating a fix. Live OpenAI-compatible context tools are separately
   gated behind `WISP_MACOS_ENABLE_OPENAI_TOOLS=1`.
+- `core.memory_store.store`: ChromaDB-backed semantic memory and background
+  memory LLM jobs are disabled in macOS safe mode. The memory UI and explicit
+  facts still work through the plain JSON fallback; set `WISP_MACOS_ENABLE_CHROMADB=1`
+  or `WISP_MACOS_ENABLE_MEMORY_BACKGROUND_LLM=1` only while validating those
+  native/background paths.
 
 When adding a new provider SDK or native macOS API, wrap the smallest possible
 construction/access block. Do not hold the lock for a full streaming response

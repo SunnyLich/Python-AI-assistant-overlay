@@ -117,3 +117,7 @@ intact while routing crash-prone backend work through conservative paths. Set
   or `WISP_MACOS_ENABLE_STT_PREWARM=1` is set.
 - The optional background filesystem watcher is disabled in safe mode; set
   `WISP_MACOS_ENABLE_FS_WATCHER=1` only when validating watchdog on macOS.
+- ChromaDB-backed semantic memory and background memory LLM jobs are disabled in
+  safe mode; memory falls back to plain JSON storage. Set
+  `WISP_MACOS_ENABLE_CHROMADB=1` or
+  `WISP_MACOS_ENABLE_MEMORY_BACKGROUND_LLM=1` only while validating those paths.

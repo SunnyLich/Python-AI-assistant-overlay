@@ -36,6 +36,7 @@ from typing import Optional
 
 import config
 from core.system.paths import MEMORY_DIR
+from core.system import macos_safety
 from core.system.native_locks import ssl_init_lock
 
 try:
@@ -203,6 +204,11 @@ class MemoryManager:
     # ------------------------------------------------------------------
 
     def _init_chromadb(self) -> None:
+        if not macos_safety.chromadb_enabled():
+            print("[memory] chromadb disabled in macOS safe mode - using plain JSON fallback.")
+            self._chroma_ok = False
+            self._collection = None
+            return
         try:
             import chromadb
             from chromadb.utils import embedding_functions
@@ -255,7 +261,11 @@ class MemoryManager:
                 for t in raw
             )
             over_budget = total > config.MEMORY_STM_TOKEN_BUDGET
-            launch_compression = not self._compressing and over_budget
+            launch_compression = (
+                not self._compressing
+                and over_budget
+                and macos_safety.memory_background_llm_enabled()
+            )
             if launch_compression:
                 self._compressing = True
 
@@ -486,6 +496,8 @@ class MemoryManager:
 
     def _schedule_consolidation(self) -> None:
         if not config.MEMORY_AUTO_CONSOLIDATE:
+            return
+        if not macos_safety.memory_background_llm_enabled():
             return
         interval_s = config.MEMORY_CONSOLIDATION_INTERVAL * 60
         self._consolidation_timer = threading.Timer(

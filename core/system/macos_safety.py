@@ -52,6 +52,16 @@ def fs_watcher_enabled() -> bool:
     return (not safe_mode_enabled()) or _env_true("WISP_MACOS_ENABLE_FS_WATCHER")
 
 
+def chromadb_enabled() -> bool:
+    """ChromaDB loads native/vector dependencies; keep it opt-in in safe mode."""
+    return (not safe_mode_enabled()) or _env_true("WISP_MACOS_ENABLE_CHROMADB")
+
+
+def memory_background_llm_enabled() -> bool:
+    """Background memory summarization is useful, but not needed for prompt flow."""
+    return (not safe_mode_enabled()) or _env_true("WISP_MACOS_ENABLE_MEMORY_BACKGROUND_LLM")
+
+
 def openai_compat_streaming_enabled(provider: str = "") -> bool:
     """OpenAI-compatible streaming is opt-in on macOS safe mode.
 

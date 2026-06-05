@@ -130,8 +130,15 @@ class LlmFallbackTests(unittest.TestCase):
         class FakeClient:
             chat = FakeChat()
 
+        stdlib_calls = []
+
+        def fake_stdlib(provider, kwargs):
+            stdlib_calls.append((provider, kwargs))
+            return "hello"
+
         with patch.object(llm.macos_safety.sys, "platform", "darwin"), \
-             patch.dict(llm.macos_safety.os.environ, {}, clear=True):
+             patch.dict(llm.macos_safety.os.environ, {}, clear=True), \
+             patch.object(llm, "_openai_compat_stdlib_completion_text", side_effect=fake_stdlib):
             chunks = list(
                 llm._stream_openai_compat(
                     "hi",
@@ -144,8 +151,32 @@ class LlmFallbackTests(unittest.TestCase):
             )
 
         self.assertEqual(chunks, ["hello"])
-        self.assertEqual(calls[0]["stream"], False)
-        self.assertNotIn("tools", calls[0])
+        self.assertEqual(calls, [])
+        self.assertEqual(stdlib_calls[0][0], "openai")
+        self.assertEqual(stdlib_calls[0][1]["stream"], False)
+        self.assertNotIn("tools", stdlib_calls[0][1])
+
+    def test_macos_openai_compat_route_skips_sdk_client_construction(self):
+        with patch.object(llm.macos_safety.sys, "platform", "darwin"), \
+             patch.dict(llm.macos_safety.os.environ, {}, clear=True), \
+             patch.object(llm, "_check_route_config"), \
+             patch.object(llm, "_dynamic_openai_client",
+                          side_effect=AssertionError("no SDK client in macOS safe mode")), \
+             patch.object(llm, "_openai_compat_stdlib_completion_text", return_value="ok"):
+            chunks = list(
+                llm._stream_single_response_route(
+                    "google",
+                    "gemini-3.5-flash",
+                    "hi",
+                    None,
+                    "",
+                    "",
+                    use_tools=False,
+                    route_name="LLM",
+                )
+            )
+
+        self.assertEqual(chunks, ["ok"])
 
     def test_vision_route_probe_uses_test_image(self):
         calls = []

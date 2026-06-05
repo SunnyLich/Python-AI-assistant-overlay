@@ -833,6 +833,29 @@ _OPENAI_COMPAT_PROVIDERS: dict[str, tuple[str, str]] = {
 }
 
 
+def _openai_compat_base_url(provider: str) -> str:
+    provider = (provider or "").strip().lower()
+    if provider == "openai":
+        return "https://api.openai.com/v1"
+    if provider == "custom":
+        return config.CUSTOM_BASE_URL
+    item = _OPENAI_COMPAT_PROVIDERS.get(provider)
+    return item[1] if item else ""
+
+
+def _openai_compat_api_key(provider: str) -> str:
+    provider = (provider or "").strip().lower()
+    if provider == "openai":
+        return config.OPENAI_API_KEY
+    if provider == "custom":
+        return config.CUSTOM_API_KEY or "no-key"
+    item = _OPENAI_COMPAT_PROVIDERS.get(provider)
+    if not item:
+        return ""
+    key_attr, _base_url = item
+    return getattr(config, key_attr) if key_attr else "ollama"
+
+
 def _use_macos_openai_compat_non_streaming(provider: str) -> bool:
     """Avoid macOS native crashes in OpenAI-compatible streaming paths."""
     return not macos_safety.openai_compat_streaming_enabled(provider)
@@ -857,6 +880,56 @@ def _openai_compat_message_text(response) -> str:
                 parts.append(str(getattr(item, "text", "") or ""))
         return "".join(parts).strip()
     return str(content or "").strip()
+
+
+def _openai_compat_stdlib_completion_text(provider: str, kwargs: dict) -> str:
+    """Blocking OpenAI-compatible completion without importing provider SDKs."""
+    import gzip
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    base_url = _openai_compat_base_url(provider).rstrip("/")
+    if not base_url:
+        raise ValueError(f"No OpenAI-compatible base URL configured for {provider!r}")
+    api_key = _openai_compat_api_key(provider)
+    url = f"{base_url}/chat/completions"
+    body = _json.dumps(kwargs).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if api_key and provider != "ollama":
+        headers["Authorization"] = f"Bearer {api_key}"
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=60) as response:
+            raw = response.read()
+            encoding = response.headers.get("Content-Encoding", "")
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        encoding = exc.headers.get("Content-Encoding", "") if exc.headers else ""
+        if "gzip" in encoding.lower() and raw:
+            raw = gzip.decompress(raw)
+        message = raw.decode("utf-8", errors="replace") if raw else str(exc)
+        raise RuntimeError(f"Error code: {exc.code} - {message}") from exc
+    if "gzip" in encoding.lower() and raw:
+        raw = gzip.decompress(raw)
+    payload = _json.loads(raw.decode("utf-8"))
+    choices = payload.get("choices") or []
+    if not choices:
+        return ""
+    message = choices[0].get("message") or {}
+    content = message.get("content") or ""
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                parts.append(str(item.get("text") or ""))
+            else:
+                parts.append(str(getattr(item, "text", "") or ""))
+        return "".join(parts).strip()
+    return str(content).strip()
 
 
 # Per-provider cache for the route/fallback clients. Building these on every
@@ -1632,11 +1705,12 @@ def _stream_single_response_route(
     _log_model_route("vision" if image_base64 else "query", provider, effective_model, use_tools=tools_for_log)
     if image_base64:
         if provider in _OPENAI_COMPAT_PROVIDER_SET:
+            client = None if _use_macos_openai_compat_non_streaming(provider) else _dynamic_openai_client(provider)
             yield from _stream_openai_compat(
                 user_message,
                 image_base64,
                 model,
-                _dynamic_openai_client(provider),
+                client,
                 provider=provider,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -1656,11 +1730,12 @@ def _stream_single_response_route(
             raise ValueError(f"Unknown vision provider: {provider}")
         return
     if provider in _OPENAI_COMPAT_PROVIDER_SET:
+        client = None if _use_macos_openai_compat_non_streaming(provider) else _dynamic_openai_client(provider)
         yield from _stream_openai_compat(
             user_message,
             None,
             model,
-            _dynamic_openai_client(provider),
+            client,
             ambient_context,
             memory_context,
             use_tools=use_tools,
@@ -1778,8 +1853,7 @@ def _stream_openai_compat(
         kwargs["stream"] = False
         kwargs.pop("tools", None)
         print("[llm] macOS OpenAI-compatible route using non-streaming safe mode", flush=True)
-        response = client.chat.completions.create(**kwargs)
-        text = _openai_compat_message_text(response)
+        text = _openai_compat_stdlib_completion_text(provider, kwargs)
         if text:
             yield text
         return
@@ -2202,7 +2276,6 @@ def _stream_single_rewrite_route(provider: str, model: str, user_message: str) -
     _check_route_config(provider, model, "LLM")
     _log_model_route("rewrite", provider, model, use_tools=False)
     if provider in _OPENAI_COMPAT_PROVIDER_SET:
-        client = _dynamic_openai_client(provider)
         kwargs = {
             "model": model,
             "messages": [
@@ -2215,10 +2288,11 @@ def _stream_single_rewrite_route(provider: str, model: str, user_message: str) -
         }
         if not kwargs["stream"]:
             print("[llm] macOS OpenAI-compatible rewrite using non-streaming safe mode", flush=True)
-            text = _openai_compat_message_text(client.chat.completions.create(**kwargs))
+            text = _openai_compat_stdlib_completion_text(provider, kwargs)
             if text:
                 yield text
             return
+        client = _dynamic_openai_client(provider)
         with client.chat.completions.create(**kwargs) as stream:
             for chunk in stream:
                 delta = chunk.choices[0].delta.content
@@ -2304,7 +2378,6 @@ def _stream_single_history_route(provider: str, model: str, messages: list) -> G
     _check_route_config(provider, model, "CHAT_LLM")
     _log_model_route("chat", provider, model, use_tools=(provider == "anthropic"))
     if provider in _OPENAI_COMPAT_PROVIDER_SET:
-        client = _dynamic_openai_client(provider)
         kwargs = {
             "model": model,
             "messages": messages,
@@ -2314,10 +2387,11 @@ def _stream_single_history_route(provider: str, model: str, messages: list) -> G
         }
         if not kwargs["stream"]:
             print("[llm] macOS OpenAI-compatible chat using non-streaming safe mode", flush=True)
-            text = _openai_compat_message_text(client.chat.completions.create(**kwargs))
+            text = _openai_compat_stdlib_completion_text(provider, kwargs)
             if text:
                 yield text
             return
+        client = _dynamic_openai_client(provider)
         with client.chat.completions.create(**kwargs) as stream:
             for chunk in stream:
                 delta = chunk.choices[0].delta.content

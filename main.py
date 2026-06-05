@@ -37,21 +37,41 @@ log = logging.getLogger("wisp")
 # at the moment of the fault, pinpointing the exact crashing call. SIGTRAP is not in
 # faulthandler's default set, so register it (and friends) explicitly. chain=True
 # re-raises after dumping, so the process still crashes as before — we just get the
-# stack first. The fault file is kept open for the lifetime of the process.
+# stack first.
+#
+# The dump MUST go to a persistent file, not just sys.stderr: when the app is
+# launched detached (the `.command` launcher or the native Wisp.app bundle), stderr
+# is discarded, so a native crash leaves no trace at all — that is why the macOS
+# segfaults were invisible (no .crash file is written either, since those only come
+# from Python exceptions). We open a dedicated fault log next to wisp.log, keep the
+# handle alive for the whole process, and point faulthandler at it. faulthandler
+# writes to the raw file descriptor, so it stays crash-safe. When attached to a
+# terminal we *also* mirror to stderr for inline visibility. Harmless on Win/Linux.
+_FAULT_LOG_PATH = os.path.join(os.path.dirname(__file__), "wisp-fault.log")
+_fault_file = None  # module-global so the fd is never closed/GC'd before a crash
 try:
     import faulthandler
     import signal as _signal
-    # Dump to stderr so the traceback appears inline in the terminal (the dev runs
-    # on a separate Mac and copies terminal output). all_threads=True shows which
-    # thread faulted; chain=True re-raises so the process still crashes afterwards.
-    faulthandler.enable(file=sys.stderr, all_threads=True)
+    try:
+        _fault_file = open(_FAULT_LOG_PATH, "a", buffering=1, encoding="utf-8")
+        import datetime as _dt
+        _fault_file.write(f"\n===== Wisp session started {_dt.datetime.now().isoformat()} "
+                          f"(pid {os.getpid()}) =====\n")
+        _fault_file.flush()
+    except Exception:
+        _fault_file = None
+    # Primary sink: the persistent file (survives detached launches). If we could
+    # not open it, fall back to stderr so we never lose the dump entirely.
+    _fault_sink = _fault_file if _fault_file is not None else sys.stderr
+    faulthandler.enable(file=_fault_sink, all_threads=True)
     for _sig_name in ("SIGTRAP", "SIGABRT", "SIGBUS", "SIGILL", "SIGSEGV"):
         _sig = getattr(_signal, _sig_name, None)
-        if _sig is not None:
-            try:
-                faulthandler.register(_sig, file=sys.stderr, all_threads=True, chain=True)
-            except (ValueError, OSError, RuntimeError):
-                pass
+        if _sig is None:
+            continue
+        try:
+            faulthandler.register(_sig, file=_fault_sink, all_threads=True, chain=True)
+        except (ValueError, OSError, RuntimeError):
+            pass
 except Exception:  # never let diagnostics break startup
     pass
 # ---------------------------------------------------------------------------------

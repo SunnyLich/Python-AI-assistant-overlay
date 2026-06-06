@@ -21,6 +21,11 @@ agent history browser, native context, screen capture, voice recording, and
 audio playback surfaces. The Python sidecar keeps using the existing
 OS-agnostic backend modules until their visible windows are ported.
 
+For the remaining migration gates, use
+`docs/MACOS_MIGRATION_FINISH_PLAN.md`. It defines the quick-test, dev-launch,
+live-parity, package, signed-launch, and final regression evidence required
+before the native macOS version should be treated as complete.
+
 ## Default Mac Launch
 
 The shared Python/Qt launcher remains available as a fallback while the Swift UI
@@ -133,7 +138,19 @@ Quick-test logs are written to:
 build_logs/macos_native_tests_<timestamp>/
 ```
 
-Start with `summary.log`; individual command logs sit beside it.
+Start with `summary.log`; individual command logs sit beside it. Both the quick
+test runner and the full `macos_phase1_validate.sh` path copy
+`docs/MACOS_LIVE_PARITY_CHECKLIST.md` to `live-parity-checklist.md` in the active
+log folder so interactive Mac-only checks can be tracked beside the automated
+result. The newest native test log path is also recorded at:
+
+```bash
+build_logs/latest_macos_native_tests.txt
+build_logs/latest_macos_phase1.txt
+```
+
+You can also double-click `Open Wisp Mac Logs.command` from the repo root to
+open the newest native macOS log folder, summary, and live checklist.
 
 When the packaged app is launched outside the checkout and no validation log
 environment is present, Wisp writes runtime artifacts and native launch markers
@@ -174,9 +191,15 @@ release profile.
 
 For a local signed-only package, add `WISP_SKIP_NOTARIZATION=1`. The packaging
 script first runs an embedded Python import probe against the bundled runtime,
-then writes logs under `build_logs/macos_package_<timestamp>/` and creates a zip
-under `build/WispNative/`. When notarization is enabled, the final zip is
-created after stapling so it contains the notarized app.
+then writes logs under `build_logs/macos_package_<timestamp>/`, copies the live
+parity checklist into that log folder, and creates a zip under
+`build/WispNative/`. When notarization is enabled, the final zip is created after
+stapling so it contains the notarized app.
+The newest package log path is recorded at:
+
+```bash
+build_logs/latest_macos_package.txt
+```
 
 To make the package script launch the signed app through macOS `open` and wait
 for `native-app-launch.log`, add:

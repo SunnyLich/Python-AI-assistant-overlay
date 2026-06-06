@@ -54,20 +54,30 @@ work until each visible surface is ported.
 | Snip overlay | Done | Native |
 | Agent task window | Done | Native |
 | Agent task history | Done | Native |
-| Packaging | Partial | Release-shaped dev bundle plus runtime probe, entitlements, signing/notary script, optional signed-app launch gate, and archived crash/log diagnostics; needs credentials and live signed-app validation |
-| Permissions/TCC onboarding | Partial | Native permissions panel for Accessibility, Screen Recording, and Microphone status plus System Settings/request actions; needs live Mac validation |
-| Launch at login | Partial | Native tray toggle backed by `SMAppService.mainApp`; needs live Mac validation in System Settings |
+| Packaging | Implemented, pending live release validation | Release-shaped dev bundle plus runtime probe, entitlements, signing/notary script, optional signed-app launch gate, and archived crash/log diagnostics; needs credentials and live signed-app validation |
+| Permissions/TCC onboarding | Implemented, pending live TCC validation | Native permissions panel for Accessibility, Screen Recording, and Microphone status plus System Settings/request actions; needs live Mac validation |
+| Launch at login | Implemented, pending live System Settings validation | Native tray toggle backed by `SMAppService.mainApp`; needs live Mac validation in System Settings |
 
 ## Current Migration Order
 
+Use `docs/MACOS_MIGRATION_FINISH_PLAN.md` as the canonical finish plan. The
+short operating order is:
+
 1. Keep running `Test Wisp (Mac Native).command` after native changes; it must
-   pass Python brain/config tests and Swift package tests.
-2. Validate live native flows on a real Mac: caller intents, right-click overlay
+   pass Python brain/config/validation tests and Swift package tests.
+2. Open the generated log evidence:
+   `build_logs/latest_macos_native_tests.txt` points to the newest quick-test
+   folder, and `Open Wisp Mac Logs.command` opens the newest native log folder,
+   `summary.log`, and `live-parity-checklist.md` from Finder.
+3. Validate live native flows on a real Mac using
+   `docs/MACOS_LIVE_PARITY_CHECKLIST.md`: caller intents, right-click overlay
    menu, chat contrast, snip query, voice query, TTS playback, memory/plugin
-   actions, launch-at-login toggle, and agent task/history flows.
-3. Close any remaining live-behavior gaps found by the Mac validation loop.
-4. Run `scripts/macos_package_release.sh` with Developer ID/notary credentials
-   and validate the signed/notarized `.app`.
+   actions, settings keys/auth/reset, launch-at-login toggle, permissions, and
+   agent task/history flows.
+4. Close any remaining live-behavior gaps found by the Mac validation loop.
+5. Run `scripts/macos_package_release.sh` with Developer ID/notary credentials
+   and validate the signed/notarized `.app`; package logs write
+   `build_logs/latest_macos_package.txt` and a copied live parity checklist.
 
 ## Stability Gates
 

@@ -198,14 +198,40 @@ private struct IntentPickerView: View {
 
             if model.isCustomMode {
                 HStack(spacing: 8) {
-                    TextField("Type your prompt", text: $model.customPrompt)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($customFocused)
-                        .onSubmit { model.submitCustom() }
+                    ZStack(alignment: .leading) {
+                        if model.customPrompt.isEmpty {
+                            Text("Type your prompt")
+                                .font(.system(size: 13))
+                                .foregroundStyle(IntentPanelPalette.placeholderText)
+                                .padding(.horizontal, 10)
+                                .allowsHitTesting(false)
+                        }
 
-                    Button("Send") {
-                        model.submitCustom()
+                        TextField("", text: $model.customPrompt)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 13))
+                            .foregroundStyle(IntentPanelPalette.primaryText)
+                            .tint(IntentPanelPalette.primaryText)
+                            .padding(.horizontal, 10)
+                            .focused($customFocused)
+                            .onSubmit { model.submitCustom() }
                     }
+                    .frame(height: 32)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(IntentPanelPalette.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .stroke(IntentPanelPalette.inputBorder, lineWidth: 1)
+                            )
+                    )
+
+                    Button {
+                        model.submitCustom()
+                    } label: {
+                        Text("Send")
+                    }
+                    .buttonStyle(IntentSendButtonStyle())
                     .disabled(model.customPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 .padding(.horizontal, 12)
@@ -221,10 +247,10 @@ private struct IntentPickerView: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 14)
-                .fill(Color(nsColor: NSColor(calibratedWhite: 0.08, alpha: 0.97)))
+                .fill(IntentPanelPalette.panelBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(IntentPanelPalette.panelBorder, lineWidth: 1)
                 )
         )
         .frame(width: 320)
@@ -265,6 +291,44 @@ private struct IntentRowView: View {
         .contentShape(Rectangle())
         .background(Color.white.opacity(0.001))
     }
+}
+
+private struct IntentSendButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(isEnabled ? IntentPanelPalette.buttonText : IntentPanelPalette.disabledButtonText)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(buttonBackground(isPressed: configuration.isPressed))
+            )
+            .opacity(configuration.isPressed ? 0.86 : 1.0)
+    }
+
+    private func buttonBackground(isPressed: Bool) -> Color {
+        if !isEnabled {
+            return IntentPanelPalette.disabledButtonBackground
+        }
+        return isPressed ? IntentPanelPalette.buttonPressedBackground : IntentPanelPalette.buttonBackground
+    }
+}
+
+private enum IntentPanelPalette {
+    static let panelBackground = Color(nsColor: NSColor(calibratedWhite: 0.08, alpha: 0.97))
+    static let panelBorder = Color(nsColor: NSColor(calibratedWhite: 1.0, alpha: 0.08))
+    static let inputBackground = Color(nsColor: NSColor(calibratedWhite: 0.13, alpha: 1.0))
+    static let inputBorder = Color(nsColor: NSColor(calibratedWhite: 0.34, alpha: 1.0))
+    static let primaryText = Color(nsColor: NSColor(calibratedWhite: 0.96, alpha: 1.0))
+    static let placeholderText = Color(nsColor: NSColor(calibratedWhite: 0.62, alpha: 1.0))
+    static let buttonBackground = Color(nsColor: NSColor(calibratedRed: 0.18, green: 0.36, blue: 0.86, alpha: 1.0))
+    static let buttonPressedBackground = Color(nsColor: NSColor(calibratedRed: 0.14, green: 0.28, blue: 0.68, alpha: 1.0))
+    static let disabledButtonBackground = Color(nsColor: NSColor(calibratedWhite: 0.28, alpha: 1.0))
+    static let buttonText = Color(nsColor: NSColor(calibratedWhite: 1.0, alpha: 1.0))
+    static let disabledButtonText = Color(nsColor: NSColor(calibratedWhite: 0.78, alpha: 1.0))
 }
 
 private extension CallerConfig {

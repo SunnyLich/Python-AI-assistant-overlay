@@ -38,6 +38,49 @@ final class VisualContrastTests: XCTestCase {
         }
     }
 
+    func testIntentPanelUsesExplicitReadablePalette() throws {
+        let source = try String(
+            contentsOf: sourceRoot().appendingPathComponent("Sources/Wisp/Input/IntentPanel.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("private enum IntentPanelPalette"))
+        XCTAssertTrue(source.contains("primaryText"))
+        XCTAssertTrue(source.contains("placeholderText"))
+        XCTAssertTrue(source.contains("inputBackground"))
+        XCTAssertTrue(source.contains("IntentSendButtonStyle"))
+        XCTAssertFalse(source.contains(".textFieldStyle(.roundedBorder)"))
+
+        for forbiddenTextStyle in forbiddenAdaptiveTextStyles {
+            XCTAssertFalse(
+                source.contains(forbiddenTextStyle),
+                "IntentPanel has a fixed dark surface; use IntentPanelPalette text colors instead of \(forbiddenTextStyle)."
+            )
+        }
+    }
+
+    func testResponseBubbleUsesExplicitReadableConfiguredColors() throws {
+        let source = try String(
+            contentsOf: sourceRoot().appendingPathComponent("Sources/Wisp/Overlay/ResponseBubblePanel.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("BUBBLE_COLOR"))
+        XCTAssertTrue(source.contains("BUBBLE_TEXT_COLOR"))
+        XCTAssertTrue(source.contains("BUBBLE_READ_WORD_COLOR"))
+        XCTAssertTrue(source.contains("textColor"))
+        XCTAssertTrue(source.contains("readWordColor"))
+        XCTAssertTrue(source.contains("foregroundStyle(textColor)"))
+        XCTAssertTrue(source.contains("model.config.textColor"))
+
+        for forbiddenTextStyle in forbiddenAdaptiveTextStyles {
+            XCTAssertFalse(
+                source.contains(forbiddenTextStyle),
+                "ResponseBubblePanel has a fixed dark surface; use configured explicit colors instead of \(forbiddenTextStyle)."
+            )
+        }
+    }
+
     private let forbiddenAdaptiveTextStyles = [
         ".foregroundStyle(.primary)",
         ".foregroundStyle(.secondary)",

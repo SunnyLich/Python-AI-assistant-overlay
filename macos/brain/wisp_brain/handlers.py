@@ -21,6 +21,7 @@ import ast
 import threading
 import time
 import wave
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -684,13 +685,7 @@ def brain_agent_history_list(log_root: str | None = None, limit: int = 100) -> d
 @handler("brain.agent.history.read")
 def brain_agent_history_read(run_dir: str = "") -> dict[str, Any]:
     """Return full readable artifacts for one agent run."""
-    cleaned = run_dir.strip()
-    if not cleaned:
-        raise ValueError("run_dir is required")
-
-    path = Path(cleaned).expanduser().resolve()
-    if not path.is_dir():
-        raise ValueError("run_dir does not exist")
+    path = _agent_run_dir(run_dir)
     if not any((path / name).exists() for name in ("task.json", "final.md", "run.log", "error.txt")):
         raise ValueError("run_dir is not an agent run")
 
@@ -702,6 +697,34 @@ def brain_agent_history_read(run_dir: str = "") -> dict[str, Any]:
         "run_log": _read_text(path / "run.log"),
         "diff_patch": _read_text(path / "diff.patch"),
     }
+
+
+@handler("brain.agent.history.retry_spec")
+def brain_agent_history_retry_spec(run_dir: str = "") -> dict[str, Any]:
+    """Return the original task spec for a previous run."""
+    from core.agent.task_spec import retry_spec_from_run
+
+    spec = retry_spec_from_run(_agent_run_dir(run_dir))
+    return {"spec": asdict(spec)}
+
+
+@handler("brain.agent.history.continue_spec")
+def brain_agent_history_continue_spec(run_dir: str = "") -> dict[str, Any]:
+    """Return a continuation task spec with compact prior-run context."""
+    from core.agent.task_spec import continue_spec_from_run
+
+    spec = continue_spec_from_run(_agent_run_dir(run_dir))
+    return {"spec": asdict(spec)}
+
+
+def _agent_run_dir(run_dir: str) -> Path:
+    cleaned = run_dir.strip()
+    if not cleaned:
+        raise ValueError("run_dir is required")
+    path = Path(cleaned).expanduser().resolve()
+    if not path.is_dir():
+        raise ValueError("run_dir does not exist")
+    return path
 
 
 def _agent_run_summary(run_dir: Path) -> dict[str, Any]:

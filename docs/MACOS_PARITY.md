@@ -29,7 +29,7 @@ work until each visible surface is ported.
 | Settings | shared `.env` config, models, callers, voice, memory knobs | Qt `SettingsDialog` | Swift `SettingsPanel` in progress |
 | Plugins | loaded/discoverable plugin list, hooks, tools, folder open | Qt `PluginManagerDialog` | Swift `PluginManagerPanel` in progress |
 | Snip overlay | drag-select region, attach image to intent query | Qt `SnipOverlay` | Swift `SnipOverlayPanel` in progress |
-| Agents | same user-facing task/history windows and config | Qt windows | Swift `AgentTaskPanel` + `AgentHistoryPanel` in progress |
+| Agents | same user-facing task/history windows and config | Qt windows | Swift `AgentTaskPanel` + `AgentHistoryPanel` with retry/continue in progress |
 | Packaging | distributable app | PyInstaller path | Swift `.app` bundle path |
 
 ## Capability Status
@@ -60,7 +60,7 @@ work until each visible surface is ported.
 1. Replace the prototype Swift prompt entry with the Windows caller/intent
    workflow backed by the same `CALLER_*` keys.
 2. Make the Swift response surface behave like the Windows bubble/chat stream.
-3. Broaden native agent task/history controls to match Windows retry, continue, and diff flows.
+3. Broaden native agent task/history controls to match Windows multi-agent setup and diff flows.
 4. Finish native paste-back, context buffering, and voice parity.
 5. Build a signed/notarized `.app`.
 

@@ -54,9 +54,17 @@ final class AgentHistoryPanel: NSPanel {
     init(
         onRefresh: @escaping () -> Void,
         onSelectRun: @escaping (AgentRunSummary) -> Void,
+        onRetryRun: @escaping (AgentRunSummary) -> Void,
+        onContinueRun: @escaping (AgentRunSummary) -> Void,
         onOpenFolder: @escaping (String) -> Void
     ) {
-        self.model = AgentHistoryModel(onRefresh: onRefresh, onSelectRun: onSelectRun, onOpenFolder: onOpenFolder)
+        self.model = AgentHistoryModel(
+            onRefresh: onRefresh,
+            onSelectRun: onSelectRun,
+            onRetryRun: onRetryRun,
+            onContinueRun: onContinueRun,
+            onOpenFolder: onOpenFolder
+        )
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 920, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -130,15 +138,21 @@ private final class AgentHistoryModel: ObservableObject {
 
     private let onRefresh: () -> Void
     private let onSelectRun: (AgentRunSummary) -> Void
+    private let onRetryRun: (AgentRunSummary) -> Void
+    private let onContinueRun: (AgentRunSummary) -> Void
     private let onOpenFolder: (String) -> Void
 
     init(
         onRefresh: @escaping () -> Void,
         onSelectRun: @escaping (AgentRunSummary) -> Void,
+        onRetryRun: @escaping (AgentRunSummary) -> Void,
+        onContinueRun: @escaping (AgentRunSummary) -> Void,
         onOpenFolder: @escaping (String) -> Void
     ) {
         self.onRefresh = onRefresh
         self.onSelectRun = onSelectRun
+        self.onRetryRun = onRetryRun
+        self.onContinueRun = onContinueRun
         self.onOpenFolder = onOpenFolder
     }
 
@@ -156,6 +170,16 @@ private final class AgentHistoryModel: ObservableObject {
     func openSelectedFolder() {
         guard let selectedRun else { return }
         onOpenFolder(selectedRun.runDir)
+    }
+
+    func retrySelectedRun() {
+        guard let selectedRun, !isLoading else { return }
+        onRetryRun(selectedRun)
+    }
+
+    func continueSelectedRun() {
+        guard let selectedRun, !isLoading else { return }
+        onContinueRun(selectedRun)
     }
 
     func openRootFolder() {
@@ -305,6 +329,22 @@ private struct AgentHistoryPanelView: View {
                     .textSelection(.enabled)
             }
             Spacer()
+            Button {
+                model.retrySelectedRun()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .help("Retry selected run")
+            .buttonStyle(.borderless)
+            .disabled(model.selectedRun == nil || model.isLoading)
+            Button {
+                model.continueSelectedRun()
+            } label: {
+                Image(systemName: "play")
+            }
+            .help("Continue selected run")
+            .buttonStyle(.borderless)
+            .disabled(model.selectedRun == nil || model.isLoading)
             Button {
                 model.openSelectedFolder()
             } label: {

@@ -7,6 +7,29 @@ private struct PendingSnipContext {
     var capturePath: String
 }
 
+private enum AgentHistoryStartMode {
+    case retry
+    case continueRun
+
+    var method: String {
+        switch self {
+        case .retry:
+            return "brain.agent.history.retry_spec"
+        case .continueRun:
+            return "brain.agent.history.continue_spec"
+        }
+    }
+
+    var statusText: String {
+        switch self {
+        case .retry:
+            return "agent retry"
+        case .continueRun:
+            return "agent continue"
+        }
+    }
+}
+
 /// Phase-1/2 app wiring: bring up the menubar item and the floating overlay, then
 /// perform the brain handshake (spawn the Python sidecar, `ping` it, stream a
 /// `brain.echo`) and surface the result in the menu. This is the runnable proof
@@ -103,6 +126,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onSelectRun: { [weak self] run in
                 Task { await self?.loadAgentRunDetail(run) }
+            },
+            onRetryRun: { [weak self] run in
+                Task { await self?.startAgentHistoryRun(run, mode: .retry) }
+            },
+            onContinueRun: { [weak self] run in
+                Task { await self?.startAgentHistoryRun(run, mode: .continueRun) }
             },
             onOpenFolder: { path in
                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
@@ -486,6 +515,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             agentHistoryPanel?.fail(String(describing: error))
             statusController?.setBrainStatus("agent history error")
             NSLog("[wisp] agent history read failed: %@", String(describing: error))
+        }
+    }
+
+    private func startAgentHistoryRun(_ run: AgentRunSummary, mode: AgentHistoryStartMode) async {
+        guard let client = brain else {
+            agentHistoryPanel?.fail("brain client is not available")
+            statusController?.setBrainStatus("\(mode.statusText) error")
+            return
+        }
+
+        agentHistoryPanel?.beginLoading("\(mode.statusText.capitalized)...")
+        do {
+            let result = try await client.call(
+                mode.method,
+                ["run_dir": run.runDir],
+                timeout: .seconds(30)
+            )
+            guard
+                let spec = result?["spec"] as? [String: Any],
+                let draft = AgentTaskDraft(payload: spec)
+            else {
+                agentHistoryPanel?.fail("agent task spec payload was empty")
+                statusController?.setBrainStatus("\(mode.statusText) error")
+                return
+            }
+
+            agentTaskPanel?.setDraft(draft)
+            agentTaskPanel?.showTask()
+            startNativeAgentTask(draft)
+            statusController?.setBrainStatus("\(mode.statusText) started")
+        } catch {
+            agentHistoryPanel?.fail(String(describing: error))
+            statusController?.setBrainStatus("\(mode.statusText) error")
+            NSLog("[wisp] %@ failed: %@", mode.statusText, String(describing: error))
         }
     }
 

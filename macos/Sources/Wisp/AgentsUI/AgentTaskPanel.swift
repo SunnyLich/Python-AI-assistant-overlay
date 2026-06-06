@@ -55,6 +55,80 @@ struct AgentTaskDraft: Equatable {
         )
     }
 
+    init(
+        title: String,
+        objective: String,
+        requiredContext: String,
+        completionCriteria: String,
+        scopeFolder: String,
+        provider: String,
+        model: String,
+        modelFallbacks: String,
+        reasoningEffort: String,
+        maxRuntimeMinutes: String,
+        maxTurns: String,
+        allowShell: Bool,
+        allowNetwork: Bool,
+        allowGit: Bool,
+        allowFileCreate: Bool,
+        allowFileEdit: Bool,
+        allowFileDelete: Bool,
+        agentName: String,
+        agentRole: String,
+        agentResponsibility: String
+    ) {
+        self.title = title
+        self.objective = objective
+        self.requiredContext = requiredContext
+        self.completionCriteria = completionCriteria
+        self.scopeFolder = scopeFolder
+        self.provider = provider
+        self.model = model
+        self.modelFallbacks = modelFallbacks
+        self.reasoningEffort = reasoningEffort
+        self.maxRuntimeMinutes = maxRuntimeMinutes
+        self.maxTurns = maxTurns
+        self.allowShell = allowShell
+        self.allowNetwork = allowNetwork
+        self.allowGit = allowGit
+        self.allowFileCreate = allowFileCreate
+        self.allowFileEdit = allowFileEdit
+        self.allowFileDelete = allowFileDelete
+        self.agentName = agentName
+        self.agentRole = agentRole
+        self.agentResponsibility = agentResponsibility
+    }
+
+    init?(payload: [String: Any]) {
+        let agents = payload["agents"] as? [[String: Any]] ?? []
+        let firstAgent = agents.first ?? [:]
+        self.init(
+            title: payload["title"] as? String ?? "",
+            objective: payload["objective"] as? String ?? "",
+            requiredContext: payload["required_context"] as? String ?? "",
+            completionCriteria: payload["completion_criteria"] as? String ?? "",
+            scopeFolder: payload["scope_folder"] as? String ?? "",
+            provider: payload["provider"] as? String ?? "same as app",
+            model: payload["model"] as? String ?? "",
+            modelFallbacks: payload["model_fallbacks"] as? String ?? "",
+            reasoningEffort: payload["reasoning_effort"] as? String ?? "medium",
+            maxRuntimeMinutes: AgentTaskDraft.stringValue(payload["max_runtime_minutes"], default: "60"),
+            maxTurns: AgentTaskDraft.stringValue(payload["max_turns"], default: "30"),
+            allowShell: payload["allow_shell"] as? Bool ?? true,
+            allowNetwork: payload["allow_network"] as? Bool ?? false,
+            allowGit: payload["allow_git"] as? Bool ?? true,
+            allowFileCreate: payload["allow_file_create"] as? Bool ?? true,
+            allowFileEdit: payload["allow_file_edit"] as? Bool ?? true,
+            allowFileDelete: payload["allow_file_delete"] as? Bool ?? false,
+            agentName: firstAgent["name"] as? String ?? "Builder",
+            agentRole: firstAgent["role"] as? String ?? "Implementer",
+            agentResponsibility: firstAgent["responsibility"] as? String ?? AgentRoleDefaults.responsibility(for: "Implementer")
+        )
+        if cleaned(title).isEmpty || cleaned(objective).isEmpty {
+            return nil
+        }
+    }
+
     var payload: [String: Any] {
         [
             "title": cleaned(title),
@@ -136,6 +210,16 @@ struct AgentTaskDraft: Equatable {
     private func intValue(_ value: String, default fallback: Int) -> Int {
         Int(cleaned(value)) ?? fallback
     }
+
+    private static func stringValue(_ value: Any?, default fallback: String) -> String {
+        if let value = value as? String {
+            return value
+        }
+        if let value = value as? Int {
+            return String(value)
+        }
+        return fallback
+    }
 }
 
 struct AgentRunResult: Equatable {
@@ -204,6 +288,16 @@ final class AgentTaskPanel: NSPanel {
         model.draft = AgentTaskDraft.load()
         model.status = "Ready"
         model.errorText = ""
+    }
+
+    func setDraft(_ draft: AgentTaskDraft) {
+        guard !model.isRunning else { return }
+        model.draft = draft
+        model.status = "Ready"
+        model.errorText = ""
+        model.finalText = ""
+        model.runLines = []
+        model.runDir = ""
     }
 
     func beginRun() {

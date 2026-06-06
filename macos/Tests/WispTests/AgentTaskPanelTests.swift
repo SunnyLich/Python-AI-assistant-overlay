@@ -37,4 +37,45 @@ final class AgentTaskPanelTests: XCTestCase {
         XCTAssertEqual(agents.first?["provider"], "same as task")
         XCTAssertEqual(agents.first?["model"], "same as task")
     }
+
+    func testDraftParsesHistorySpecPayload() throws {
+        let draft = try XCTUnwrap(AgentTaskDraft(payload: [
+            "title": "Continue: Demo",
+            "objective": "Inspect artifacts",
+            "required_context": "Continuing from previous agent run",
+            "completion_criteria": "Report risks",
+            "scope_folder": "/tmp",
+            "provider": "anthropic",
+            "model": "claude-test",
+            "model_fallbacks": "openai:gpt-test",
+            "reasoning_effort": "high",
+            "max_runtime_minutes": 20,
+            "max_turns": 7,
+            "allow_shell": false,
+            "allow_network": true,
+            "allow_git": false,
+            "allow_file_create": true,
+            "allow_file_edit": false,
+            "allow_file_delete": true,
+            "agents": [
+                [
+                    "name": "Reviewer",
+                    "role": "Reviewer",
+                    "responsibility": "Check the work.",
+                ]
+            ],
+        ]))
+
+        XCTAssertEqual(draft.title, "Continue: Demo")
+        XCTAssertEqual(draft.requiredContext, "Continuing from previous agent run")
+        XCTAssertEqual(draft.provider, "anthropic")
+        XCTAssertEqual(draft.model, "claude-test")
+        XCTAssertEqual(draft.maxRuntimeMinutes, "20")
+        XCTAssertEqual(draft.maxTurns, "7")
+        XCTAssertFalse(draft.allowShell)
+        XCTAssertTrue(draft.allowNetwork)
+        XCTAssertEqual(draft.agentName, "Reviewer")
+        XCTAssertEqual(draft.agentRole, "Reviewer")
+        XCTAssertEqual(draft.agentResponsibility, "Check the work.")
+    }
 }

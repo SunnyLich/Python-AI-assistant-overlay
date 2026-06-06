@@ -41,6 +41,8 @@ def test_agent_is_registered_as_streaming():
     assert "brain.agent.run" in handlers.STREAMING
     assert "brain.agent.history.list" in handlers.HANDLERS
     assert "brain.agent.history.read" in handlers.HANDLERS
+    assert "brain.agent.history.retry_spec" in handlers.HANDLERS
+    assert "brain.agent.history.continue_spec" in handlers.HANDLERS
 
 
 def test_agent_requires_spec_dict():
@@ -129,3 +131,29 @@ def test_agent_history_reads_run_artifacts(tmp_path):
     assert result["final"] == "Final report"
     assert "agent run finished" in result["run_log"]
     assert result["diff_patch"].startswith("diff --git")
+
+
+def test_agent_history_retry_and_continue_specs(tmp_path):
+    run = tmp_path / "runs" / "20260101-010101-demo"
+    run.mkdir(parents=True)
+    (run / "task.json").write_text(
+        json.dumps({
+            "title": "Demo",
+            "objective": "Inspect",
+            "scope_folder": str(tmp_path),
+            "allow_git": False,
+            "allow_shell": False,
+        }),
+        encoding="utf-8",
+    )
+    (run / "final.md").write_text("Final report", encoding="utf-8")
+    (run / "run.log").write_text("[00:00:00] agent turn 1/1: Agent", encoding="utf-8")
+
+    retry = handlers.HANDLERS["brain.agent.history.retry_spec"](run_dir=str(run))["spec"]
+    continued = handlers.HANDLERS["brain.agent.history.continue_spec"](run_dir=str(run))["spec"]
+
+    assert retry["title"] == "Demo"
+    assert retry["objective"] == "Inspect"
+    assert continued["title"] == "Continue: Demo"
+    assert "Continuing from previous agent run" in continued["required_context"]
+    assert "Previous final report" in continued["required_context"]

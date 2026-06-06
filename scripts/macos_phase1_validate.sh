@@ -100,7 +100,7 @@ archive_logs() {
 }
 
 build_dev_app_bundle() {
-  local bin_dir app_dir contents_dir macos_dir resources_dir plist executable doll_src doll_dst
+  local bin_dir app_dir contents_dir macos_dir resources_dir plist executable doll_src doll_dst brain_dst core_dst
   bin_dir="$(swift build --show-bin-path 2>"$LOG_DIR/swift-bin-path.err")"
   executable="$bin_dir/Wisp"
   if [ ! -x "$executable" ]; then
@@ -116,6 +116,11 @@ build_dev_app_bundle() {
   rm -rf "$app_dir"
   mkdir -p "$macos_dir" "$resources_dir"
   cp "$executable" "$macos_dir/Wisp"
+
+  brain_dst="$resources_dir/brain"
+  core_dst="$resources_dir/core"
+  copy_bundle_source_tree "$REPO_ROOT/macos/brain" "$brain_dst"
+  copy_bundle_source_tree "$REPO_ROOT/core" "$core_dst"
 
   doll_src="$REPO_ROOT/assets/doll"
   doll_dst="$resources_dir/assets/doll"
@@ -165,10 +170,25 @@ PLIST
     echo "app_dir=$app_dir"
     echo "executable=$macos_dir/Wisp"
     echo "plist=$plist"
+    echo "brain_bundle=$brain_dst"
+    echo "core_bundle=$core_dst"
     [ -d "$doll_dst" ] && echo "doll_assets=$doll_dst"
   } > "$LOG_DIR/dev-app-bundle.log"
 
   echo "$macos_dir/Wisp"
+}
+
+copy_bundle_source_tree() {
+  local src="$1" dst="$2"
+  if [ ! -d "$src" ]; then
+    echo "ERROR: bundle source directory missing: $src" >&2
+    return 1
+  fi
+  rm -rf "$dst"
+  mkdir -p "$(dirname "$dst")"
+  cp -R "$src" "$dst"
+  find "$dst" \( -name "__pycache__" -o -name ".pytest_cache" \) -type d -prune -exec rm -rf {} +
+  find "$dst" \( -name "*.pyc" -o -name "*.pyo" \) -type f -delete
 }
 
 open_dev_app_without_wisp_env() {

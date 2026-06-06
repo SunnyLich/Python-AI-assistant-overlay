@@ -31,7 +31,10 @@ enum BrainLocator {
         if let res = resourceURL {
             let python = res.appendingPathComponent("python-runtime/bin/python3")
             let brain = res.appendingPathComponent("brain")
-            if fm.fileExists(atPath: python.path), fm.fileExists(atPath: brain.path) {
+            let core = res.appendingPathComponent("core")
+            if fm.fileExists(atPath: python.path),
+               fm.fileExists(atPath: brain.path),
+               fm.fileExists(atPath: core.path) {
                 // The bundled `brain` dir is laid out so `core` sits alongside it.
                 return BrainClient.Config(
                     pythonExecutable: python,

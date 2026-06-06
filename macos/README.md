@@ -53,10 +53,12 @@ Start Wisp (Mac Native).command
 
 This path validates the Python sidecar, Swift package, native menubar/overlay,
 and the current Swift parity slice. The generated dev bundle lives at
-`build/WispNative/Wisp.app` and includes the shared overlay art under
-`Contents/Resources/assets/doll`. When launched from Finder, that dev bundle can
-infer the checkout-relative `.venv` and `macos/brain` sidecar from its
-`build/WispNative` location.
+`build/WispNative/Wisp.app` and stages release-shaped resources under
+`Contents/Resources`: `brain`, `core`, and `assets/doll`. When launched from
+Finder, that dev bundle can infer the checkout-relative `.venv` and
+`macos/brain` sidecar from its `build/WispNative` location. A fully standalone
+bundle still needs `Contents/Resources/python-runtime/bin/python3` plus signing
+and notarization.
 
 Use `--run` when you want the app attached to Terminal stdout/stderr. Use
 `--open` when you want to test the generated `.app` bundle the way Finder opens

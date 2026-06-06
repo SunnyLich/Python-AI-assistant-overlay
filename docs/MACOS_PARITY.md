@@ -31,7 +31,7 @@ work until each visible surface is ported.
 | Plugins | loaded/discoverable plugin list, hooks, tools, folder open, tray actions | Qt `PluginManagerDialog` | Swift `PluginManagerPanel` with action execution and status refresh |
 | Snip overlay | drag-select region, attach image to intent query | Qt `SnipOverlay` | Swift `SnipOverlayPanel` + `ScreenCaptureController` region capture |
 | Agents | same user-facing task/history windows and config | Qt windows | Swift `AgentTaskPanel`, `AgentHistoryPanel`, and `AgentDiffPanel` |
-| Packaging | distributable app | PyInstaller path | Swift dev `.app` bundle path; signing/notarization still open |
+| Packaging | distributable app | PyInstaller path | Swift dev `.app` bundle with staged `brain`, `core`, and art resources; embedded runtime/signing/notarization still open |
 
 ## Capability Status
 
@@ -54,7 +54,7 @@ work until each visible surface is ported.
 | Snip overlay | Done | Native |
 | Agent task window | Done | Native |
 | Agent task history | Done | Native |
-| Packaging | Partial | Partial dev app bundle |
+| Packaging | Partial | Partial dev app bundle with release-shaped resources |
 
 ## Current Migration Order
 

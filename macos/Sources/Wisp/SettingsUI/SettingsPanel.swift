@@ -217,6 +217,49 @@ struct SettingsDraft: Equatable {
     }
 }
 
+enum SettingsLLMTestRoute: String, Hashable {
+    case main
+    case vision
+    case memory
+
+    var routeName: String {
+        switch self {
+        case .main:
+            return "LLM"
+        case .vision:
+            return "VISION_LLM"
+        case .memory:
+            return "MEMORY_LLM"
+        }
+    }
+
+    var usesImage: Bool {
+        self == .vision
+    }
+
+    func provider(in draft: SettingsDraft) -> String {
+        switch self {
+        case .main:
+            return draft.llmProvider
+        case .vision:
+            return draft.visionProvider
+        case .memory:
+            return draft.memoryProvider
+        }
+    }
+
+    func model(in draft: SettingsDraft) -> String {
+        switch self {
+        case .main:
+            return draft.llmModel
+        case .vision:
+            return draft.visionModel
+        case .memory:
+            return draft.memoryModel
+        }
+    }
+}
+
 extension SettingsCallerDraft {
     init(caller: CallerConfig) {
         self.hotkey = caller.hotkey
@@ -268,9 +311,10 @@ final class SettingsPanel: NSPanel {
 
     init(
         onSave: @escaping (SettingsDraft) -> Void,
+        onTestLLM: @escaping (SettingsDraft, SettingsLLMTestRoute) -> Void,
         onTestTTS: @escaping (SettingsDraft) -> Void
     ) {
-        self.model = SettingsModel(onSave: onSave, onTestTTS: onTestTTS)
+        self.model = SettingsModel(onSave: onSave, onTestLLM: onTestLLM, onTestTTS: onTestTTS)
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 780, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -301,14 +345,26 @@ final class SettingsPanel: NSPanel {
     func setStatus(_ status: String) {
         model.isSaving = false
         model.isTestingTTS = false
+        model.testingLLMRoute = nil
         model.status = status
     }
 
     func fail(_ message: String) {
         model.isSaving = false
         model.isTestingTTS = false
+        model.testingLLMRoute = nil
         model.status = "Settings error"
         model.errorText = message
+    }
+
+    func setLLMStatus(_ route: SettingsLLMTestRoute, message: String, ok: Bool) {
+        if model.testingLLMRoute == route {
+            model.testingLLMRoute = nil
+        }
+        model.status = ok ? "\(route.routeName) test OK" : "\(route.routeName) test failed"
+        model.errorText = ok ? "" : message
+        model.llmTestText[route] = message
+        model.llmTestOK[route] = ok
     }
 
     func setTTSStatus(_ message: String, ok: Bool) {
@@ -324,18 +380,24 @@ private final class SettingsModel: ObservableObject {
     @Published var draft = SettingsDraft.empty
     @Published var status = "Ready"
     @Published var errorText = ""
+    @Published var llmTestText: [SettingsLLMTestRoute: String] = [:]
+    @Published var llmTestOK: [SettingsLLMTestRoute: Bool] = [:]
     @Published var ttsTestText = ""
     @Published var isSaving = false
+    @Published var testingLLMRoute: SettingsLLMTestRoute?
     @Published var isTestingTTS = false
 
     private let onSave: (SettingsDraft) -> Void
+    private let onTestLLM: (SettingsDraft, SettingsLLMTestRoute) -> Void
     private let onTestTTS: (SettingsDraft) -> Void
 
     init(
         onSave: @escaping (SettingsDraft) -> Void,
+        onTestLLM: @escaping (SettingsDraft, SettingsLLMTestRoute) -> Void,
         onTestTTS: @escaping (SettingsDraft) -> Void
     ) {
         self.onSave = onSave
+        self.onTestLLM = onTestLLM
         self.onTestTTS = onTestTTS
     }
 
@@ -343,21 +405,34 @@ private final class SettingsModel: ObservableObject {
         self.draft = draft
         self.status = "Ready"
         self.errorText = ""
+        self.llmTestText = [:]
+        self.llmTestOK = [:]
         self.ttsTestText = ""
         self.isSaving = false
+        self.testingLLMRoute = nil
         self.isTestingTTS = false
     }
 
     func save() {
-        guard !isSaving else { return }
+        guard !isSaving, testingLLMRoute == nil, !isTestingTTS else { return }
         errorText = ""
         isSaving = true
         status = "Saving..."
         onSave(draft)
     }
 
+    func testLLM(_ route: SettingsLLMTestRoute) {
+        guard testingLLMRoute == nil, !isSaving else { return }
+        errorText = ""
+        llmTestText[route] = ""
+        llmTestOK.removeValue(forKey: route)
+        testingLLMRoute = route
+        status = "Testing \(route.routeName)..."
+        onTestLLM(draft, route)
+    }
+
     func testTTS() {
-        guard !isTestingTTS else { return }
+        guard !isTestingTTS, testingLLMRoute == nil, !isSaving else { return }
         errorText = ""
         ttsTestText = ""
         isTestingTTS = true
@@ -407,7 +482,7 @@ private struct SettingsPanelView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Spacer()
-            if model.isSaving || model.isTestingTTS {
+            if model.isSaving || model.isTestingTTS || model.testingLLMRoute != nil {
                 ProgressView()
                     .controlSize(.small)
             }
@@ -425,21 +500,44 @@ private struct SettingsPanelView: View {
                     SettingsTextField("Fallbacks", text: $model.draft.llmFallbacks)
                     SettingsTextField("Tool model", text: $model.draft.toolModel)
                     SettingsTextField("Custom base URL", text: $model.draft.customBaseURL)
+                    llmTestRow(.main)
                 }
 
                 SettingsSection("Vision") {
                     ProviderPicker("Provider", selection: $model.draft.visionProvider, includeEmpty: true)
                     SettingsTextField("Model", text: $model.draft.visionModel)
                     SettingsTextField("Fallbacks", text: $model.draft.visionFallbacks)
+                    llmTestRow(.vision)
                 }
 
                 SettingsSection("Memory Model") {
                     ProviderPicker("Provider", selection: $model.draft.memoryProvider)
                     SettingsTextField("Model", text: $model.draft.memoryModel)
                     SettingsTextField("Fallbacks", text: $model.draft.memoryFallbacks)
+                    llmTestRow(.memory)
                 }
             }
             .padding(4)
+        }
+    }
+
+    private func llmTestRow(_ route: SettingsLLMTestRoute) -> some View {
+        HStack(spacing: 10) {
+            Spacer()
+                .frame(width: 135)
+            Button {
+                model.testLLM(route)
+            } label: {
+                Image(systemName: "checkmark.seal")
+            }
+            .buttonStyle(.borderless)
+            .help("Test \(route.routeName) route")
+            .disabled(model.isSaving || model.isTestingTTS || model.testingLLMRoute != nil)
+            Text(model.llmTestText[route] ?? "")
+                .font(.caption)
+                .foregroundStyle(model.llmTestOK[route] == false ? Color.red : Color.secondary)
+                .lineLimit(2)
+                .textSelection(.enabled)
         }
     }
 
@@ -491,7 +589,7 @@ private struct SettingsPanelView: View {
                         }
                         .buttonStyle(.borderless)
                         .help("Test TTS route")
-                        .disabled(model.isTestingTTS || model.isSaving)
+                        .disabled(model.isTestingTTS || model.isSaving || model.testingLLMRoute != nil)
                         Text(model.ttsTestText)
                             .font(.caption)
                             .foregroundStyle(model.errorText.isEmpty ? Color.secondary : Color.red)
@@ -548,7 +646,7 @@ private struct SettingsPanelView: View {
                 Image(systemName: "checkmark")
             }
             .help("Save")
-            .disabled(model.isSaving || model.isTestingTTS)
+            .disabled(model.isSaving || model.isTestingTTS || model.testingLLMRoute != nil)
         }
         .padding(12)
     }

@@ -114,6 +114,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onSave: { [weak self] draft in
                 Task { await self?.saveSettings(draft) }
             },
+            onTestLLM: { [weak self] draft, route in
+                Task { await self?.testLLMSettings(draft, route: route) }
+            },
             onTestTTS: { [weak self] draft in
                 Task { await self?.testTTSSettings(draft) }
             }
@@ -959,6 +962,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsPanel?.setTTSStatus(message, ok: false)
             statusController?.setBrainStatus("tts test error")
             NSLog("[wisp] tts settings test failed: %@", message)
+        }
+    }
+
+    private func testLLMSettings(_ draft: SettingsDraft, route: SettingsLLMTestRoute) async {
+        guard let client = brain else {
+            settingsPanel?.setLLMStatus(route, message: "brain client is not available", ok: false)
+            statusController?.setBrainStatus("llm test error")
+            return
+        }
+
+        do {
+            let result = try await client.call(
+                "brain.llm.test",
+                [
+                    "provider": route.provider(in: draft),
+                    "model": route.model(in: draft),
+                    "route_name": route.routeName,
+                    "image": route.usesImage,
+                    "custom_base_url": draft.customBaseURL,
+                ],
+                timeout: .seconds(60)
+            )
+            let ok = result?["ok"] as? Bool ?? false
+            let message = result?["message"] as? String ?? (ok ? "\(route.routeName) route OK" : "\(route.routeName) test failed")
+            settingsPanel?.setLLMStatus(route, message: message, ok: ok)
+            statusController?.setBrainStatus(ok ? "llm test ok" : "llm test failed")
+            NSLog("[wisp] %@ settings test: %@", route.routeName, message)
+        } catch {
+            let message = String(describing: error)
+            settingsPanel?.setLLMStatus(route, message: message, ok: false)
+            statusController?.setBrainStatus("llm test error")
+            NSLog("[wisp] %@ settings test failed: %@", route.routeName, message)
         }
     }
 

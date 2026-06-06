@@ -26,7 +26,7 @@ work until each visible surface is ported.
 | Voice/TTS | same provider config and playback behavior | Python audio path | Swift capture/playback with buffered native context + Python sidecar models |
 | Chat | multi-turn conversation history and streaming replies | Qt window | Swift `ChatPanel` in progress |
 | Memory | durable facts: list, add, edit, delete, search | Qt `MemoryViewer` | Swift `MemoryPanel` + `brain.memory.*` |
-| Settings | shared `.env` config, models, callers, voice, memory knobs | Qt `SettingsDialog` | Swift `SettingsPanel` with TTS route test in progress |
+| Settings | shared `.env` config, models, callers, voice, memory knobs | Qt `SettingsDialog` | Swift `SettingsPanel` with LLM/TTS route tests in progress |
 | Plugins | loaded/discoverable plugin list, hooks, tools, folder open | Qt `PluginManagerDialog` | Swift `PluginManagerPanel` in progress |
 | Snip overlay | drag-select region, attach image to intent query | Qt `SnipOverlay` | Swift `SnipOverlayPanel` in progress |
 | Agents | same user-facing task/history windows and config | Qt windows | Swift `AgentTaskPanel` multi-agent/communication setup + `AgentHistoryPanel` with retry/continue and `AgentDiffPanel` in progress |

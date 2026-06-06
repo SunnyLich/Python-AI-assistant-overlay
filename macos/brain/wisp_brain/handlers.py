@@ -450,6 +450,47 @@ def brain_tts_test(provider: str = "", cartesia_voice_id: str = "") -> dict[str,
     return {"ok": ok, "message": message, "provider": selected}
 
 
+@handler("brain.llm.test")
+def brain_llm_test(
+    provider: str = "",
+    model: str = "",
+    route_name: str = "LLM",
+    image: bool = False,
+    custom_base_url: str = "",
+) -> dict[str, Any]:
+    """Validate one configured LLM route for the native Settings panel."""
+    selected_provider = provider.strip().lower()
+    selected_model = model.strip()
+    label = route_name.strip() or "LLM"
+    if not selected_provider or not selected_model:
+        return {
+            "ok": False,
+            "message": f"{label} test failed: No model configured.",
+            "provider": selected_provider,
+            "model": selected_model,
+        }
+
+    if _offline_brain():
+        suffix = " vision route" if image else " route"
+        return {
+            "ok": True,
+            "message": f"{label}{suffix} OK: {selected_provider} / {selected_model}",
+            "provider": selected_provider,
+            "model": selected_model,
+        }
+
+    from core.llm_clients import client as llm
+
+    ok, message = llm.test_route_connection(
+        selected_provider,
+        selected_model,
+        label,
+        image=image,
+        custom_base_url=custom_base_url.strip() or None,
+    )
+    return {"ok": ok, "message": message, "provider": selected_provider, "model": selected_model}
+
+
 # ---------------------------------------------------------------------------
 # Real query path -- wired to the existing pipeline, exercised on the Mac / online.
 # Imports are lazy so this module still loads with no LLM deps/keys present.

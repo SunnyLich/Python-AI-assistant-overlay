@@ -339,17 +339,42 @@ private struct ChatPanelView: View {
 
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            TextField("Message Wisp", text: $model.input, axis: .vertical)
-                .lineLimit(1...5)
-                .textFieldStyle(.roundedBorder)
-                .focused($inputFocused)
-                .onSubmit { model.sendInput() }
-                .disabled(model.isStreaming)
+            ZStack(alignment: .topLeading) {
+                if model.input.isEmpty {
+                    Text("Message Wisp")
+                        .font(.system(size: 13))
+                        .foregroundStyle(ChatPanelPalette.placeholderText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .allowsHitTesting(false)
+                }
+
+                TextField("", text: $model.input, axis: .vertical)
+                    .lineLimit(1...5)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundStyle(ChatPanelPalette.primaryText)
+                    .tint(ChatPanelPalette.primaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .focused($inputFocused)
+                    .onSubmit { model.sendInput() }
+                    .disabled(model.isStreaming)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(ChatPanelPalette.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(ChatPanelPalette.inputBorder, lineWidth: 1)
+                    )
+            )
 
             Button("Send") {
                 model.sendInput()
             }
             .keyboardShortcut(.return, modifiers: [.command])
+            .buttonStyle(ChatSendButtonStyle())
             .disabled(model.isStreaming || model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding(12)
@@ -393,13 +418,45 @@ private struct ChatMessageView: View {
     }
 }
 
+private struct ChatSendButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(isEnabled ? ChatPanelPalette.buttonText : ChatPanelPalette.disabledButtonText)
+            .padding(.horizontal, 14)
+            .frame(height: 32)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(buttonBackground(isPressed: configuration.isPressed))
+            )
+            .opacity(configuration.isPressed ? 0.86 : 1.0)
+    }
+
+    private func buttonBackground(isPressed: Bool) -> Color {
+        if !isEnabled {
+            return ChatPanelPalette.disabledButtonBackground
+        }
+        return isPressed ? ChatPanelPalette.buttonPressedBackground : ChatPanelPalette.buttonBackground
+    }
+}
+
 private enum ChatPanelPalette {
     static let sidebarBackground = Color(nsColor: NSColor(calibratedWhite: 0.10, alpha: 1.0))
     static let headerBackground = Color(nsColor: NSColor(calibratedWhite: 0.14, alpha: 1.0))
     static let contentBackground = Color(nsColor: NSColor(calibratedWhite: 0.16, alpha: 1.0))
     static let composerBackground = Color(nsColor: NSColor(calibratedWhite: 0.13, alpha: 1.0))
+    static let inputBackground = Color(nsColor: NSColor(calibratedWhite: 0.08, alpha: 1.0))
+    static let inputBorder = Color(nsColor: NSColor(calibratedWhite: 0.32, alpha: 1.0))
     static let userBubbleBackground = Color(nsColor: NSColor(calibratedRed: 0.28, green: 0.30, blue: 0.42, alpha: 1.0))
     static let assistantBubbleBackground = Color(nsColor: NSColor(calibratedRed: 0.22, green: 0.23, blue: 0.30, alpha: 1.0))
+    static let buttonBackground = Color(nsColor: NSColor(calibratedRed: 0.18, green: 0.36, blue: 0.86, alpha: 1.0))
+    static let buttonPressedBackground = Color(nsColor: NSColor(calibratedRed: 0.14, green: 0.28, blue: 0.68, alpha: 1.0))
+    static let disabledButtonBackground = Color(nsColor: NSColor(calibratedWhite: 0.28, alpha: 1.0))
+    static let buttonText = Color(nsColor: NSColor(calibratedWhite: 1.0, alpha: 1.0))
+    static let disabledButtonText = Color(nsColor: NSColor(calibratedWhite: 0.78, alpha: 1.0))
     static let primaryText = Color(nsColor: NSColor(calibratedWhite: 0.96, alpha: 1.0))
     static let secondaryText = Color(nsColor: NSColor(calibratedWhite: 0.76, alpha: 1.0))
+    static let placeholderText = Color(nsColor: NSColor(calibratedWhite: 0.62, alpha: 1.0))
 }

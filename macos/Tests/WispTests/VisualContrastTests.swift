@@ -25,6 +25,10 @@ final class VisualContrastTests: XCTestCase {
         XCTAssertTrue(source.contains("private enum ChatPanelPalette"))
         XCTAssertTrue(source.contains("primaryText"))
         XCTAssertTrue(source.contains("secondaryText"))
+        XCTAssertTrue(source.contains("inputBackground"))
+        XCTAssertTrue(source.contains("placeholderText"))
+        XCTAssertTrue(source.contains("ChatSendButtonStyle"))
+        XCTAssertFalse(source.contains(".textFieldStyle(.roundedBorder)"))
 
         for forbiddenTextStyle in forbiddenAdaptiveTextStyles {
             XCTAssertFalse(

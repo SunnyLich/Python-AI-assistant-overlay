@@ -64,6 +64,9 @@ final class OverlayPanel: NSPanel {
 
     func setState(_ state: DollState) {
         model.state = state
+        if state != .speaking {
+            model.amplitude = 0
+        }
         guard autoHide else {
             if !isVisible {
                 positionBottomTrailing()
@@ -80,6 +83,10 @@ final class OverlayPanel: NSPanel {
             positionBottomTrailing()
             orderFrontRegardless()
         }
+    }
+
+    func setSpeechAmplitude(_ amplitude: Double) {
+        model.amplitude = max(0, min(1, amplitude))
     }
 
     func toggleVisibility() {
@@ -132,6 +139,7 @@ final class OverlayPanel: NSPanel {
 @MainActor
 final class OverlayModel: ObservableObject {
     @Published var state: OverlayPanel.DollState = .idle
+    @Published var amplitude: Double = 0
 
     let onTap: () -> Void
     let iconSize: CGFloat
@@ -171,6 +179,16 @@ private struct OverlayView: View {
         }
     }
 
+    private var speechScale: CGFloat {
+        guard model.state == .speaking else { return 1.0 }
+        return 1.0 + CGFloat(model.amplitude) * 0.10
+    }
+
+    private var speechShadow: CGFloat {
+        guard model.state == .speaking else { return 6 }
+        return 6 + CGFloat(model.amplitude) * 8
+    }
+
     var body: some View {
         Group {
             if let image = model.image(for: model.state) {
@@ -178,13 +196,15 @@ private struct OverlayView: View {
                     .resizable()
                     .scaledToFit()
                     .frame(width: model.iconSize, height: model.iconSize)
-                    .shadow(radius: 6)
+                    .scaleEffect(speechScale)
+                    .shadow(radius: speechShadow)
             } else {
                 Circle()
                     .fill(color.opacity(0.9))
                     .overlay(Circle().stroke(.white.opacity(0.6), lineWidth: 2))
                     .frame(width: model.iconSize, height: model.iconSize)
-                    .shadow(radius: 6)
+                    .scaleEffect(speechScale)
+                    .shadow(radius: speechShadow)
             }
         }
         .padding(9)
@@ -193,6 +213,7 @@ private struct OverlayView: View {
             model.onTap()
         }
         .animation(.easeInOut(duration: 0.25), value: model.state)
+        .animation(.easeOut(duration: 0.08), value: model.amplitude)
     }
 }
 

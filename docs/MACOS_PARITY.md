@@ -46,7 +46,7 @@ work until each visible surface is ported.
 | Selected text and ambient context | Done | Native snapshot + buffered context |
 | Screenshot context | Done | Native capture + snip intent flow |
 | Voice query | Done | Native capture + sidecar transcription |
-| TTS playback | Done | Native playback lifecycle |
+| TTS playback | Done | Native playback lifecycle with amplitude-driven overlay pulse |
 | Chat window | Done | Native |
 | Settings window | Done | Native |
 | Memory window | Done | Native |

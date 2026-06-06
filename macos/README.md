@@ -92,6 +92,8 @@ app reached native startup after LaunchServices opened it.
 
 The tray menu includes a `Launch at Login` toggle backed by macOS
 `SMAppService.mainApp`; validate it from System Settings after toggling.
+Use `Speak Last Response` to validate native TTS playback and the
+amplitude-driven overlay pulse.
 
 ## Native Test Button
 

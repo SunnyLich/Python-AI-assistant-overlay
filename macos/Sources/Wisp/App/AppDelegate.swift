@@ -84,6 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         audioPlayer.onFinish = { [weak self] playbackID, success in
             self?.finishSpeechPlayback(playbackID: playbackID, successfully: success)
         }
+        audioPlayer.onAmplitude = { [weak self] playbackID, amplitude in
+            self?.updateSpeechAmplitude(playbackID: playbackID, amplitude: amplitude)
+        }
 
         let prompt = PromptPanel { [weak self] text, mode in
             Task { await self?.runPrompt(text, mode: mode) }
@@ -887,13 +890,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func finishSpeechPlayback(playbackID: Int, successfully: Bool) {
         guard activeTTSPlaybackID == playbackID else { return }
         activeTTSPlaybackID = nil
+        overlay?.setSpeechAmplitude(0)
         overlay?.setState(.idle)
         statusController?.setBrainStatus(successfully ? "tts finished" : "tts stopped")
     }
 
     private func cancelSpeechPlayback() {
         activeTTSPlaybackID = nil
+        overlay?.setSpeechAmplitude(0)
         audioPlayer.stop()
+    }
+
+    private func updateSpeechAmplitude(playbackID: Int, amplitude: Double) {
+        guard activeTTSPlaybackID == playbackID else { return }
+        overlay?.setSpeechAmplitude(amplitude)
     }
 
     private func transcribe(_ url: URL) async throws -> String {

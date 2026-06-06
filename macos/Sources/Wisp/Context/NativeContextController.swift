@@ -136,7 +136,7 @@ final class NativeContextController {
         guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
             return nil
         }
-        return value as! AXUIElement
+        return (value as! AXUIElement)
     }
 
     private func clippedText(_ text: String?, limit: Int) -> String? {

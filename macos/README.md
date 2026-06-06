@@ -97,6 +97,10 @@ amplitude-driven overlay pulse.
 Use `Open Config Folder` from the tray or overlay menu to jump to the active
 `.env` directory, whether that is the checkout or
 `~/Library/Application Support/Wisp`.
+The native Settings window includes a `Keys` tab for API-key status, save, and
+clear actions. Those actions call the Python brain sidecar and reuse the shared
+OS-keychain secret store; stored key values are never shown and are not written
+to `.env`.
 
 ## Native Test Button
 

@@ -132,6 +132,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onTestTTS: { [weak self] draft in
                 Task { await self?.testTTSSettings(draft) }
+            },
+            onRefreshSecrets: { [weak self] in
+                Task { await self?.loadSettingsSecrets() }
+            },
+            onSaveSecret: { [weak self] secret in
+                Task { await self?.saveSettingsSecret(secret) }
+            },
+            onClearSecret: { [weak self] secret in
+                Task { await self?.clearSettingsSecret(secret) }
             }
         )
 
@@ -1117,6 +1126,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             memoryPanel?.fail(String(describing: error))
             statusController?.setBrainStatus("memory error")
             NSLog("[wisp] memory panel search failed: %@", String(describing: error))
+        }
+    }
+
+    private func loadSettingsSecrets(statusMessage: String? = nil) async {
+        guard let client = brain else {
+            settingsPanel?.fail("brain client is not available")
+            statusController?.setBrainStatus("settings key error")
+            return
+        }
+
+        do {
+            let result = try await client.call("brain.secrets.status", timeout: .seconds(30))
+            let rows = result?["secrets"] as? [[String: Any]] ?? []
+            let statuses = rows.compactMap { SettingsSecretStatus(payload: $0) }
+            settingsPanel?.setSecretStatuses(
+                statuses.isEmpty ? SettingsSecretStatus.defaultRows : statuses,
+                status: statusMessage ?? "API keys loaded"
+            )
+            statusController?.setBrainStatus("api keys loaded")
+        } catch {
+            settingsPanel?.fail(String(describing: error))
+            statusController?.setBrainStatus("settings key error")
+            NSLog("[wisp] api key status failed: %@", String(describing: error))
+        }
+    }
+
+    private func saveSettingsSecret(_ secret: SettingsSecretStatus) async {
+        guard let client = brain else {
+            settingsPanel?.fail("brain client is not available")
+            statusController?.setBrainStatus("settings key error")
+            return
+        }
+
+        let value = secret.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else {
+            settingsPanel?.fail("\(secret.label) key is empty")
+            statusController?.setBrainStatus("settings key error")
+            return
+        }
+
+        do {
+            _ = try await client.call(
+                "brain.secrets.set",
+                ["name": secret.name, "value": value],
+                timeout: .seconds(60)
+            )
+            try await reloadBrainConfig()
+            await loadSettingsSecrets(statusMessage: "\(secret.label) key saved")
+            NSLog("[wisp] api key saved: %@", secret.name)
+        } catch {
+            settingsPanel?.fail(String(describing: error))
+            statusController?.setBrainStatus("settings key error")
+            NSLog("[wisp] api key save failed for %@: %@", secret.name, String(describing: error))
+        }
+    }
+
+    private func clearSettingsSecret(_ secret: SettingsSecretStatus) async {
+        guard let client = brain else {
+            settingsPanel?.fail("brain client is not available")
+            statusController?.setBrainStatus("settings key error")
+            return
+        }
+
+        do {
+            _ = try await client.call(
+                "brain.secrets.clear",
+                ["name": secret.name],
+                timeout: .seconds(60)
+            )
+            try await reloadBrainConfig()
+            await loadSettingsSecrets(statusMessage: "\(secret.label) key cleared")
+            NSLog("[wisp] api key cleared: %@", secret.name)
+        } catch {
+            settingsPanel?.fail(String(describing: error))
+            statusController?.setBrainStatus("settings key error")
+            NSLog("[wisp] api key clear failed for %@: %@", secret.name, String(describing: error))
         }
     }
 

@@ -15,6 +15,13 @@ def test_llm_test_handler_registered():
     assert "brain.llm.test" not in handlers.STREAMING
 
 
+def test_secret_handlers_registered():
+    assert "brain.secrets.status" in handlers.HANDLERS
+    assert "brain.secrets.set" in handlers.HANDLERS
+    assert "brain.secrets.clear" in handlers.HANDLERS
+    assert "brain.secrets.status" not in handlers.STREAMING
+
+
 def test_config_reload_calls_config_reload(monkeypatch):
     calls: list[str] = []
 
@@ -125,3 +132,81 @@ def test_llm_test_forwards_route_to_client(monkeypatch):
         "image": True,
         "custom_base_url": "https://api.example.test/v1",
     }
+
+
+def test_secret_status_does_not_expose_values(monkeypatch):
+    from core import secret_store
+
+    monkeypatch.setattr(secret_store, "API_KEY_NAMES", ("OPENAI_API_KEY", "GROQ_API_KEY"))
+    monkeypatch.setattr(secret_store, "has_secret", lambda name: name == "OPENAI_API_KEY")
+    monkeypatch.setattr(secret_store, "secret_source", lambda name: "keychain" if name == "OPENAI_API_KEY" else "none")
+
+    result = handlers.HANDLERS["brain.secrets.status"]()
+
+    assert result == {
+        "secrets": [
+            {
+                "name": "OPENAI_API_KEY",
+                "label": "OpenAI",
+                "configured": True,
+                "source": "keychain",
+            },
+            {
+                "name": "GROQ_API_KEY",
+                "label": "Groq",
+                "configured": False,
+                "source": "none",
+            },
+        ]
+    }
+    assert "sk-" not in repr(result)
+
+
+def test_secret_set_and_clear_call_shared_store(monkeypatch):
+    from core import secret_store
+
+    calls: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(secret_store, "API_KEY_NAMES", ("OPENAI_API_KEY",))
+
+    def set_secret(name: str, value: str) -> None:
+        calls.append(("set", name, value))
+
+    def delete_secret(name: str) -> None:
+        calls.append(("delete", name, None))
+
+    monkeypatch.setattr(secret_store, "set_secret", set_secret)
+    monkeypatch.setattr(secret_store, "delete_secret", delete_secret)
+    monkeypatch.setattr(secret_store, "secret_source", lambda name: "keychain")
+
+    set_result = handlers.HANDLERS["brain.secrets.set"]("openai_api_key", " sk-test ")
+    clear_result = handlers.HANDLERS["brain.secrets.clear"]("OPENAI_API_KEY")
+
+    assert calls == [
+        ("set", "OPENAI_API_KEY", "sk-test"),
+        ("delete", "OPENAI_API_KEY", None),
+    ]
+    assert set_result == {
+        "ok": True,
+        "name": "OPENAI_API_KEY",
+        "label": "OpenAI",
+        "source": "keychain",
+    }
+    assert clear_result == {
+        "ok": True,
+        "name": "OPENAI_API_KEY",
+        "label": "OpenAI",
+        "source": "keychain",
+    }
+
+
+def test_secret_set_rejects_unknown_names(monkeypatch):
+    from core import secret_store
+
+    monkeypatch.setattr(secret_store, "API_KEY_NAMES", ("OPENAI_API_KEY",))
+
+    try:
+        handlers.HANDLERS["brain.secrets.set"]("NOT_A_REAL_KEY", "value")
+    except ValueError as exc:
+        assert "Unknown API key name" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")

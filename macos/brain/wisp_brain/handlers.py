@@ -172,6 +172,84 @@ def brain_config_reload() -> dict[str, Any]:
     }
 
 
+_SECRET_LABELS = {
+    "GROQ_API_KEY": "Groq",
+    "OPENAI_API_KEY": "OpenAI",
+    "ANTHROPIC_API_KEY": "Anthropic",
+    "GOOGLE_API_KEY": "Google",
+    "CARTESIA_API_KEY": "Cartesia",
+    "ELEVENLABS_API_KEY": "ElevenLabs",
+    "CUSTOM_API_KEY": "Custom provider",
+    "DEEPSEEK_API_KEY": "DeepSeek",
+    "OPENROUTER_API_KEY": "OpenRouter",
+    "MISTRAL_API_KEY": "Mistral",
+    "XAI_API_KEY": "xAI",
+    "TOGETHER_API_KEY": "Together",
+    "CEREBRAS_API_KEY": "Cerebras",
+}
+
+
+def _secret_name(raw: str) -> str:
+    from core import secret_store
+
+    name = (raw or "").strip().upper()
+    if name not in secret_store.API_KEY_NAMES:
+        raise ValueError(f"Unknown API key name: {raw}")
+    return name
+
+
+@handler("brain.secrets.status")
+def brain_secrets_status() -> dict[str, Any]:
+    """Return API-key presence/source metadata without exposing secret values."""
+    from core import secret_store
+
+    return {
+        "secrets": [
+            {
+                "name": name,
+                "label": _SECRET_LABELS.get(name, name),
+                "configured": secret_store.has_secret(name),
+                "source": secret_store.secret_source(name),
+            }
+            for name in secret_store.API_KEY_NAMES
+        ]
+    }
+
+
+@handler("brain.secrets.set")
+def brain_secrets_set(name: str = "", value: str = "") -> dict[str, Any]:
+    """Save one API key through the shared OS keychain secret store."""
+    from core import secret_store
+
+    key_name = _secret_name(name)
+    cleaned = (value or "").strip()
+    if not cleaned:
+        raise ValueError("value is required")
+
+    secret_store.set_secret(key_name, cleaned)
+    return {
+        "ok": True,
+        "name": key_name,
+        "label": _SECRET_LABELS.get(key_name, key_name),
+        "source": secret_store.secret_source(key_name),
+    }
+
+
+@handler("brain.secrets.clear")
+def brain_secrets_clear(name: str = "") -> dict[str, Any]:
+    """Clear one API key through the shared OS keychain secret store."""
+    from core import secret_store
+
+    key_name = _secret_name(name)
+    secret_store.delete_secret(key_name)
+    return {
+        "ok": True,
+        "name": key_name,
+        "label": _SECRET_LABELS.get(key_name, key_name),
+        "source": secret_store.secret_source(key_name),
+    }
+
+
 @handler("brain.plugins.list")
 def brain_plugins_list() -> dict[str, Any]:
     """Return loaded/discoverable plugins for the native macOS Plugin Manager."""

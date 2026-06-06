@@ -350,6 +350,43 @@ final class WispConfigTests: XCTestCase {
         XCTAssertEqual(draft.iconBackstopMS, "6400")
     }
 
+    func testSettingsSecretStatusParsesBrainPayloadWithoutSecretValue() throws {
+        let status = try XCTUnwrap(SettingsSecretStatus(payload: [
+            "name": "OPENAI_API_KEY",
+            "label": "OpenAI",
+            "configured": true,
+            "source": "keychain",
+        ]))
+
+        XCTAssertEqual(status.name, "OPENAI_API_KEY")
+        XCTAssertEqual(status.label, "OpenAI")
+        XCTAssertEqual(status.source, "keychain")
+        XCTAssertTrue(status.configured)
+        XCTAssertEqual(status.value, "")
+        XCTAssertEqual(status.statusText, "Stored in OS keychain")
+    }
+
+    func testSettingsSecretStatusDefaultRowsMatchSharedSecretNames() {
+        XCTAssertEqual(
+            SettingsSecretStatus.defaultRows.map(\.name),
+            [
+                "OPENAI_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "GROQ_API_KEY",
+                "GOOGLE_API_KEY",
+                "CARTESIA_API_KEY",
+                "ELEVENLABS_API_KEY",
+                "CUSTOM_API_KEY",
+                "DEEPSEEK_API_KEY",
+                "OPENROUTER_API_KEY",
+                "MISTRAL_API_KEY",
+                "XAI_API_KEY",
+                "TOGETHER_API_KEY",
+                "CEREBRAS_API_KEY",
+            ]
+        )
+    }
+
     func testScreenshotModeAcceptsLegacyBooleanValues() {
         XCTAssertEqual(ScreenshotMode.normalized("true"), .auto)
         XCTAssertEqual(ScreenshotMode.normalized("tool"), .model)

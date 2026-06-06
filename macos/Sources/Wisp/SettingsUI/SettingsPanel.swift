@@ -412,6 +412,65 @@ extension SettingsIntentDraft {
     )
 }
 
+struct SettingsSecretStatus: Identifiable, Equatable {
+    var name: String
+    var label: String
+    var source: String
+    var configured: Bool
+    var value: String = ""
+
+    var id: String { name }
+
+    var statusText: String {
+        if configured {
+            switch source {
+            case "keychain":
+                return "Stored in OS keychain"
+            case "env":
+                return "Loaded from environment"
+            case "none":
+                return "Configured"
+            default:
+                return source.isEmpty ? "Configured" : source
+            }
+        }
+        return "Not configured"
+    }
+
+    init(name: String, label: String, source: String = "none", configured: Bool = false, value: String = "") {
+        self.name = name
+        self.label = label
+        self.source = source
+        self.configured = configured
+        self.value = value
+    }
+
+    init?(payload: [String: Any]) {
+        guard let name = payload["name"] as? String else { return nil }
+        self.name = name
+        self.label = payload["label"] as? String ?? name
+        self.source = payload["source"] as? String ?? "none"
+        self.configured = payload["configured"] as? Bool ?? false
+        self.value = ""
+    }
+
+    static let defaultRows = [
+        SettingsSecretStatus(name: "OPENAI_API_KEY", label: "OpenAI"),
+        SettingsSecretStatus(name: "ANTHROPIC_API_KEY", label: "Anthropic"),
+        SettingsSecretStatus(name: "GROQ_API_KEY", label: "Groq"),
+        SettingsSecretStatus(name: "GOOGLE_API_KEY", label: "Google"),
+        SettingsSecretStatus(name: "CARTESIA_API_KEY", label: "Cartesia"),
+        SettingsSecretStatus(name: "ELEVENLABS_API_KEY", label: "ElevenLabs"),
+        SettingsSecretStatus(name: "CUSTOM_API_KEY", label: "Custom provider"),
+        SettingsSecretStatus(name: "DEEPSEEK_API_KEY", label: "DeepSeek"),
+        SettingsSecretStatus(name: "OPENROUTER_API_KEY", label: "OpenRouter"),
+        SettingsSecretStatus(name: "MISTRAL_API_KEY", label: "Mistral"),
+        SettingsSecretStatus(name: "XAI_API_KEY", label: "xAI"),
+        SettingsSecretStatus(name: "TOGETHER_API_KEY", label: "Together"),
+        SettingsSecretStatus(name: "CEREBRAS_API_KEY", label: "Cerebras"),
+    ]
+}
+
 @MainActor
 final class SettingsPanel: NSPanel {
 
@@ -420,9 +479,19 @@ final class SettingsPanel: NSPanel {
     init(
         onSave: @escaping (SettingsDraft) -> Void,
         onTestLLM: @escaping (SettingsDraft, SettingsLLMTestRoute) -> Void,
-        onTestTTS: @escaping (SettingsDraft) -> Void
+        onTestTTS: @escaping (SettingsDraft) -> Void,
+        onRefreshSecrets: @escaping () -> Void,
+        onSaveSecret: @escaping (SettingsSecretStatus) -> Void,
+        onClearSecret: @escaping (SettingsSecretStatus) -> Void
     ) {
-        self.model = SettingsModel(onSave: onSave, onTestLLM: onTestLLM, onTestTTS: onTestTTS)
+        self.model = SettingsModel(
+            onSave: onSave,
+            onTestLLM: onTestLLM,
+            onTestTTS: onTestTTS,
+            onRefreshSecrets: onRefreshSecrets,
+            onSaveSecret: onSaveSecret,
+            onClearSecret: onClearSecret
+        )
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 780, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -443,6 +512,7 @@ final class SettingsPanel: NSPanel {
 
     func showSettings(draft: SettingsDraft) {
         model.load(draft)
+        model.refreshSecrets()
         if !isVisible {
             center()
         }
@@ -454,6 +524,9 @@ final class SettingsPanel: NSPanel {
         model.isSaving = false
         model.isTestingTTS = false
         model.testingLLMRoute = nil
+        model.isLoadingSecrets = false
+        model.savingSecretName = nil
+        model.clearingSecretName = nil
         model.status = status
     }
 
@@ -461,6 +534,9 @@ final class SettingsPanel: NSPanel {
         model.isSaving = false
         model.isTestingTTS = false
         model.testingLLMRoute = nil
+        model.isLoadingSecrets = false
+        model.savingSecretName = nil
+        model.clearingSecretName = nil
         model.status = "Settings error"
         model.errorText = message
     }
@@ -481,6 +557,17 @@ final class SettingsPanel: NSPanel {
         model.errorText = ok ? "" : message
         model.ttsTestText = message
     }
+
+    func setSecretStatuses(_ statuses: [SettingsSecretStatus], status: String? = nil) {
+        model.isLoadingSecrets = false
+        model.savingSecretName = nil
+        model.clearingSecretName = nil
+        model.secrets = statuses
+        model.errorText = ""
+        if let status {
+            model.status = status
+        }
+    }
 }
 
 @MainActor
@@ -494,19 +581,41 @@ private final class SettingsModel: ObservableObject {
     @Published var isSaving = false
     @Published var testingLLMRoute: SettingsLLMTestRoute?
     @Published var isTestingTTS = false
+    @Published var secrets = SettingsSecretStatus.defaultRows
+    @Published var isLoadingSecrets = false
+    @Published var savingSecretName: String?
+    @Published var clearingSecretName: String?
 
     private let onSave: (SettingsDraft) -> Void
     private let onTestLLM: (SettingsDraft, SettingsLLMTestRoute) -> Void
     private let onTestTTS: (SettingsDraft) -> Void
+    private let onRefreshSecrets: () -> Void
+    private let onSaveSecret: (SettingsSecretStatus) -> Void
+    private let onClearSecret: (SettingsSecretStatus) -> Void
+
+    var hasBlockingOperation: Bool {
+        return isSaving
+            || testingLLMRoute != nil
+            || isTestingTTS
+            || isLoadingSecrets
+            || savingSecretName != nil
+            || clearingSecretName != nil
+    }
 
     init(
         onSave: @escaping (SettingsDraft) -> Void,
         onTestLLM: @escaping (SettingsDraft, SettingsLLMTestRoute) -> Void,
-        onTestTTS: @escaping (SettingsDraft) -> Void
+        onTestTTS: @escaping (SettingsDraft) -> Void,
+        onRefreshSecrets: @escaping () -> Void,
+        onSaveSecret: @escaping (SettingsSecretStatus) -> Void,
+        onClearSecret: @escaping (SettingsSecretStatus) -> Void
     ) {
         self.onSave = onSave
         self.onTestLLM = onTestLLM
         self.onTestTTS = onTestTTS
+        self.onRefreshSecrets = onRefreshSecrets
+        self.onSaveSecret = onSaveSecret
+        self.onClearSecret = onClearSecret
     }
 
     func load(_ draft: SettingsDraft) {
@@ -519,10 +628,13 @@ private final class SettingsModel: ObservableObject {
         self.isSaving = false
         self.testingLLMRoute = nil
         self.isTestingTTS = false
+        self.isLoadingSecrets = false
+        self.savingSecretName = nil
+        self.clearingSecretName = nil
     }
 
     func save() {
-        guard !isSaving, testingLLMRoute == nil, !isTestingTTS else { return }
+        guard !hasBlockingOperation else { return }
         errorText = ""
         isSaving = true
         status = "Saving..."
@@ -530,7 +642,7 @@ private final class SettingsModel: ObservableObject {
     }
 
     func testLLM(_ route: SettingsLLMTestRoute) {
-        guard testingLLMRoute == nil, !isSaving else { return }
+        guard !hasBlockingOperation else { return }
         errorText = ""
         llmTestText[route] = ""
         llmTestOK.removeValue(forKey: route)
@@ -540,7 +652,7 @@ private final class SettingsModel: ObservableObject {
     }
 
     func testTTS() {
-        guard !isTestingTTS, testingLLMRoute == nil, !isSaving else { return }
+        guard !hasBlockingOperation else { return }
         errorText = ""
         ttsTestText = ""
         isTestingTTS = true
@@ -555,6 +667,87 @@ private final class SettingsModel: ObservableObject {
     func removeCaller(_ caller: SettingsCallerDraft) {
         draft.callers.removeAll { $0.id == caller.id }
     }
+
+    func refreshSecrets() {
+        guard !hasBlockingOperation else { return }
+        errorText = ""
+        isLoadingSecrets = true
+        status = "Loading API keys..."
+        onRefreshSecrets()
+    }
+
+    func saveSecret(_ secret: SettingsSecretStatus) {
+        guard !hasBlockingOperation else { return }
+        let value = secret.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else {
+            errorText = "\(secret.label) key is empty"
+            status = "API key not saved"
+            return
+        }
+        errorText = ""
+        savingSecretName = secret.name
+        status = "Saving \(secret.label)..."
+        onSaveSecret(secret)
+    }
+
+    func clearSecret(_ secret: SettingsSecretStatus) {
+        guard !hasBlockingOperation else { return }
+        errorText = ""
+        clearingSecretName = secret.name
+        status = "Clearing \(secret.label)..."
+        onClearSecret(secret)
+    }
+
+    func isSecretBusy(_ secret: SettingsSecretStatus) -> Bool {
+        savingSecretName == secret.name || clearingSecretName == secret.name
+    }
+}
+
+private struct SecretKeyRow: View {
+    @Binding var secret: SettingsSecretStatus
+    var isBusy: Bool
+    var actionsDisabled: Bool
+    var onSave: () -> Void
+    var onClear: () -> Void
+
+    private var statusColor: Color {
+        secret.configured ? Color.green : Color.secondary
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(secret.label)
+                    .foregroundStyle(.secondary)
+                Text(secret.statusText)
+                    .font(.caption)
+                    .foregroundStyle(statusColor)
+                    .lineLimit(1)
+            }
+            .frame(width: 135, alignment: .trailing)
+
+            SecureField("New API key", text: $secret.value)
+                .textFieldStyle(.roundedBorder)
+
+            Button {
+                onSave()
+            } label: {
+                Image(systemName: "key.fill")
+            }
+            .buttonStyle(.borderless)
+            .help("Save \(secret.label) key")
+            .disabled(actionsDisabled || isBusy || secret.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            Button {
+                onClear()
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .help("Clear \(secret.label) key")
+            .disabled(actionsDisabled || isBusy || !secret.configured)
+        }
+    }
 }
 
 private struct SettingsPanelView: View {
@@ -567,6 +760,8 @@ private struct SettingsPanelView: View {
             TabView {
                 modelsTab
                     .tabItem { Text("Models") }
+                keysTab
+                    .tabItem { Text("Keys") }
                 callersTab
                     .tabItem { Text("Callers") }
                 voiceTab
@@ -592,7 +787,7 @@ private struct SettingsPanelView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Spacer()
-            if model.isSaving || model.isTestingTTS || model.testingLLMRoute != nil {
+            if model.hasBlockingOperation {
                 ProgressView()
                     .controlSize(.small)
             }
@@ -653,12 +848,45 @@ private struct SettingsPanelView: View {
             }
             .buttonStyle(.borderless)
             .help("Test \(route.routeName) route")
-            .disabled(model.isSaving || model.isTestingTTS || model.testingLLMRoute != nil)
+            .disabled(model.hasBlockingOperation)
             Text(model.llmTestText[route] ?? "")
                 .font(.caption)
                 .foregroundStyle(model.llmTestOK[route] == false ? Color.red : Color.secondary)
                 .lineLimit(2)
                 .textSelection(.enabled)
+        }
+    }
+
+    private var keysTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                SettingsSection("API Keys") {
+                    HStack(spacing: 10) {
+                        Spacer()
+                            .frame(width: 135)
+                        Button {
+                            model.refreshSecrets()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Refresh keychain status")
+                        .disabled(model.hasBlockingOperation)
+                        Spacer()
+                    }
+
+                    ForEach($model.secrets) { $secret in
+                        SecretKeyRow(
+                            secret: $secret,
+                            isBusy: model.isSecretBusy(secret),
+                            actionsDisabled: model.hasBlockingOperation && !model.isSecretBusy(secret),
+                            onSave: { model.saveSecret(secret) },
+                            onClear: { model.clearSecret(secret) }
+                        )
+                    }
+                }
+            }
+            .padding(4)
         }
     }
 
@@ -727,7 +955,7 @@ private struct SettingsPanelView: View {
                         }
                         .buttonStyle(.borderless)
                         .help("Test TTS route")
-                        .disabled(model.isTestingTTS || model.isSaving || model.testingLLMRoute != nil)
+                        .disabled(model.hasBlockingOperation)
                         Text(model.ttsTestText)
                             .font(.caption)
                             .foregroundStyle(model.errorText.isEmpty ? Color.secondary : Color.red)
@@ -817,7 +1045,7 @@ private struct SettingsPanelView: View {
                 Image(systemName: "checkmark")
             }
             .help("Save")
-            .disabled(model.isSaving || model.isTestingTTS || model.testingLLMRoute != nil)
+            .disabled(model.hasBlockingOperation)
         }
         .padding(12)
     }

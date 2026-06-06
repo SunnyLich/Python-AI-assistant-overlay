@@ -44,6 +44,7 @@ struct SettingsDraft: Equatable {
     var sttLanguage: String
     var ttsPlaybackRate: String
     var ttsHoldPlaybackRate: String
+    var voiceHotkey: String
 
     var memoryAutoConsolidate: Bool
     var memoryConsolidationInterval: String
@@ -110,6 +111,7 @@ struct SettingsDraft: Equatable {
             sttLanguage: values["STT_LANGUAGE"] ?? "en",
             ttsPlaybackRate: values["TTS_PLAYBACK_RATE"] ?? "1.0",
             ttsHoldPlaybackRate: values["TTS_HOLD_PLAYBACK_RATE"] ?? "1.35",
+            voiceHotkey: values["HOTKEY_VOICE"] ?? "f9",
             memoryAutoConsolidate: boolValue(values["MEMORY_AUTO_CONSOLIDATE"], default: false),
             memoryConsolidationInterval: values["MEMORY_CONSOLIDATION_INTERVAL"] ?? "15",
             memoryTopK: values["MEMORY_TOP_K"] ?? "3",
@@ -161,6 +163,7 @@ struct SettingsDraft: Equatable {
         sttLanguage: "en",
         ttsPlaybackRate: "1.0",
         ttsHoldPlaybackRate: "1.35",
+        voiceHotkey: "f9",
         memoryAutoConsolidate: false,
         memoryConsolidationInterval: "15",
         memoryTopK: "3",
@@ -221,6 +224,7 @@ struct SettingsDraft: Equatable {
             "STT_LANGUAGE": sttLanguage,
             "TTS_PLAYBACK_RATE": ttsPlaybackRate,
             "TTS_HOLD_PLAYBACK_RATE": ttsHoldPlaybackRate,
+            "HOTKEY_VOICE": voiceHotkey,
             "MEMORY_AUTO_CONSOLIDATE": memoryAutoConsolidate ? "true" : "false",
             "MEMORY_CONSOLIDATION_INTERVAL": memoryConsolidationInterval,
             "MEMORY_TOP_K": memoryTopK,
@@ -670,6 +674,10 @@ private struct SettingsPanelView: View {
     private var voiceTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                SettingsSection("Voice Query") {
+                    SettingsTextField("Hotkey", text: $model.draft.voiceHotkey)
+                }
+
                 SettingsSection("TTS") {
                     PickerRow("Provider", selection: $model.draft.ttsProvider, options: ["cartesia", "elevenlabs", "none"])
                     SettingsTextField("Cartesia voice", text: $model.draft.cartesiaVoiceID)

@@ -67,4 +67,13 @@ final class HotkeyControllerTests: XCTestCase {
         XCTAssertEqual(clear.keyCode, 13)
         XCTAssertTrue(clear.modifiers.contains(.maskAlternate))
     }
+
+    func testParsesVoiceHotkeyAction() throws {
+        let hotkey = try XCTUnwrap(
+            HotkeyDefinition.parse("f9", action: .voiceStart, label: "Voice")
+        )
+
+        XCTAssertEqual(hotkey.action, .voiceStart)
+        XCTAssertEqual(hotkey.keyCode, 101)
+    }
 }

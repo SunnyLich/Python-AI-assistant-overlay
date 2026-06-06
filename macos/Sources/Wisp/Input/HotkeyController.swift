@@ -23,6 +23,8 @@ enum HotkeyAction: Equatable {
     case snip
     case addContext
     case clearContext
+    case voiceStart
+    case voiceStop
 }
 
 struct HotkeyDefinition: Equatable {
@@ -150,6 +152,7 @@ final class HotkeyController {
         snip: SnipConfig? = nil,
         addContextHotkey: String? = nil,
         clearContextHotkey: String? = nil,
+        voiceHotkey: String? = nil,
         promptForPermission: Bool
     ) -> HotkeyInstallResult {
         stop()
@@ -169,6 +172,11 @@ final class HotkeyController {
         }) {
             definitions.append(clearDefinition)
         }
+        if let voiceDefinition = voiceHotkey.flatMap({
+            HotkeyDefinition.parse($0, action: .voiceStart, label: "Voice")
+        }) {
+            definitions.append(voiceDefinition)
+        }
         guard !definitions.isEmpty else {
             return .failed("no valid hotkeys configured")
         }
@@ -180,7 +188,7 @@ final class HotkeyController {
             return .accessibilityNeeded
         }
 
-        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+        let mask = CGEventMask((1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue))
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -226,13 +234,20 @@ final class HotkeyController {
             return
         }
 
-        guard typeRawValue == CGEventType.keyDown.rawValue, !isRepeat else { return }
+        guard typeRawValue == CGEventType.keyDown.rawValue || typeRawValue == CGEventType.keyUp.rawValue else { return }
+        guard typeRawValue != CGEventType.keyDown.rawValue || !isRepeat else { return }
 
         let flags = CGEventFlags(rawValue: flagsRawValue)
         guard let definition = definitions.first(where: { $0.matches(keyCode: keyCode, flags: flags) }) else {
             return
         }
         NSLog("[wisp] hotkey triggered: %@", definition.display)
+        if typeRawValue == CGEventType.keyUp.rawValue {
+            if definition.action == .voiceStart {
+                onTrigger(.voiceStop)
+            }
+            return
+        }
         onTrigger(definition.action)
     }
 }

@@ -221,6 +221,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.addNativeContext()
             case .clearContext:
                 self?.clearNativeContext()
+            case .voiceStart:
+                self?.startVoiceQuery()
+            case .voiceStop:
+                self?.stopVoiceQuery()
             }
         }
         self.hotkey = hotkey
@@ -308,6 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             snip: appConfig.snip,
             addContextHotkey: settings.addContextHotkey,
             clearContextHotkey: settings.clearContextHotkey,
+            voiceHotkey: settings.voiceHotkey,
             promptForPermission: promptForPermission
         )
         statusController?.setHotkeyStatus(result.statusText)
@@ -680,6 +685,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startVoiceQuery() {
+        guard !audioRecorder.isRecording else { return }
         cancelSpeechPlayback()
         appConfig = WispConfig.load()
         pendingVoiceContext = PendingNativeContext(
@@ -711,6 +717,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func stopVoiceQuery() {
+        guard audioRecorder.isRecording else { return }
         promptPanel?.showPrompt()
         overlay?.setState(.thinking)
         responseBubble?.startThinking(anchor: overlay?.frame)

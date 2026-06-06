@@ -26,11 +26,13 @@ def test_auth_handlers_registered():
     assert "brain.auth.status" in handlers.HANDLERS
     assert "brain.auth.chatgpt.start_browser_login" in handlers.HANDLERS
     assert "brain.auth.chatgpt.clear" in handlers.HANDLERS
+    assert "brain.auth.github.device_login" in handlers.HANDLERS
     assert "brain.auth.github.clear" in handlers.HANDLERS
     assert "brain.auth.copilot.set" in handlers.HANDLERS
     assert "brain.auth.copilot.test" in handlers.HANDLERS
     assert "brain.auth.copilot.clear" in handlers.HANDLERS
     assert "brain.auth.status" not in handlers.STREAMING
+    assert "brain.auth.github.device_login" in handlers.STREAMING
 
 
 def test_config_reload_calls_config_reload(monkeypatch):
@@ -287,6 +289,70 @@ def test_auth_clear_handlers_call_shared_modules(monkeypatch):
         "message": "Not configured",
     }
     assert calls == ["chatgpt", "github", "copilot"]
+
+
+def test_auth_github_device_login_streams_code_and_success(monkeypatch):
+    import config
+    from core.auth import github as github_auth
+
+    events = []
+    monkeypatch.setattr(github_auth, "has_configured_client_id", lambda: True)
+
+    def start_device_login(on_code, on_success, on_error):
+        on_code("https://github.com/login/device", "ABCD-1234")
+        on_success({"user": {"login": "octo"}})
+
+    monkeypatch.setattr(github_auth, "start_device_login", start_device_login)
+
+    ctx = handlers.StreamContext(lambda name, data, req_id: events.append((name, data, req_id)), req_id=42)
+    result = handlers.HANDLERS["brain.auth.github.device_login"](
+        ctx,
+        client_id="client-123",
+        scopes="repo read:user",
+        timeout_seconds=1,
+    )
+
+    assert config.GITHUB_CLIENT_ID == "client-123"
+    assert config.GITHUB_OAUTH_SCOPES == "repo read:user"
+    assert events == [
+        (
+            "auth.code",
+            {
+                "provider": "github",
+                "url": "https://github.com/login/device",
+                "user_code": "ABCD-1234",
+            },
+            42,
+        ),
+        (
+            "auth.done",
+            {
+                "ok": True,
+                "provider": "github",
+                "message": "Logged in as octo",
+            },
+            42,
+        ),
+    ]
+    assert result == {
+        "ok": True,
+        "provider": "github",
+        "message": "Logged in as octo",
+    }
+
+
+def test_auth_github_device_login_reports_missing_client(monkeypatch):
+    from core.auth import github as github_auth
+
+    monkeypatch.setattr(github_auth, "has_configured_client_id", lambda: False)
+    ctx = handlers.StreamContext(lambda _name, _data, _req_id: None, req_id=1)
+
+    try:
+        handlers.HANDLERS["brain.auth.github.device_login"](ctx, client_id="", scopes="", timeout_seconds=1)
+    except ValueError as exc:
+        assert "GitHub OAuth app client ID" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
 
 
 def test_auth_copilot_set_and_test_call_shared_modules(monkeypatch):

@@ -515,6 +515,7 @@ final class SettingsPanel: NSPanel {
         onClearSecret: @escaping (SettingsSecretStatus) -> Void,
         onRefreshAuth: @escaping () -> Void,
         onStartChatGPTLogin: @escaping () -> Void,
+        onStartGitHubLogin: @escaping (SettingsDraft) -> Void,
         onClearAuthProvider: @escaping (String) -> Void,
         onSaveCopilotToken: @escaping (String) -> Void,
         onTestCopilotToken: @escaping () -> Void
@@ -528,6 +529,7 @@ final class SettingsPanel: NSPanel {
             onClearSecret: onClearSecret,
             onRefreshAuth: onRefreshAuth,
             onStartChatGPTLogin: onStartChatGPTLogin,
+            onStartGitHubLogin: onStartGitHubLogin,
             onClearAuthProvider: onClearAuthProvider,
             onSaveCopilotToken: onSaveCopilotToken,
             onTestCopilotToken: onTestCopilotToken
@@ -623,6 +625,14 @@ final class SettingsPanel: NSPanel {
             model.status = status
         }
     }
+
+    func setAuthProgress(_ message: String) {
+        model.status = message
+        model.errorText = ""
+        if let index = model.authStatuses.firstIndex(where: { $0.name == "github" }) {
+            model.authStatuses[index].message = message
+        }
+    }
 }
 
 @MainActor
@@ -653,6 +663,7 @@ private final class SettingsModel: ObservableObject {
     private let onClearSecret: (SettingsSecretStatus) -> Void
     private let onRefreshAuth: () -> Void
     private let onStartChatGPTLogin: () -> Void
+    private let onStartGitHubLogin: (SettingsDraft) -> Void
     private let onClearAuthProvider: (String) -> Void
     private let onSaveCopilotToken: (String) -> Void
     private let onTestCopilotToken: () -> Void
@@ -677,6 +688,7 @@ private final class SettingsModel: ObservableObject {
         onClearSecret: @escaping (SettingsSecretStatus) -> Void,
         onRefreshAuth: @escaping () -> Void,
         onStartChatGPTLogin: @escaping () -> Void,
+        onStartGitHubLogin: @escaping (SettingsDraft) -> Void,
         onClearAuthProvider: @escaping (String) -> Void,
         onSaveCopilotToken: @escaping (String) -> Void,
         onTestCopilotToken: @escaping () -> Void
@@ -689,6 +701,7 @@ private final class SettingsModel: ObservableObject {
         self.onClearSecret = onClearSecret
         self.onRefreshAuth = onRefreshAuth
         self.onStartChatGPTLogin = onStartChatGPTLogin
+        self.onStartGitHubLogin = onStartGitHubLogin
         self.onClearAuthProvider = onClearAuthProvider
         self.onSaveCopilotToken = onSaveCopilotToken
         self.onTestCopilotToken = onTestCopilotToken
@@ -803,6 +816,14 @@ private final class SettingsModel: ObservableObject {
         authOperation = "chatgpt"
         status = "Starting ChatGPT sign-in..."
         onStartChatGPTLogin()
+    }
+
+    func startGitHubLogin() {
+        guard !hasBlockingOperation else { return }
+        errorText = ""
+        authOperation = "github"
+        status = "Starting GitHub sign-in..."
+        onStartGitHubLogin(draft)
     }
 
     func clearAuthProvider(_ provider: String) {
@@ -1106,8 +1127,9 @@ private struct SettingsPanelView: View {
                     ProviderAuthRow(
                         status: authStatus("github"),
                         actionsDisabled: model.hasBlockingOperation,
-                        primaryIcon: nil,
-                        onPrimary: nil,
+                        primaryIcon: "person.crop.circle.badge.plus",
+                        primaryHelp: "Sign in with GitHub",
+                        onPrimary: { model.startGitHubLogin() },
                         onClear: { model.clearAuthProvider("github") }
                     )
                 }

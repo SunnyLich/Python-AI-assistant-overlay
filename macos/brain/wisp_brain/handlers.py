@@ -334,6 +334,56 @@ def brain_auth_github_clear() -> dict[str, Any]:
     return {"ok": True, "name": "github"}
 
 
+@handler("brain.auth.github.device_login", streaming=True)
+def brain_auth_github_device_login(
+    ctx: StreamContext,
+    client_id: str = "",
+    scopes: str = "",
+    timeout_seconds: int = 900,
+) -> dict[str, Any]:
+    """Run GitHub device auth and stream the verification code to Swift."""
+    import config
+    from core.auth import github as github_auth
+
+    config.GITHUB_CLIENT_ID = (client_id or "").strip() or getattr(config, "GITHUB_DEFAULT_CLIENT_ID", "")
+    config.GITHUB_OAUTH_SCOPES = (scopes or "").strip()
+    if not github_auth.has_configured_client_id():
+        raise ValueError("This build does not include a GitHub OAuth app client ID yet.")
+
+    done = threading.Event()
+    result: dict[str, Any] = {"ok": False, "message": "GitHub sign-in did not finish."}
+
+    def on_code(url: str, user_code: str) -> None:
+        ctx.emit("auth.code", {"provider": "github", "url": url, "user_code": user_code})
+
+    def on_success(tokens: dict) -> None:
+        user = tokens.get("user") if isinstance(tokens, dict) else {}
+        login = user.get("login") if isinstance(user, dict) else ""
+        result.update({
+            "ok": True,
+            "provider": "github",
+            "message": "Logged in" + (f" as {login}" if login else ""),
+        })
+        ctx.emit("auth.done", result)
+        done.set()
+
+    def on_error(message: str) -> None:
+        result.update({"ok": False, "provider": "github", "message": message})
+        ctx.emit("auth.error", result)
+        done.set()
+
+    github_auth.start_device_login(on_code, on_success, on_error)
+    deadline = time.time() + max(1, int(timeout_seconds or 900))
+    while not done.wait(0.25):
+        if ctx.cancelled:
+            return {"ok": False, "provider": "github", "cancelled": True, "message": "GitHub sign-in cancelled"}
+        if time.time() >= deadline:
+            result.update({"ok": False, "provider": "github", "message": "Timed out waiting for GitHub login"})
+            ctx.emit("auth.error", result)
+            break
+    return result
+
+
 @handler("brain.auth.copilot.set")
 def brain_auth_copilot_set(token: str = "") -> dict[str, Any]:
     from core.auth import copilot_auth

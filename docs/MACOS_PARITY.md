@@ -27,7 +27,7 @@ work until each visible surface is ported.
 | Response bubble | live compact reply surface, reveal timing, click-through to chat | Qt `SpeechBubble` | Swift `ResponseBubblePanel` with native word reveal, read-word highlight, and shared sizing/colors |
 | Chat | multi-turn conversation history, auto-elaborate, and streaming replies | Qt window | Swift `ChatPanel` with native history controls, streaming replies, and auto-elaborate |
 | Memory | durable facts: list, add, edit, delete, search | Qt `MemoryViewer` | Swift `MemoryPanel` + `brain.memory.*` |
-| Settings | shared `.env` config, models, callers, voice, memory, chat, UI knobs, OS-keychain API keys, provider auth | Qt `SettingsDialog` | Swift `SettingsPanel` with LLM/TTS tests, caller editing, shared UI keys, API key status/save/clear, provider-auth status, ChatGPT sign-in launch, and Copilot token save/test/clear via the Python sidecar |
+| Settings | shared `.env` config, models, callers, voice, memory, chat, UI knobs, OS-keychain API keys, provider auth | Qt `SettingsDialog` | Swift `SettingsPanel` with LLM/TTS tests, caller editing, shared UI keys, API key status/save/clear, provider-auth status, ChatGPT sign-in launch, GitHub device sign-in, and Copilot token save/test/clear via the Python sidecar |
 | Plugins | loaded/discoverable plugin list, hooks, tools, folder open, tray actions | Qt `PluginManagerDialog` | Swift `PluginManagerPanel` with action execution and status refresh |
 | Snip overlay | drag-select region, attach image to intent query | Qt `SnipOverlay` | Swift `SnipOverlayPanel` + `ScreenCaptureController` region capture |
 | Agents | same user-facing task/history windows and config | Qt windows | Swift `AgentTaskPanel`, `AgentHistoryPanel`, and `AgentDiffPanel` |

@@ -148,6 +148,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onStartChatGPTLogin: { [weak self] in
                 Task { await self?.startSettingsChatGPTLogin() }
             },
+            onStartGitHubLogin: { [weak self] draft in
+                Task { await self?.startSettingsGitHubLogin(draft) }
+            },
             onClearAuthProvider: { [weak self] provider in
                 Task { await self?.clearSettingsAuthProvider(provider) }
             },
@@ -1260,6 +1263,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsPanel?.fail(String(describing: error))
             statusController?.setBrainStatus("chatgpt auth error")
             NSLog("[wisp] chatgpt auth start failed: %@", String(describing: error))
+        }
+    }
+
+    private func startSettingsGitHubLogin(_ draft: SettingsDraft) async {
+        guard let client = brain else {
+            settingsPanel?.fail("brain client is not available")
+            statusController?.setBrainStatus("github auth error")
+            return
+        }
+
+        do {
+            var finalMessage = "GitHub sign-in started"
+            var finalOK = false
+            for try await item in client.stream(
+                "brain.auth.github.device_login",
+                [
+                    "client_id": draft.githubClientID,
+                    "scopes": draft.githubOAuthScopes,
+                ]
+            ) {
+                switch item {
+                case .event(let name, let data) where name == "auth.code":
+                    let urlText = data?["url"] as? String ?? ""
+                    let code = data?["user_code"] as? String ?? ""
+                    if let url = URL(string: urlText) {
+                        NSWorkspace.shared.open(url)
+                    }
+                    let message = code.isEmpty ? "GitHub sign-in started" : "GitHub code: \(code)"
+                    settingsPanel?.setAuthProgress(message)
+                    statusController?.setBrainStatus("github auth code ready")
+                    NSLog("[wisp] github auth code emitted")
+                case .event(let name, let data) where name == "auth.done":
+                    finalOK = data?["ok"] as? Bool ?? true
+                    finalMessage = data?["message"] as? String ?? "GitHub signed in"
+                case .event(let name, let data) where name == "auth.error":
+                    finalOK = false
+                    finalMessage = data?["message"] as? String ?? "GitHub sign-in failed"
+                case .result(let result):
+                    finalOK = result?["ok"] as? Bool ?? finalOK
+                    finalMessage = result?["message"] as? String ?? finalMessage
+                default:
+                    break
+                }
+            }
+            await loadSettingsAuth(statusMessage: finalMessage)
+            statusController?.setBrainStatus(finalOK ? "github auth ok" : "github auth failed")
+            NSLog("[wisp] github auth finished: %@", finalMessage)
+        } catch {
+            settingsPanel?.fail(String(describing: error))
+            statusController?.setBrainStatus("github auth error")
+            NSLog("[wisp] github auth failed: %@", String(describing: error))
         }
     }
 

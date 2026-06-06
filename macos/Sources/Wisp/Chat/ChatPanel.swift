@@ -119,6 +119,17 @@ private final class ChatModel: ObservableObject {
         scrollToken += 1
     }
 
+    func deleteActiveConversation() {
+        guard !isStreaming else { return }
+        conversations.removeAll { $0.id == activeID }
+        if conversations.isEmpty {
+            conversations.append(Conversation(id: UUID(), title: "New chat", messages: []))
+        }
+        activeID = conversations.last?.id ?? conversations[0].id
+        input = ""
+        scrollToken += 1
+    }
+
     func recordExchange(user: String, assistant: String) {
         if activeConversation.messages.isEmpty == false {
             startNewConversation()
@@ -226,7 +237,7 @@ private struct ChatPanelView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(model.conversations) { conversation in
+                    ForEach(model.conversations.reversed()) { conversation in
                         Button {
                             model.select(conversation.id)
                         } label: {
@@ -261,6 +272,14 @@ private struct ChatPanelView: View {
                 ProgressView()
                     .controlSize(.small)
             }
+            Button {
+                model.deleteActiveConversation()
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .help("Delete selected conversation")
+            .disabled(model.isStreaming)
         }
         .padding(.horizontal, 14)
         .frame(height: 42)

@@ -71,7 +71,9 @@ from the dev bundle location, then seeds `WISP_REPO_ROOT` and
 `WISP_RUN_LOG_DIR` before starting the Python brain. The native app should read
 the same `.env` as the terminal path, and voice recordings or screen captures
 should land beside the validation logs instead of in a random temporary
-directory.
+directory. The validation script waits for
+`build_logs/macos_phase1_<timestamp>/native-app-launch.log`, which proves the
+app reached native startup after LaunchServices opened it.
 
 ## Native Test Button
 

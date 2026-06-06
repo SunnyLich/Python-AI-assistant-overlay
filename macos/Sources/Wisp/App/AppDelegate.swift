@@ -72,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         RunLogLocator.seedProcessEnvironmentIfMissing()
         appConfig = WispConfig.load()
+        NativeLaunchDiagnostics.writeStartupRecord(config: appConfig)
         applyTheme(SettingsDraft.load().themeMode)
 
         let client = BrainClient(config: BrainLocator.resolve())

@@ -176,6 +176,24 @@ open_dev_app_without_wisp_env() {
   /usr/bin/open -n "$APP_BUNDLE"
 }
 
+wait_for_open_launch_marker() {
+  local marker="$LOG_DIR/native-app-launch.log"
+  local i=0
+  while [ "$i" -lt 15 ]; do
+    if [ -s "$marker" ]; then
+      log_info "Native app launch marker detected: $marker"
+      sed 's/^/  /' "$marker" | tee -a "$SUMMARY_LOG"
+      return 0
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
+
+  log_info "FAILED: native app launch marker was not written within 15 seconds"
+  log_info "Expected marker: $marker"
+  return 1
+}
+
 if [ "$(uname -s 2>/dev/null || true)" != "Darwin" ]; then
   echo "ERROR: this validation script must run on macOS." >&2
   exit 1
@@ -405,6 +423,7 @@ if [ "$RUN_MODE" = "--open" ]; then
   log_info "Launching dev app bundle through macOS open: $APP_BUNDLE"
   log_info "This exercises Finder-style brain/log/resource inference without WISP_BRAIN_* env vars."
   run_logged "wisp-app-open" open_dev_app_without_wisp_env
+  wait_for_open_launch_marker
   collect_recent_crash_reports
   echo
   echo "Phase-1 validation passed and Wisp.app launch was requested."

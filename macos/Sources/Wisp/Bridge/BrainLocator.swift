@@ -6,7 +6,7 @@ import Foundation
 /// - Release: the embedded python-build-standalone runtime and a copy of the
 ///   brain (+ `core`) are bundled under `Wisp.app/Contents/Resources`.
 /// - Dev: point at a checkout via env vars so you can iterate without bundling:
-///     WISP_BRAIN_PYTHON  — interpreter (default: /usr/bin/python3)
+///     WISP_BRAIN_PYTHON  — interpreter (default: checkout .venv, then /usr/bin/python3)
 ///     WISP_BRAIN_DIR     — dir containing the `wisp_brain` package (macos/brain)
 ///     WISP_REPO_ROOT     — repo root (added to PYTHONPATH so `core` imports)
 enum BrainLocator {
@@ -44,26 +44,37 @@ enum BrainLocator {
             }
         }
 
+        let devBundleRepoRoot = resourceURL.flatMap {
+            repoRootForDevBundle(resourceURL: $0, fileManager: fm)
+        }
+        let environmentRepoRoot = nonEmpty(environment["WISP_REPO_ROOT"])
+            .map { URL(fileURLWithPath: $0) }
+        let inferredRepoRoot = environmentRepoRoot ?? devBundleRepoRoot
+
         // 2. Dev fallback via environment.
         if environment["WISP_BRAIN_PYTHON"] != nil
             || environment["WISP_BRAIN_DIR"] != nil {
-            let python = environment["WISP_BRAIN_PYTHON"].map { URL(fileURLWithPath: $0) }
-                ?? URL(fileURLWithPath: "/usr/bin/python3")
-            let brainDir = environment["WISP_BRAIN_DIR"].map { URL(fileURLWithPath: $0) }
-                ?? currentDirectory.appendingPathComponent("brain")
-            let repoRoot = environment["WISP_REPO_ROOT"].map { URL(fileURLWithPath: $0) }
+            let python = devPython(
+                environmentValue: environment["WISP_BRAIN_PYTHON"],
+                repoRoot: inferredRepoRoot,
+                fileManager: fm
+            )
+            let brainDir = devBrainDirectory(
+                environmentValue: environment["WISP_BRAIN_DIR"],
+                repoRoot: inferredRepoRoot,
+                currentDirectory: currentDirectory
+            )
             return BrainClient.Config(
                 pythonExecutable: python,
                 brainDirectory: brainDir,
-                extraPythonPath: repoRoot.map { [$0] } ?? []
+                extraPythonPath: inferredRepoRoot.map { [$0] } ?? []
             )
         }
 
         // 3. Finder-launched dev bundle from build/WispNative/Wisp.app.
-        if let res = resourceURL,
-           let repoRoot = repoRootForDevBundle(resourceURL: res, fileManager: fm) {
+        if let repoRoot = devBundleRepoRoot {
             return BrainClient.Config(
-                pythonExecutable: repoRoot.appendingPathComponent(".venv/bin/python"),
+                pythonExecutable: devPython(environmentValue: nil, repoRoot: repoRoot, fileManager: fm),
                 brainDirectory: repoRoot.appendingPathComponent("macos/brain"),
                 extraPythonPath: [repoRoot]
             )
@@ -80,6 +91,63 @@ enum BrainLocator {
         )
     }
 
+    private static func devPython(
+        environmentValue rawValue: String?,
+        repoRoot: URL?,
+        fileManager fm: FileManager
+    ) -> URL {
+        if let raw = nonEmpty(rawValue) {
+            if raw.hasPrefix("/") {
+                return URL(fileURLWithPath: raw)
+            }
+            if raw.contains("/") {
+                return (repoRoot ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+                    .appendingPathComponent(raw)
+            }
+            if let repoRoot, let venvPython = venvPython(in: repoRoot, fileManager: fm) {
+                return venvPython
+            }
+            return URL(fileURLWithPath: "/usr/bin/python3")
+        }
+
+        if let repoRoot, let venvPython = venvPython(in: repoRoot, fileManager: fm) {
+            return venvPython
+        }
+        return URL(fileURLWithPath: "/usr/bin/python3")
+    }
+
+    private static func devBrainDirectory(
+        environmentValue rawValue: String?,
+        repoRoot: URL?,
+        currentDirectory: URL
+    ) -> URL {
+        if let raw = nonEmpty(rawValue) {
+            if raw.hasPrefix("/") {
+                return URL(fileURLWithPath: raw)
+            }
+            return (repoRoot ?? currentDirectory).appendingPathComponent(raw)
+        }
+        if let repoRoot {
+            return repoRoot.appendingPathComponent("macos/brain")
+        }
+        return currentDirectory.appendingPathComponent("brain")
+    }
+
+    private static func venvPython(in repoRoot: URL, fileManager fm: FileManager) -> URL? {
+        for relativePath in [".venv/bin/python", ".venv/bin/python3"] {
+            let candidate = repoRoot.appendingPathComponent(relativePath)
+            if fm.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     private static func repoRootForDevBundle(resourceURL: URL, fileManager fm: FileManager) -> URL? {
         let repoRoot = resourceURL
             .deletingLastPathComponent() // Contents
@@ -87,9 +155,8 @@ enum BrainLocator {
             .deletingLastPathComponent() // WispNative
             .deletingLastPathComponent() // build
             .deletingLastPathComponent()
-        let python = repoRoot.appendingPathComponent(".venv/bin/python")
         let brain = repoRoot.appendingPathComponent("macos/brain")
-        guard fm.fileExists(atPath: python.path), fm.fileExists(atPath: brain.path) else {
+        guard fm.fileExists(atPath: brain.path) else {
             return nil
         }
         return repoRoot

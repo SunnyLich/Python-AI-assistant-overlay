@@ -11,7 +11,7 @@ final class SnipOverlayPanel: NSPanel {
 
     init(onSelection: @escaping (SnipSelection) -> Void, onCancel: @escaping () -> Void) {
         self.snipView = SnipOverlayView(onSelection: onSelection, onCancel: onCancel)
-        let screenFrame = NSScreen.main?.frame ?? NSScreen.screens.first?.frame ?? NSRect(x: 0, y: 0, width: 800, height: 600)
+        let screenFrame = Self.virtualScreenFrame()
 
         super.init(
             contentRect: screenFrame,
@@ -33,11 +33,25 @@ final class SnipOverlayPanel: NSPanel {
     override var canBecomeMain: Bool { true }
 
     func showSnip() {
-        let screenFrame = NSScreen.main?.frame ?? NSScreen.screens.first?.frame ?? frame
+        let screenFrame = Self.virtualScreenFrame()
         setFrame(screenFrame, display: true)
         snipView.screenFrame = screenFrame
+        snipView.frame = NSRect(origin: .zero, size: screenFrame.size)
+        snipView.resetSelection()
         makeKeyAndOrderFront(nil)
+        makeFirstResponder(snipView)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private static func virtualScreenFrame() -> NSRect {
+        let screens = NSScreen.screens
+        guard var frame = screens.first?.frame else {
+            return NSRect(x: 0, y: 0, width: 800, height: 600)
+        }
+        for screen in screens.dropFirst() {
+            frame = frame.union(screen.frame)
+        }
+        return frame
     }
 }
 
@@ -61,6 +75,12 @@ private final class SnipOverlayView: NSView {
     }
 
     override var acceptsFirstResponder: Bool { true }
+
+    func resetSelection() {
+        origin = nil
+        current = nil
+        needsDisplay = true
+    }
 
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .crosshair)

@@ -28,7 +28,7 @@ work until each visible surface is ported.
 | Memory | durable facts: list, add, edit, delete, search | Qt `MemoryViewer` | Swift `MemoryPanel` + `brain.memory.*` |
 | Settings | shared `.env` config, models, callers, voice, memory knobs | Qt `SettingsDialog` | Swift `SettingsPanel` with LLM/TTS route tests in progress |
 | Plugins | loaded/discoverable plugin list, hooks, tools, folder open | Qt `PluginManagerDialog` | Swift `PluginManagerPanel` with action execution in progress |
-| Snip overlay | drag-select region, attach image to intent query | Qt `SnipOverlay` | Swift `SnipOverlayPanel` in progress |
+| Snip overlay | drag-select region, attach image to intent query | Qt `SnipOverlay` | Swift `SnipOverlayPanel` with multi-display selection in progress |
 | Agents | same user-facing task/history windows and config | Qt windows | Swift `AgentTaskPanel` multi-agent/communication setup + `AgentHistoryPanel` with retry/continue and `AgentDiffPanel` in progress |
 | Packaging | distributable app | PyInstaller path | Swift `.app` bundle path |
 

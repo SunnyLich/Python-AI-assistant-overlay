@@ -79,9 +79,7 @@ private final class ChatModel: ObservableObject {
         var messages: [ChatTranscriptMessage]
     }
 
-    @Published var conversations: [Conversation] = [
-        Conversation(id: UUID(), title: "New chat", messages: [])
-    ]
+    @Published var conversations: [Conversation]
     @Published var activeID: UUID
     @Published var input = ""
     @Published var isStreaming = false
@@ -90,8 +88,10 @@ private final class ChatModel: ObservableObject {
     private let onSend: (String) -> Void
 
     init(onSend: @escaping (String) -> Void) {
+        let initialConversation = Conversation(id: UUID(), title: "New chat", messages: [])
         self.onSend = onSend
-        self.activeID = conversations[0].id
+        self.conversations = [initialConversation]
+        self.activeID = initialConversation.id
     }
 
     var activeConversation: Conversation {

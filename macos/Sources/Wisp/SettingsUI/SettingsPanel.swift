@@ -34,6 +34,7 @@ struct SettingsDraft: Equatable {
     var memoryModel: String
     var memoryFallbacks: String
     var toolModel: String
+    var toolPluginDir: String
     var customBaseURL: String
 
     var ttsProvider: String
@@ -80,6 +81,9 @@ struct SettingsDraft: Equatable {
 
         let llmProvider = values["LLM_PROVIDER"] ?? "chatgpt"
         let llmModel = values["LLM_MODEL"] ?? "gpt-5.4"
+        let defaultToolPluginDir = WispConfig.repoRoot(environment: environment)
+            .appendingPathComponent("model_tools")
+            .path
 
         return SettingsDraft(
             llmProvider: llmProvider,
@@ -92,6 +96,7 @@ struct SettingsDraft: Equatable {
             memoryModel: values["MEMORY_LLM_MODEL"] ?? llmModel,
             memoryFallbacks: values["MEMORY_LLM_FALLBACKS"] ?? "",
             toolModel: values["TOOL_LLM_MODEL"] ?? "",
+            toolPluginDir: values["TOOL_PLUGIN_DIR"] ?? defaultToolPluginDir,
             customBaseURL: values["CUSTOM_BASE_URL"] ?? "",
             ttsProvider: values["TTS_PROVIDER"] ?? "none",
             cartesiaVoiceID: values["CARTESIA_VOICE_ID"] ?? "",
@@ -137,6 +142,7 @@ struct SettingsDraft: Equatable {
         memoryModel: "gpt-5.4",
         memoryFallbacks: "",
         toolModel: "",
+        toolPluginDir: "model_tools",
         customBaseURL: "",
         ttsProvider: "none",
         cartesiaVoiceID: "",
@@ -191,6 +197,7 @@ struct SettingsDraft: Equatable {
             "MEMORY_LLM_MODEL": memoryModel,
             "MEMORY_LLM_FALLBACKS": memoryFallbacks,
             "TOOL_LLM_MODEL": toolModel,
+            "TOOL_PLUGIN_DIR": toolPluginDir,
             "CUSTOM_BASE_URL": customBaseURL,
             "TTS_PROVIDER": normalizedTTSProvider(ttsProvider),
             "CARTESIA_VOICE_ID": cartesiaVoiceID,
@@ -554,6 +561,7 @@ private struct SettingsPanelView: View {
                     SettingsTextField("Model", text: $model.draft.llmModel)
                     SettingsTextField("Fallbacks", text: $model.draft.llmFallbacks)
                     SettingsTextField("Tool model", text: $model.draft.toolModel)
+                    SettingsTextField("Tool plugin folder", text: $model.draft.toolPluginDir)
                     SettingsTextField("Custom base URL", text: $model.draft.customBaseURL)
                     llmTestRow(.main)
                 }

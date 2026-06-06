@@ -72,6 +72,22 @@ final class WispConfigTests: XCTestCase {
         XCTAssertTrue(config.snip.contextTools)
     }
 
+    func testSettingsDraftLoadsToolPluginDirectoryKey() {
+        let draft = SettingsDraft.load(environment: [
+            "TOOL_PLUGIN_DIR": "/Users/example/wisp/model_tools",
+        ], readDotEnv: false)
+
+        XCTAssertEqual(draft.toolPluginDir, "/Users/example/wisp/model_tools")
+    }
+
+    func testSettingsDraftDefaultsToolPluginDirectoryToRepoModelTools() {
+        let draft = SettingsDraft.load(environment: [
+            "WISP_REPO_ROOT": "/Users/example/wisp",
+        ], readDotEnv: false)
+
+        XCTAssertEqual(draft.toolPluginDir, "/Users/example/wisp/model_tools")
+    }
+
     func testSettingsDraftLoadsNativeUIEnvironmentKeys() {
         let draft = SettingsDraft.load(environment: [
             "ICON_AUTO_HIDE": "yes",
@@ -158,6 +174,7 @@ final class WispConfigTests: XCTestCase {
         var draft = SettingsDraft.empty
         draft.llmProvider = "anthropic"
         draft.llmModel = "claude-sonnet-4-5"
+        draft.toolPluginDir = "/Users/example/wisp/model_tools"
         draft.callers = [
             SettingsCallerDraft(
                 hotkey: "ctrl+option+space",
@@ -184,6 +201,7 @@ final class WispConfigTests: XCTestCase {
 
         XCTAssertEqual(values["LLM_PROVIDER"], "anthropic")
         XCTAssertEqual(values["LLM_MODEL"], "claude-sonnet-4-5")
+        XCTAssertEqual(values["TOOL_PLUGIN_DIR"], "/Users/example/wisp/model_tools")
         XCTAssertEqual(values["CALLER_COUNT"], "1")
         XCTAssertEqual(values["CALLER_1_LABEL"], "Research")
         XCTAssertEqual(values["CALLER_1_PASTE_BACK"], "true")

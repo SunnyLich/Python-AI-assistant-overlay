@@ -6,6 +6,7 @@ final class ResponseBubblePanel: NSPanel {
 
     private let model: ResponseBubbleModel
     private var dotsTimer: Timer?
+    private var revealTimer: Timer?
     private var hideTimer: Timer?
 
     init(onTap: @escaping () -> Void = {}) {
@@ -29,8 +30,9 @@ final class ResponseBubblePanel: NSPanel {
 
     func startThinking(anchor: NSRect?) {
         hideTimer?.invalidate()
+        stopReveal()
         model.mode = .thinking
-        model.text = ""
+        model.resetText()
         model.dotCount = 1
         reposition(anchor: anchor)
         orderFrontRegardless()
@@ -40,8 +42,9 @@ final class ResponseBubblePanel: NSPanel {
     func showListening(anchor: NSRect?) {
         hideTimer?.invalidate()
         stopDots()
+        stopReveal()
         model.mode = .listening
-        model.text = "Recording - release to send"
+        model.setInstantText("Recording - release to send")
         reposition(anchor: anchor)
         orderFrontRegardless()
     }
@@ -53,7 +56,8 @@ final class ResponseBubblePanel: NSPanel {
             stopDots()
         }
         model.mode = .reply
-        model.text += chunk
+        model.appendChunk(chunk)
+        startRevealIfNeeded()
         reposition(anchor: nil)
         orderFrontRegardless()
     }
@@ -62,15 +66,17 @@ final class ResponseBubblePanel: NSPanel {
         hideTimer?.invalidate()
         stopDots()
         model.mode = .reply
-        model.text = text
+        model.replaceBufferedText(text)
+        startRevealIfNeeded()
         orderFrontRegardless()
     }
 
     func showNotice(_ text: String, anchor: NSRect?, timeout: TimeInterval = 6.0) {
         hideTimer?.invalidate()
         stopDots()
+        stopReveal()
         model.mode = .notice
-        model.text = text
+        model.setInstantText(text)
         reposition(anchor: anchor)
         orderFrontRegardless()
         scheduleHide(after: timeout)
@@ -78,17 +84,28 @@ final class ResponseBubblePanel: NSPanel {
 
     func finish() {
         stopDots()
-        if model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if model.fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            stopReveal()
             model.mode = .notice
-            model.text = "No reply from model. Check model name or API key in Settings."
+            model.setInstantText("No reply from model. Check model name or API key in Settings.")
+            scheduleHide(after: 3.5)
+            return
         }
-        scheduleHide(after: 3.5)
+        if model.hasUnrevealedWords {
+            model.isFinishing = true
+            startRevealIfNeeded()
+        } else {
+            stopReveal()
+            model.isFinishing = false
+            scheduleHide(after: hideDelay())
+        }
     }
 
     func clear() {
         hideTimer?.invalidate()
         stopDots()
-        model.text = ""
+        stopReveal()
+        model.resetText()
         model.mode = .hidden
         orderOut(nil)
     }
@@ -125,6 +142,33 @@ final class ResponseBubblePanel: NSPanel {
         dotsTimer = nil
     }
 
+    private func startRevealIfNeeded() {
+        guard model.hasUnrevealedWords, revealTimer == nil else { return }
+        revealTimer = Timer.scheduledTimer(withTimeInterval: revealInterval(), repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.revealNextWord()
+            }
+        }
+    }
+
+    private func revealNextWord() {
+        model.revealNextWord()
+        if model.hasUnrevealedWords {
+            return
+        }
+        let shouldHide = model.isFinishing
+        stopReveal()
+        if shouldHide {
+            scheduleHide(after: hideDelay())
+        }
+    }
+
+    private func stopReveal() {
+        revealTimer?.invalidate()
+        revealTimer = nil
+        model.isFinishing = false
+    }
+
     private func scheduleHide(after delay: TimeInterval) {
         hideTimer?.invalidate()
         hideTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
@@ -132,6 +176,25 @@ final class ResponseBubblePanel: NSPanel {
                 self?.orderOut(nil)
             }
         }
+    }
+
+    private func revealInterval() -> TimeInterval {
+        let values = WispConfig.loadValues()
+        let wpm = max(1, intValue(values["BUBBLE_REVEAL_WPM"], default: 170))
+        return 60.0 / Double(wpm)
+    }
+
+    private func hideDelay() -> TimeInterval {
+        let values = WispConfig.loadValues()
+        let milliseconds = max(500, intValue(values["BUBBLE_HIDE_DELAY_MS"], default: 3500))
+        return Double(milliseconds) / 1000.0
+    }
+
+    private func intValue(_ raw: String?, default fallback: Int) -> Int {
+        guard let raw, let value = Int(raw.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return fallback
+        }
+        return value
     }
 }
 
@@ -146,8 +209,10 @@ final class ResponseBubbleModel: ObservableObject {
     }
 
     @Published var mode: Mode = .hidden
-    @Published var text = ""
+    @Published var fullText = ""
+    @Published var revealedCount = 0
     @Published var dotCount = 1
+    var isFinishing = false
 
     let onTap: () -> Void
 
@@ -160,8 +225,48 @@ final class ResponseBubbleModel: ObservableObject {
         case .thinking:
             return String(repeating: ".", count: dotCount)
         default:
-            return text
+            return visibleReplyText
         }
+    }
+
+    var hasUnrevealedWords: Bool {
+        revealedCount < words.count
+    }
+
+    private var words: [String] {
+        fullText.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    }
+
+    private var visibleReplyText: String {
+        let revealed = Array(words.prefix(revealedCount))
+        guard !revealed.isEmpty else { return fullText.isEmpty ? "" : " " }
+        return revealed.suffix(54).joined(separator: " ")
+    }
+
+    func resetText() {
+        fullText = ""
+        revealedCount = 0
+        isFinishing = false
+    }
+
+    func setInstantText(_ text: String) {
+        fullText = text
+        revealedCount = words.count
+        isFinishing = false
+    }
+
+    func appendChunk(_ chunk: String) {
+        fullText += chunk
+    }
+
+    func replaceBufferedText(_ text: String) {
+        let previousCount = revealedCount
+        fullText = text
+        revealedCount = min(previousCount, words.count)
+    }
+
+    func revealNextWord() {
+        revealedCount = min(revealedCount + 1, words.count)
     }
 }
 

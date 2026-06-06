@@ -55,6 +55,17 @@ struct SettingsDraft: Equatable {
     var snipContextDocuments: Bool
     var snipContextTools: Bool
 
+    var iconAutoHide: Bool
+    var iconSize: String
+    var bubbleWidth: String
+    var bubbleLines: String
+    var bubbleColor: String
+    var bubbleTextColor: String
+    var bubbleReadWordColor: String
+    var bubbleRevealWPM: String
+    var bubbleHoldRevealWPM: String
+    var bubbleHideDelayMS: String
+
     var callers: [SettingsCallerDraft]
 
     static func load(
@@ -95,6 +106,16 @@ struct SettingsDraft: Equatable {
             snipContextAmbient: boolValue(values["SNIP_CONTEXT_AMBIENT"], default: true),
             snipContextDocuments: boolValue(values["SNIP_CONTEXT_DOCUMENTS"], default: false),
             snipContextTools: boolValue(values["SNIP_CONTEXT_TOOLS"], default: false),
+            iconAutoHide: boolValue(values["ICON_AUTO_HIDE"] ?? values["DOLL_AUTO_HIDE"], default: false),
+            iconSize: values["ICON_SIZE"] ?? values["DOLL_SIZE"] ?? "80",
+            bubbleWidth: values["BUBBLE_WIDTH"] ?? "340",
+            bubbleLines: values["BUBBLE_LINES"] ?? "3",
+            bubbleColor: values["BUBBLE_COLOR"] ?? "#1c1c24dc",
+            bubbleTextColor: values["BUBBLE_TEXT_COLOR"] ?? "#e6e6e6",
+            bubbleReadWordColor: values["BUBBLE_READ_WORD_COLOR"] ?? "#4da3ff",
+            bubbleRevealWPM: values["BUBBLE_REVEAL_WPM"] ?? "170",
+            bubbleHoldRevealWPM: values["BUBBLE_HOLD_REVEAL_WPM"] ?? "480",
+            bubbleHideDelayMS: values["BUBBLE_HIDE_DELAY_MS"] ?? "3500",
             callers: config.callers.map(SettingsCallerDraft.init(caller:))
         )
     }
@@ -127,6 +148,16 @@ struct SettingsDraft: Equatable {
         snipContextAmbient: true,
         snipContextDocuments: false,
         snipContextTools: false,
+        iconAutoHide: false,
+        iconSize: "80",
+        bubbleWidth: "340",
+        bubbleLines: "3",
+        bubbleColor: "#1c1c24dc",
+        bubbleTextColor: "#e6e6e6",
+        bubbleReadWordColor: "#4da3ff",
+        bubbleRevealWPM: "170",
+        bubbleHoldRevealWPM: "480",
+        bubbleHideDelayMS: "3500",
         callers: WispConfig.defaultCallers.map(SettingsCallerDraft.init(caller:))
     )
 
@@ -168,6 +199,16 @@ struct SettingsDraft: Equatable {
             "SNIP_CONTEXT_AMBIENT": snipContextAmbient ? "true" : "false",
             "SNIP_CONTEXT_DOCUMENTS": snipContextDocuments ? "true" : "false",
             "SNIP_CONTEXT_TOOLS": snipContextTools ? "true" : "false",
+            "ICON_AUTO_HIDE": iconAutoHide ? "true" : "false",
+            "ICON_SIZE": iconSize,
+            "BUBBLE_WIDTH": bubbleWidth,
+            "BUBBLE_LINES": bubbleLines,
+            "BUBBLE_COLOR": bubbleColor,
+            "BUBBLE_TEXT_COLOR": bubbleTextColor,
+            "BUBBLE_READ_WORD_COLOR": bubbleReadWordColor,
+            "BUBBLE_REVEAL_WPM": bubbleRevealWPM,
+            "BUBBLE_HOLD_REVEAL_WPM": bubbleHoldRevealWPM,
+            "BUBBLE_HIDE_DELAY_MS": bubbleHideDelayMS,
             "CALLER_COUNT": String(callers.count),
         ]
 
@@ -465,6 +506,8 @@ private struct SettingsPanelView: View {
                     .tabItem { Text("Voice") }
                 memoryTab
                     .tabItem { Text("Memory") }
+                uiTab
+                    .tabItem { Text("UI") }
             }
             .padding(12)
             Divider()
@@ -624,6 +667,29 @@ private struct SettingsPanelView: View {
                     Toggle("Ambient context", isOn: $model.draft.snipContextAmbient)
                     Toggle("Open documents", isOn: $model.draft.snipContextDocuments)
                     Toggle("Tools", isOn: $model.draft.snipContextTools)
+                }
+            }
+            .padding(4)
+        }
+    }
+
+    private var uiTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                SettingsSection("Overlay") {
+                    Toggle("Auto-hide icon", isOn: $model.draft.iconAutoHide)
+                    SettingsTextField("Icon size", text: $model.draft.iconSize)
+                }
+
+                SettingsSection("Bubble") {
+                    SettingsTextField("Width", text: $model.draft.bubbleWidth)
+                    SettingsTextField("Lines", text: $model.draft.bubbleLines)
+                    SettingsTextField("Background", text: $model.draft.bubbleColor)
+                    SettingsTextField("Text", text: $model.draft.bubbleTextColor)
+                    SettingsTextField("Read word", text: $model.draft.bubbleReadWordColor)
+                    SettingsTextField("Reveal WPM", text: $model.draft.bubbleRevealWPM)
+                    SettingsTextField("Hold WPM", text: $model.draft.bubbleHoldRevealWPM)
+                    SettingsTextField("Hide delay ms", text: $model.draft.bubbleHideDelayMS)
                 }
             }
             .padding(4)

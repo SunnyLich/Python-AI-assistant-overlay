@@ -105,7 +105,7 @@ final class StatusItemController: NSObject {
         contextItem.target = self
         menu.addItem(contextItem)
 
-        let permissionsItem = NSMenuItem(title: "Permission Snapshot", action: #selector(showPermissions), keyEquivalent: "p")
+        let permissionsItem = NSMenuItem(title: "Permissions", action: #selector(showPermissions), keyEquivalent: "p")
         permissionsItem.target = self
         menu.addItem(permissionsItem)
 

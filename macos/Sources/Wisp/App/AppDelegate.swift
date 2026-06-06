@@ -49,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var chatPanel: ChatPanel?
     private var memoryPanel: MemoryPanel?
     private var settingsPanel: SettingsPanel?
+    private var permissionsPanel: PermissionsPanel?
     private var pluginPanel: PluginManagerPanel?
     private var agentTaskPanel: AgentTaskPanel?
     private var agentHistoryPanel: AgentHistoryPanel?
@@ -128,6 +129,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onTestTTS: { [weak self] draft in
                 Task { await self?.testTTSSettings(draft) }
+            }
+        )
+
+        permissionsPanel = PermissionsPanel(
+            onRefresh: { [weak self] promptForAccessibility in
+                self?.nativeContext.permissions(promptForAccessibility: promptForAccessibility)
+                    ?? NativePermissionSnapshot(
+                        accessibilityTrusted: false,
+                        screenRecordingTrusted: false,
+                        microphoneStatus: "unknown"
+                    )
+            },
+            onRequest: { [weak self] kind in
+                guard let self else {
+                    return NativePermissionSnapshot(
+                        accessibilityTrusted: false,
+                        screenRecordingTrusted: false,
+                        microphoneStatus: "unknown"
+                    )
+                }
+                return await self.nativeContext.requestPermission(kind)
             }
         )
 
@@ -425,8 +447,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showPermissionSnapshot() {
         let snapshot = nativeContext.permissions(promptForAccessibility: true)
-        promptPanel?.showPrompt()
-        promptPanel?.setResponse(snapshot.displayText)
+        permissionsPanel?.showPermissions(snapshot: snapshot)
         statusController?.setHotkeyStatus(snapshot.accessibilityTrusted ? "Ctrl-Option-Space ready" : "Accessibility permission needed")
         NSLog("[wisp] permission snapshot: ax=%@ screen=%@ mic=%@",
               String(describing: snapshot.accessibilityTrusted),

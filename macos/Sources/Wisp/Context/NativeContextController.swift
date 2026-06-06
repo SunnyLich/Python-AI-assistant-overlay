@@ -65,6 +65,69 @@ struct NativePermissionSnapshot {
         Microphone: \(microphoneStatus)
         """
     }
+
+    func status(for kind: NativePermissionKind) -> String {
+        switch kind {
+        case .accessibility:
+            return accessibilityTrusted ? "trusted" : "not trusted"
+        case .screenRecording:
+            return screenRecordingTrusted ? "trusted" : "not trusted"
+        case .microphone:
+            return microphoneStatus
+        }
+    }
+
+    func isTrusted(for kind: NativePermissionKind) -> Bool {
+        switch kind {
+        case .accessibility:
+            return accessibilityTrusted
+        case .screenRecording:
+            return screenRecordingTrusted
+        case .microphone:
+            return microphoneStatus == "authorized"
+        }
+    }
+}
+
+enum NativePermissionKind: String, CaseIterable, Identifiable {
+    case accessibility
+    case screenRecording
+    case microphone
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .accessibility:
+            return "Accessibility"
+        case .screenRecording:
+            return "Screen Recording"
+        case .microphone:
+            return "Microphone"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .accessibility:
+            return "keyboard"
+        case .screenRecording:
+            return "rectangle.dashed"
+        case .microphone:
+            return "mic"
+        }
+    }
+
+    var settingsURL: URL {
+        switch self {
+        case .accessibility:
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+        case .screenRecording:
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
+        case .microphone:
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+        }
+    }
 }
 
 @MainActor
@@ -92,6 +155,30 @@ final class NativeContextController {
             screenRecordingTrusted: CGPreflightScreenCaptureAccess(),
             microphoneStatus: microphoneStatusText()
         )
+    }
+
+    func requestPermission(_ kind: NativePermissionKind) async -> NativePermissionSnapshot {
+        switch kind {
+        case .accessibility:
+            _ = accessibilityIsTrusted(prompt: true)
+            NSWorkspace.shared.open(kind.settingsURL)
+        case .screenRecording:
+            if !CGPreflightScreenCaptureAccess() {
+                _ = CGRequestScreenCaptureAccess()
+            }
+            NSWorkspace.shared.open(kind.settingsURL)
+        case .microphone:
+            if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+                _ = await withCheckedContinuation { continuation in
+                    AVCaptureDevice.requestAccess(for: .audio) { granted in
+                        continuation.resume(returning: granted)
+                    }
+                }
+            } else {
+                NSWorkspace.shared.open(kind.settingsURL)
+            }
+        }
+        return permissions(promptForAccessibility: false)
     }
 
     private func accessibilityIsTrusted(prompt: Bool) -> Bool {

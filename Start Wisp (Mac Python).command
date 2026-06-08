@@ -52,20 +52,47 @@ find_python() {
   done
 }
 
+find_uv() {
+  for candidate in uv "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv" "/opt/homebrew/bin/uv" "/usr/local/bin/uv"; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      command -v "$candidate"
+      return 0
+    elif [ -x "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+}
+
 if ! venv_ready; then
   py="$(find_python || true)"
-  if [ -z "${py:-}" ]; then
-    echo "ERROR: Python $WANT_MM is required for the macOS Python target." >&2
-    exit 1
-  fi
   rm -rf "$REPO_ROOT/.venv"
-  "$py" -m venv "$REPO_ROOT/.venv"
-  "$VPY" -m pip install --upgrade pip
-  "$VPY" -m pip install -r "$REQ_FILE"
+  if [ -n "${py:-}" ]; then
+    "$py" -m venv "$REPO_ROOT/.venv"
+    "$VPY" -m pip install --upgrade pip
+    "$VPY" -m pip install -r "$REQ_FILE"
+  else
+    uv_bin="$(find_uv || true)"
+    if [ -z "${uv_bin:-}" ]; then
+      cat >&2 <<EOF
+ERROR: Python $WANT_MM was not found, and uv is not installed.
+
+No admin rights are needed. Install uv into your user account, then rerun this launcher:
+
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="\$HOME/.local/bin:\$PATH"
+  ./"Start Wisp (Mac Python).command"
+
+EOF
+      exit 1
+    fi
+    "$uv_bin" python install "$WANT_MM"
+    "$uv_bin" venv --python "$WANT_MM" "$REPO_ROOT/.venv"
+    "$uv_bin" pip install --python "$VPY" -r "$REQ_FILE"
+  fi
   req_hash > "$STAMP_FILE"
 fi
 
 export WISP_REPO_ROOT="$REPO_ROOT"
 export PYTHONUNBUFFERED=1
 exec "$VPY" -m macos_py.supervisor.app
-

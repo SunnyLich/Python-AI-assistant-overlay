@@ -131,21 +131,27 @@ def test_macos_readme_matches_current_settings_layout():
     ).read_text(encoding="utf-8")
 
     for expected in [
-        "Settings window keeps authentication and API keys in the `LLM` tab",
-        "`Authentication` shows ChatGPT/GitHub/Copilot auth status",
+        "Settings window keeps provider/model routing in the `Models` tab",
+        "stored API keys in the `Keys` tab",
+        "provider authentication in the `Auth`",
+        "`Provider Auth` shows ChatGPT/GitHub auth status",
+        "`GitHub Copilot` keeps token save/test/clear controls",
         "`API Keys`",
         "shows API-key status, save, and clear actions",
     ]:
         assert expected in readme
 
     for stale in [
-        "`Keys` tab",
-        "`Auth` tab",
+        "authentication and API keys in the `LLM` tab",
+        "`Authentication` shows ChatGPT/GitHub/Copilot auth status",
     ]:
         assert stale not in readme
 
-    assert '.tabItem { Text(\\"LLM\\") }' in settings_test
-    assert 'SettingsSection(\\"Authentication\\")' in settings_test
+    assert '.tabItem { Text(\\"Models\\") }' in settings_test
+    assert '.tabItem { Text(\\"Keys\\") }' in settings_test
+    assert '.tabItem { Text(\\"Auth\\") }' in settings_test
+    assert 'SettingsSection(\\"Provider Auth\\")' in settings_test
+    assert 'SettingsSection(\\"GitHub Copilot\\")' in settings_test
     assert 'SettingsSection(\\"API Keys\\")' in settings_test
 
 

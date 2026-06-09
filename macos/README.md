@@ -125,13 +125,14 @@ amplitude-driven overlay pulse.
 Use `Open Config Folder` from the tray or overlay menu to jump to the active
 `.env` directory, whether that is the checkout or
 `~/Library/Application Support/Wisp`.
-The native Settings window keeps authentication and API keys in the `LLM` tab:
-`Authentication` shows ChatGPT/GitHub/Copilot auth status, ChatGPT browser
-sign-in, GitHub device sign-in, sign-out actions, and Copilot token
-save/test/clear through the same shared auth modules used by Windows. `API Keys`
-shows API-key status, save, and clear actions. Those key actions call the Python
-brain sidecar and reuse the shared OS-keychain secret store; stored key values
-are never shown and are not written to `.env`.
+The native Settings window keeps provider/model routing in the `Models` tab,
+stored API keys in the `Keys` tab, and provider authentication in the `Auth`
+tab. `Provider Auth` shows ChatGPT/GitHub auth status, browser/device sign-in,
+and sign-out actions. `GitHub Copilot` keeps token save/test/clear controls
+beside Copilot auth status. `API Keys` shows API-key status, save, and clear
+actions. Those key actions call the Python brain sidecar and reuse the shared
+OS-keychain secret store; stored key values are never shown and are not written
+to `.env`.
 The footer reset action asks for confirmation, clears stored credentials through
 the Python sidecar, deletes the active `.env`, and reloads native settings.
 

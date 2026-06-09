@@ -127,6 +127,7 @@ class IntentOverlay(QWidget):
         self._kb_hook = None
         self._input_grabbed_keyboard = False
         self._drop_next_keypress = False
+        self._custom_input_started = False
         self._raw_key.connect(self._on_raw_key)
 
         self._input_line = _PromptLineEdit(self)
@@ -286,6 +287,7 @@ class IntentOverlay(QWidget):
 
     def _enter_custom_mode(self):
         self._custom_mode = True
+        self._custom_input_started = False
         self._timer.stop()
         new_h = self._normal_h + _INPUT_EXTRA
         self.setFixedSize(_W, new_h)
@@ -298,20 +300,26 @@ class IntentOverlay(QWidget):
         self.update()
         self._drop_next_keypress = True
         for delay_ms in (25, 75, 150):
-            QTimer.singleShot(delay_ms, self._focus_custom_input)
+            QTimer.singleShot(delay_ms, self._retry_focus_custom_input)
 
     def _focus_custom_input(self) -> None:
         if not self._custom_mode or self._input_line.isHidden():
             return
         self.raise_()
         self.activateWindow()
-        self._input_line.setFocus(Qt.FocusReason.OtherFocusReason)
+        if not self._input_line.hasFocus():
+            self._input_line.setFocus(Qt.FocusReason.OtherFocusReason)
         if _IS_WIN and not self._input_grabbed_keyboard:
             try:
                 self._input_line.grabKeyboard()
                 self._input_grabbed_keyboard = True
             except Exception:
                 pass
+
+    def _retry_focus_custom_input(self) -> None:
+        if self._custom_input_started:
+            return
+        self._focus_custom_input()
 
     def _forward_key_to_custom_input(self, event) -> None:
         self._focus_custom_input()
@@ -347,6 +355,8 @@ class IntentOverlay(QWidget):
                     return True  # consume the triggering key so it never reaches the field
                 else:
                     self._drop_next_keypress = False  # not the trigger key — let it through
+            if event.key() not in (Qt.Key.Key_Escape, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._custom_input_started = True
         return super().eventFilter(obj, event)
 
     def _fire_custom(self):
@@ -381,6 +391,7 @@ class IntentOverlay(QWidget):
                 self._fire_custom()
                 event.accept()
                 return
+            self._custom_input_started = True
             self._forward_key_to_custom_input(event)
             event.accept()
             return

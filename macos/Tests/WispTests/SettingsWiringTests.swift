@@ -11,13 +11,13 @@ final class SettingsWiringTests: XCTestCase {
 
         assertContainsInOrder(
             [
-                ".tabItem { Text(\"LLM\") }",
-                ".tabItem { Text(\"TTS / Voice\") }",
-                ".tabItem { Text(\"Prompts\") }",
-                ".tabItem { Text(\"Keybinds\") }",
-                ".tabItem { Text(\"App\") }",
+                ".tabItem { Text(\"Models\") }",
+                ".tabItem { Text(\"Keys\") }",
+                ".tabItem { Text(\"Auth\") }",
+                ".tabItem { Text(\"Callers\") }",
+                ".tabItem { Text(\"Voice\") }",
                 ".tabItem { Text(\"Memory\") }",
-                ".tabItem { Text(\"Tools\") }",
+                ".tabItem { Text(\"UI\") }",
             ],
             in: source
         )
@@ -30,7 +30,8 @@ final class SettingsWiringTests: XCTestCase {
         )
 
         for expected in [
-            "SettingsSection(\"Authentication\")",
+            "SettingsSection(\"Provider Auth\")",
+            "SettingsSection(\"GitHub Copilot\")",
             "SettingsSection(\"API Keys\")",
             "SettingsSection(\"Main\")",
             "SettingsSection(\"Vision\")",
@@ -47,7 +48,11 @@ final class SettingsWiringTests: XCTestCase {
             "return draft.memoryFallbacks",
             "SettingsSection(\"System Prompt\")",
             "SettingsSection(\"Context Hotkeys\")",
-            "SettingsSection(\"Tool Calling\")",
+            "SettingsSection(\"Snip\")",
+            "SettingsTextField(\"Tool model\", text: $model.draft.toolModel)",
+            "SettingsTextField(\"Tool plugin folder\", text: $model.draft.toolPluginDir)",
+            "SettingsTextField(\"Tool git root\", text: $model.draft.toolGitRoot)",
+            "SettingsTextField(\"Custom base URL\", text: $model.draft.customBaseURL)",
             "Text(\"Reset All...\")",
             "Text(\"Cancel\")",
             "Text(\"Apply\")",

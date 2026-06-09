@@ -994,20 +994,20 @@ private struct SettingsPanelView: View {
             header
             Divider()
             TabView {
-                llmTab
-                    .tabItem { Text("LLM") }
+                modelsTab
+                    .tabItem { Text("Models") }
+                keysTab
+                    .tabItem { Text("Keys") }
+                authTab
+                    .tabItem { Text("Auth") }
+                callersTab
+                    .tabItem { Text("Callers") }
                 voiceTab
-                    .tabItem { Text("TTS / Voice") }
-                promptsTab
-                    .tabItem { Text("Prompts") }
-                keybindsTab
-                    .tabItem { Text("Keybinds") }
-                appTab
-                    .tabItem { Text("App") }
+                    .tabItem { Text("Voice") }
                 memoryTab
                     .tabItem { Text("Memory") }
-                toolsTab
-                    .tabItem { Text("Tools") }
+                uiTab
+                    .tabItem { Text("UI") }
             }
             .padding(12)
             Divider()
@@ -1034,10 +1034,84 @@ private struct SettingsPanelView: View {
         .frame(height: 42)
     }
 
-    private var llmTab: some View {
+    private var modelsTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                SettingsSection("Authentication") {
+                SettingsSection("Main") {
+                    ProviderPicker("Provider", selection: $model.draft.llmProvider)
+                    SettingsTextField("Model", text: $model.draft.llmModel)
+                    SettingsTextField("Fallbacks", text: $model.draft.llmFallbacks)
+                    SettingsTextField("Tool model", text: $model.draft.toolModel)
+                    SettingsTextField("Tool plugin folder", text: $model.draft.toolPluginDir)
+                    SettingsTextField("Tool git root", text: $model.draft.toolGitRoot)
+                    SettingsTextField("Custom base URL", text: $model.draft.customBaseURL)
+                    llmTestRow(.main)
+                }
+
+                SettingsSection("Vision") {
+                    ProviderPicker("Provider", selection: $model.draft.visionProvider, includeEmpty: true)
+                    SettingsTextField("Model", text: $model.draft.visionModel)
+                    SettingsTextField("Fallbacks", text: $model.draft.visionFallbacks)
+                    llmTestRow(.vision)
+                }
+
+                SettingsSection("GitHub") {
+                    SettingsTextField("Client ID", text: $model.draft.githubClientID)
+                    SettingsTextField("OAuth scopes", text: $model.draft.githubOAuthScopes)
+                }
+
+                SettingsSection("Memory Model") {
+                    ProviderPicker("Provider", selection: $model.draft.memoryProvider)
+                    SettingsTextField("Model", text: $model.draft.memoryModel)
+                    SettingsTextField("Fallbacks", text: $model.draft.memoryFallbacks)
+                    llmTestRow(.memory)
+                }
+
+                SettingsSection("System Prompt") {
+                    SettingsTextEditor("Utility prompt", text: $model.draft.systemPromptUtility, minHeight: 150)
+                }
+            }
+            .padding(4)
+        }
+    }
+
+    private var keysTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                SettingsSection("API Keys") {
+                    HStack(spacing: 10) {
+                        Spacer()
+                            .frame(width: 135)
+                        Button {
+                            model.refreshSecrets()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Refresh keychain status")
+                        .disabled(model.hasBlockingOperation)
+                        Spacer()
+                    }
+
+                    ForEach($model.secrets) { $secret in
+                        SecretKeyRow(
+                            secret: $secret,
+                            isBusy: model.isSecretBusy(secret),
+                            actionsDisabled: model.hasBlockingOperation && !model.isSecretBusy(secret),
+                            onSave: { model.saveSecret(secret) },
+                            onClear: { model.clearSecret(secret) }
+                        )
+                    }
+                }
+            }
+            .padding(4)
+        }
+    }
+
+    private var authTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                SettingsSection("Provider Auth") {
                     HStack(spacing: 10) {
                         Spacer()
                             .frame(width: 135)
@@ -1069,7 +1143,9 @@ private struct SettingsPanelView: View {
                         onPrimary: { model.startGitHubLogin() },
                         onClear: { model.clearAuthProvider("github") }
                     )
+                }
 
+                SettingsSection("GitHub Copilot") {
                     ProviderAuthRow(
                         status: authStatus("copilot"),
                         actionsDisabled: model.hasBlockingOperation,
@@ -1079,7 +1155,7 @@ private struct SettingsPanelView: View {
                     )
 
                     HStack(spacing: 10) {
-                        Text("Copilot token")
+                        Text("Token")
                             .frame(width: 135, alignment: .trailing)
                             .foregroundStyle(.secondary)
                         SecureField("GitHub Copilot token", text: $model.copilotToken)
@@ -1103,62 +1179,6 @@ private struct SettingsPanelView: View {
                         .help("Test Copilot token")
                         .disabled(model.hasBlockingOperation)
                     }
-                }
-
-                SettingsSection("API Keys") {
-                    HStack(spacing: 10) {
-                        Spacer()
-                            .frame(width: 135)
-                        Button {
-                            model.refreshSecrets()
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Refresh keychain status")
-                        .disabled(model.hasBlockingOperation)
-                        Spacer()
-                    }
-
-                    ForEach($model.secrets) { $secret in
-                        SecretKeyRow(
-                            secret: $secret,
-                            isBusy: model.isSecretBusy(secret),
-                            actionsDisabled: model.hasBlockingOperation && !model.isSecretBusy(secret),
-                            onSave: { model.saveSecret(secret) },
-                            onClear: { model.clearSecret(secret) }
-                        )
-                    }
-                }
-
-                SettingsSection("Main") {
-                    ProviderPicker("Provider", selection: $model.draft.llmProvider)
-                    SettingsTextField("Model", text: $model.draft.llmModel)
-                    SettingsTextField("Fallbacks", text: $model.draft.llmFallbacks)
-                    llmTestRow(.main)
-                }
-
-                SettingsSection("Vision") {
-                    ProviderPicker("Provider", selection: $model.draft.visionProvider, includeEmpty: true)
-                    SettingsTextField("Model", text: $model.draft.visionModel)
-                    SettingsTextField("Fallbacks", text: $model.draft.visionFallbacks)
-                    llmTestRow(.vision)
-                }
-
-                SettingsSection("GitHub") {
-                    SettingsTextField("Client ID", text: $model.draft.githubClientID)
-                    SettingsTextField("OAuth scopes", text: $model.draft.githubOAuthScopes)
-                }
-
-                SettingsSection("Custom provider") {
-                    SettingsTextField("Base URL", text: $model.draft.customBaseURL)
-                }
-
-                SettingsSection("Memory Model") {
-                    ProviderPicker("Provider", selection: $model.draft.memoryProvider)
-                    SettingsTextField("Model", text: $model.draft.memoryModel)
-                    SettingsTextField("Fallbacks", text: $model.draft.memoryFallbacks)
-                    llmTestRow(.memory)
                 }
             }
             .padding(4)
@@ -1202,23 +1222,18 @@ private struct SettingsPanelView: View {
         }
     }
 
-    private var keybindsTab: some View {
+    private var callersTab: some View {
         VStack(spacing: 10) {
             SettingsSection("Context Limits") {
                 SettingsTextField("Browser chars", text: $model.draft.contextBrowserMaxChars)
                 SettingsTextField("Auto doc chars", text: $model.draft.contextAmbientDocumentMaxChars)
                 SettingsTextField("Tool doc chars", text: $model.draft.contextToolDocumentMaxChars)
-                SettingsTextField("Tool plugin folder", text: $model.draft.toolPluginDir)
             }
             .padding(4)
 
             SettingsSection("Context Hotkeys") {
                 SettingsTextField("Add context", text: $model.draft.addContextHotkey)
                 SettingsTextField("Clear context", text: $model.draft.clearContextHotkey)
-                SettingsTextField("Snip screen region", text: $model.draft.snipHotkey)
-                Toggle("Snip ambient context", isOn: $model.draft.snipContextAmbient)
-                Toggle("Snip open documents", isOn: $model.draft.snipContextDocuments)
-                Toggle("Snip tools", isOn: $model.draft.snipContextTools)
             }
             .padding(4)
 
@@ -1302,12 +1317,18 @@ private struct SettingsPanelView: View {
                     SettingsTextField("STM token budget", text: $model.draft.memorySTMTokenBudget)
                 }
 
+                SettingsSection("Snip") {
+                    SettingsTextField("Hotkey", text: $model.draft.snipHotkey)
+                    Toggle("Ambient context", isOn: $model.draft.snipContextAmbient)
+                    Toggle("Open documents", isOn: $model.draft.snipContextDocuments)
+                    Toggle("Tools", isOn: $model.draft.snipContextTools)
+                }
             }
             .padding(4)
         }
     }
 
-    private var appTab: some View {
+    private var uiTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 SettingsSection("Appearance") {

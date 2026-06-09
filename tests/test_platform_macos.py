@@ -168,6 +168,18 @@ class MacHotkeyTests(unittest.TestCase):
     def test_carbon_hotkey_parser_rejects_modifier_only(self):
         self.assertIsNone(self.hotkeys._parse_hotkey_carbon("ctrl+shift"))
 
+    def test_carbon_hotkey_parser_rejects_bare_typing_keys(self):
+        self.assertFalse(self.hotkeys.is_safe_global_hotkey("space"))
+        self.assertFalse(self.hotkeys.is_safe_global_hotkey("s"))
+        self.assertFalse(self.hotkeys.is_safe_global_hotkey("shift+space"))
+        self.assertFalse(self.hotkeys.is_safe_global_hotkey("shift+s"))
+        self.assertIsNone(self.hotkeys._parse_hotkey_carbon("space"))
+        self.assertIsNone(self.hotkeys._parse_hotkey_carbon("s"))
+
+    def test_function_keys_remain_valid_global_hotkeys(self):
+        self.assertTrue(self.hotkeys.is_safe_global_hotkey("f9"))
+        self.assertEqual(self.hotkeys._parse_hotkey_carbon("f9"), (0, 101))
+
     def test_carbon_hotkey_event_kind_constants_match_hitevents(self):
         self.assertEqual(self.hotkeys._kEventHotKeyPressed, 5)
         self.assertEqual(self.hotkeys._kEventHotKeyReleased, 6)

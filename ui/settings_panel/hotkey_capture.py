@@ -4,6 +4,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLineEdit
 
+from core.hotkeys import is_safe_global_hotkey
+
 
 _QT_KEY_NAMES: dict[int, str] = {
     Qt.Key.Key_Space.value: "space",
@@ -98,7 +100,11 @@ class HotkeyCaptureEdit(QLineEdit):
             key_name = ch if ch else None
         if key_name:
             parts.append(key_name)
-            self._commit("+".join(parts))
+            combo = "+".join(parts)
+            if is_safe_global_hotkey(combo):
+                self._commit(combo)
+            else:
+                self.setText("Add modifier or use F-key")
         event.accept()
 
     def keyReleaseEvent(self, event):  # noqa: N802

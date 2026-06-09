@@ -22,6 +22,40 @@ import config
 _IS_WIN = sys.platform == "win32"
 _IS_MAC = sys.platform == "darwin"
 
+_HOTKEY_MODIFIER_TOKENS = {"ctrl", "control", "alt", "shift", "win", "cmd", "command", "option"}
+_HOTKEY_ACTION_MODIFIER_TOKENS = {"ctrl", "control", "alt", "win", "cmd", "command", "option"}
+
+
+def _hotkey_parts(hotkey_str: str) -> list[str]:
+    return [part.strip().lower() for part in (hotkey_str or "").split("+") if part.strip()]
+
+
+def _is_f_key(token: str) -> bool:
+    if not (token.startswith("f") and token[1:].isdigit()):
+        return False
+    try:
+        return 1 <= int(token[1:]) <= 24
+    except ValueError:
+        return False
+
+
+def is_safe_global_hotkey(hotkey_str: str) -> bool:
+    """Return True if a global hotkey won't steal ordinary typing keys.
+
+    RegisterHotKey/RegisterEventHotKey reserve matching keys system-wide. Bare
+    printable/navigation keys like "space" or "s" should never be accepted as
+    global app hotkeys because they stop reaching the foreground app. Function
+    keys remain allowed for push-to-talk style shortcuts.
+    """
+    parts = _hotkey_parts(hotkey_str)
+    if not parts:
+        return False
+    has_action_modifier = any(part in _HOTKEY_ACTION_MODIFIER_TOKENS for part in parts)
+    key_parts = [part for part in parts if part not in _HOTKEY_MODIFIER_TOKENS]
+    if not key_parts:
+        return False
+    return has_action_modifier or any(_is_f_key(part) for part in key_parts)
+
 
 def _macos_accessibility_enabled() -> bool:
     if not _IS_MAC:
@@ -91,6 +125,8 @@ if _IS_WIN:
 
     def _parse_hotkey_win32(hotkey_str: str) -> tuple[int, int]:
         """Return (modifier_flags, vk_code) from a string like 'ctrl+alt+q'."""
+        if not is_safe_global_hotkey(hotkey_str):
+            raise ValueError(f"Unsafe global hotkey: {hotkey_str!r}")
         mods = MOD_NOREPEAT
         vk   = 0
         for part in hotkey_str.lower().split("+"):
@@ -146,6 +182,9 @@ _PYNPUT_SPECIAL: dict[str, str] = {
 
 def _to_pynput_hotkey(hotkey_str: str, *, ctrl_as_cmd: bool = False) -> str | None:
     """Convert 'ctrl+alt+q' → '<ctrl>+<alt>+q' for pynput GlobalHotKeys."""
+    if not is_safe_global_hotkey(hotkey_str):
+        print(f"[hotkeys] Refusing unsafe global hotkey {hotkey_str!r}")
+        return None
     parts: list[str] = []
     for token in hotkey_str.lower().split("+"):
         token = token.strip()
@@ -482,6 +521,8 @@ if _IS_MAC:
 
     def _parse_hotkey_carbon(hotkey_str: str) -> tuple[int, int] | None:
         """Return (carbon_modifiers, virtual_keycode) or None if unparseable."""
+        if not is_safe_global_hotkey(hotkey_str):
+            return None
         mods = 0
         keycode: int | None = None
         for part in hotkey_str.lower().split("+"):

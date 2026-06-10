@@ -24,6 +24,52 @@ def _protect_stdout():
     return real_out
 
 
+def _become_ui_element() -> bool:
+    """Give this background subprocess a window-server connection.
+
+    Carbon ``RegisterEventHotKey`` registers successfully (status 0) from any
+    process, but it only *delivers* hot-key events to a process the window
+    server knows as a GUI app. A plain ``subprocess.Popen`` helper is a
+    non-GUI ("background-only") process, so without this its hotkeys silently
+    never fire. ``TransformProcessType`` to a UIElement app establishes the
+    connection and adds no Dock icon. Must run on the main thread.
+    """
+    if sys.platform != "darwin":
+        return False
+    import ctypes
+    import ctypes.util
+
+    try:
+        app_services = ctypes.CDLL(
+            ctypes.util.find_library("ApplicationServices") or "ApplicationServices"
+        )
+
+        class _ProcessSerialNumber(ctypes.Structure):
+            _fields_ = [
+                ("highLongOfPSN", ctypes.c_uint32),
+                ("lowLongOfPSN", ctypes.c_uint32),
+            ]
+
+        _kCurrentProcess = 2
+        _kProcessTransformToUIElementApplication = 4
+
+        transform = app_services.TransformProcessType
+        transform.argtypes = [ctypes.POINTER(_ProcessSerialNumber), ctypes.c_uint32]
+        transform.restype = ctypes.c_int32
+
+        psn = _ProcessSerialNumber(0, _kCurrentProcess)
+        status = transform(
+            ctypes.byref(psn), _kProcessTransformToUIElementApplication
+        )
+        if status != 0:
+            print(f"[hotkeys] TransformProcessType failed (status {status}).")
+            return False
+        return True
+    except Exception as exc:  # noqa: BLE001 - never block startup on this
+        print(f"[hotkeys] Could not become UI element: {exc}")
+        return False
+
+
 def _run_carbon_loop(stop: threading.Event) -> None:
     import ctypes
     import ctypes.util
@@ -47,6 +93,9 @@ def _stop_on_parent_pipe_close(stop: threading.Event) -> None:
 def main() -> int:
     configure_paths()
     out = _protect_stdout()
+    # Must happen on the main thread, before any hotkey is registered, or
+    # Carbon delivers no events to this background process (see the function).
+    _become_ui_element()
     write_lock = threading.Lock()
     stop = threading.Event()
 

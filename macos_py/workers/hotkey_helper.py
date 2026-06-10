@@ -172,6 +172,7 @@ def main() -> int:
 
     def emit_hotkey(kind: str, **extra: Any) -> None:
         data = {"kind": kind, **extra}
+        _dbg(f"HOTKEY FIRED -> {kind} {extra}")
         send({"event": "native.hotkey", "data": data})
 
     def request_stop(_signum=None, _frame=None) -> None:

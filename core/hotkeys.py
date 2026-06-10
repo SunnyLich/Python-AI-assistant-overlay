@@ -57,6 +57,28 @@ def is_safe_global_hotkey(hotkey_str: str) -> bool:
     return has_action_modifier or any(_is_f_key(part) for part in key_parts)
 
 
+# ANSI virtual keycodes (kVK_*), layout-independent. Shared by the Carbon
+# RegisterEventHotKey backend and the off-console CGEventTap backend (the latter
+# lives in macos_py.workers.hotkey_helper and imports this), so it is defined at
+# module level rather than inside the macOS-only block.
+MACOS_VIRTUAL_KEYCODES: dict[str, int] = {
+    "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8,
+    "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
+    "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "9": 25,
+    "7": 26, "-": 27, "8": 28, "0": 29, "]": 30, "o": 31, "u": 32, "[": 33,
+    "i": 34, "p": 35, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42,
+    ",": 43, "/": 44, "n": 45, "m": 46, ".": 47, "`": 50,
+    "return": 36, "enter": 36, "tab": 48, "space": 49, "delete": 51,
+    "backspace": 51, "escape": 53, "esc": 53, "home": 115, "end": 119,
+    "pageup": 116, "pagedown": 121, "left": 123, "right": 124, "down": 125,
+    "up": 126,
+    **{f"f{n}": vk for n, vk in {
+        1: 122, 2: 120, 3: 99, 4: 118, 5: 96, 6: 97, 7: 98, 8: 100,
+        9: 101, 10: 109, 11: 103, 12: 111,
+    }.items()},
+}
+
+
 def _macos_accessibility_enabled() -> bool:
     if not _IS_MAC:
         return True
@@ -501,23 +523,8 @@ if _IS_MAC:
         "ctrl": 0x1000, "control": 0x1000,                 # controlKey
     }
 
-    # ANSI virtual keycodes (kVK_*), layout-independent.
-    _CARBON_VK: dict[str, int] = {
-        "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8,
-        "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
-        "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "9": 25,
-        "7": 26, "-": 27, "8": 28, "0": 29, "]": 30, "o": 31, "u": 32, "[": 33,
-        "i": 34, "p": 35, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42,
-        ",": 43, "/": 44, "n": 45, "m": 46, ".": 47, "`": 50,
-        "return": 36, "enter": 36, "tab": 48, "space": 49, "delete": 51,
-        "backspace": 51, "escape": 53, "esc": 53, "home": 115, "end": 119,
-        "pageup": 116, "pagedown": 121, "left": 123, "right": 124, "down": 125,
-        "up": 126,
-        **{f"f{n}": vk for n, vk in {
-            1: 122, 2: 120, 3: 99, 4: 118, 5: 96, 6: 97, 7: 98, 8: 100,
-            9: 101, 10: 109, 11: 103, 12: 111,
-        }.items()},
-    }
+    # ANSI virtual keycodes (kVK_*), layout-independent. Defined at module level.
+    _CARBON_VK = MACOS_VIRTUAL_KEYCODES
 
     def _parse_hotkey_carbon(hotkey_str: str) -> tuple[int, int] | None:
         """Return (carbon_modifiers, virtual_keycode) or None if unparseable."""

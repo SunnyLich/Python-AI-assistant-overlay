@@ -128,6 +128,182 @@ def _become_ui_element() -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# Off-console hotkey backend (CGEventTap)
+# ---------------------------------------------------------------------------
+# Carbon RegisterEventHotKey only delivers to the *console* session, so it never
+# fires over RDP/VNC into a virtual session (e.g. a rented MacinCloud host, where
+# on_console is False). A CGEventTap, by contrast, observes keystrokes inside our
+# own session -- the WISP_HOTKEY_DEBUG monitor proved this works there. This
+# backend reuses that proven listen-only tap, but matches each keyDown against
+# the configured hotkeys and emits the same events the Carbon backend would.
+#
+# It reads only raw keycode + modifier flags on the main run loop (no off-thread
+# character decoding), so it avoids the SIGTRAP that sinks pynput on macOS.
+
+# Device-independent CGEventFlags modifier bits (NOT the Carbon mod masks).
+_CGEVENT_MODS: dict[str, int] = {
+    "shift": 0x00020000,
+    "ctrl": 0x00040000, "control": 0x00040000,
+    "alt": 0x00080000, "option": 0x00080000,
+    "cmd": 0x00100000, "command": 0x00100000, "win": 0x00100000,
+}
+# Mask of just those four modifiers; used to ignore caps-lock/Fn/numpad bits
+# (which ride along on F-keys) when matching, so the match is exact.
+_CGEVENT_MOD_MASK = 0x00020000 | 0x00040000 | 0x00080000 | 0x00100000
+
+
+def _parse_combo_to_tap(combo: str, vk_map: dict[str, int]) -> tuple[int, int] | None:
+    """Return (keycode, modifier_mask) for a hotkey string, or None.
+
+    Mirrors core.hotkeys parsing but yields a CGEventFlags modifier mask instead
+    of Carbon masks. Bare/unsafe combos are rejected so ordinary typing keys are
+    never captured.
+    """
+    from core.hotkeys import is_safe_global_hotkey
+
+    if not is_safe_global_hotkey(combo):
+        return None
+    mods = 0
+    keycode: int | None = None
+    for part in (combo or "").lower().split("+"):
+        part = part.strip()
+        if not part:
+            continue
+        if part in _CGEVENT_MODS:
+            mods |= _CGEVENT_MODS[part]
+        elif part in vk_map:
+            keycode = vk_map[part]
+    return (keycode, mods) if keycode is not None else None
+
+
+def _build_tap_table(
+    specs: list[tuple[str, str, dict]], vk_map: dict[str, int]
+) -> list[tuple[int, int, str, dict]]:
+    """Build [(keycode, modmask, kind, extra), ...] from (combo, kind, extra)."""
+    table: list[tuple[int, int, str, dict]] = []
+    for combo, kind, extra in specs:
+        parsed = _parse_combo_to_tap(combo, vk_map)
+        if parsed is None:
+            continue
+        keycode, modmask = parsed
+        table.append((keycode, modmask, kind, extra))
+    return table
+
+
+def _match_tap_event(
+    keycode: int, flags: int, table: list[tuple[int, int, str, dict]]
+) -> tuple[str, dict] | None:
+    """Return (kind, extra) for the hotkey matching this keyDown, or None.
+
+    Requires an exact modifier match within the four real modifiers, so ctrl+q
+    does not fire when ctrl+shift+q is pressed, and vice versa.
+    """
+    event_mods = flags & _CGEVENT_MOD_MASK
+    for kc, modmask, kind, extra in table:
+        if kc == keycode and modmask == event_mods:
+            return kind, extra
+    return None
+
+
+# Keep the hotkey event-tap + callback alive for the process lifetime.
+_HOTKEY_TAP: Any = None
+
+
+def _hotkey_specs_from_config(config: Any) -> list[tuple[str, str, dict]]:
+    """The same hotkeys the Carbon backend registers, as (combo, kind, extra)."""
+    specs: list[tuple[str, str, dict]] = []
+    for i, row in enumerate(getattr(config, "CALLER_ROWS", []) or []):
+        combo = (row or {}).get("hotkey")
+        if combo:
+            specs.append((combo, "caller", {"index": i}))
+    for attr, kind in (
+        ("HOTKEY_ADD_CONTEXT", "add_context"),
+        ("HOTKEY_CLEAR_CONTEXT", "clear_context"),
+        ("HOTKEY_SNIP", "snip"),
+    ):
+        combo = getattr(config, attr, "")
+        if combo:
+            specs.append((combo, kind, {}))
+    return specs
+
+
+def _install_hotkey_tap(table: list[tuple[int, int, str, dict]], emit) -> bool:
+    """Install a listen-only tap that fires `emit(kind, **extra)` on a match.
+
+    Listen-only: the matched key still reaches the foreground app (so e.g. ctrl+q
+    may also do whatever ctrl+q does there). That is the safe trade-off -- a
+    listen-only tap cannot swallow a key or strand a modifier.
+    """
+    global _HOTKEY_TAP
+    if not table:
+        _dbg("hotkey tap: no parseable hotkeys; not installing.")
+        return False
+    try:
+        import Quartz  # type: ignore
+
+        def _on_key(_proxy, type_, event, _refcon):
+            try:
+                if type_ == Quartz.kCGEventTapDisabledByTimeout or type_ == getattr(
+                    Quartz, "kCGEventTapDisabledByUserInput", -2
+                ):
+                    Quartz.CGEventTapEnable(_HOTKEY_TAP[0], True)
+                    return event
+                keycode = Quartz.CGEventGetIntegerValueField(
+                    event, Quartz.kCGKeyboardEventKeycode
+                )
+                flags = int(Quartz.CGEventGetFlags(event))
+                match = _match_tap_event(int(keycode), flags, table)
+                if match is not None:
+                    kind, extra = match
+                    emit(kind, **extra)
+            except Exception as exc:  # noqa: BLE001
+                _dbg(f"hotkey tap callback error: {exc}")
+            return event
+
+        mask = Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown)
+        tap = Quartz.CGEventTapCreate(
+            Quartz.kCGSessionEventTap,
+            Quartz.kCGHeadInsertEventTap,
+            Quartz.kCGEventTapOptionListenOnly,
+            mask,
+            _on_key,
+            None,
+        )
+        if not tap:
+            _dbg("hotkey tap: CGEventTapCreate returned NULL "
+                 "(grant Input Monitoring to the Python/Wisp process).")
+            return False
+        source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
+        Quartz.CFRunLoopAddSource(
+            Quartz.CFRunLoopGetCurrent(), source, Quartz.kCFRunLoopCommonModes
+        )
+        Quartz.CGEventTapEnable(tap, True)
+        _HOTKEY_TAP = (tap, source, _on_key)
+        _dbg(f"hotkey tap installed for {len(table)} hotkey(s) (off-console backend).")
+        return True
+    except Exception as exc:  # noqa: BLE001 - never crash the helper on the fallback
+        _dbg(f"hotkey tap unavailable: {exc}")
+        return False
+
+
+def _teardown_hotkey_tap() -> None:
+    global _HOTKEY_TAP
+    tap = _HOTKEY_TAP
+    _HOTKEY_TAP = None
+    if not tap:
+        return
+    try:
+        import Quartz  # type: ignore
+
+        Quartz.CGEventTapEnable(tap[0], False)
+        Quartz.CFRunLoopRemoveSource(
+            Quartz.CFRunLoopGetCurrent(), tap[1], Quartz.kCFRunLoopCommonModes
+        )
+    except Exception:
+        pass
+
+
 # Keep the debug event-tap + callback alive for the process lifetime.
 _DEBUG_KEY_TAP: Any = None
 
@@ -283,18 +459,37 @@ def main() -> int:
         started = bool(listener.start())
         _dbg(f"hotkey registration {'started' if started else 'FAILED'} "
              f"(ui_element={ui_element})")
+
+        # Carbon only fires on the console session. Off-console (RDP/VNC into a
+        # virtual session, e.g. a rented MacinCloud host) fall back to a tap that
+        # observes keys inside our own session. Forceable with WISP_HOTKEY_TAP=1.
+        forced_tap = os.environ.get("WISP_HOTKEY_TAP") == "1"
+        use_tap = forced_tap or diagnostics.get("on_console") is False
+        tap_active = False
+        if use_tap:
+            from core.hotkeys import MACOS_VIRTUAL_KEYCODES
+
+            specs = _hotkey_specs_from_config(config)
+            table = _build_tap_table(specs, MACOS_VIRTUAL_KEYCODES)
+            tap_active = _install_hotkey_tap(table, emit_hotkey)
+
+        # Off-console, Carbon "starts" but never fires; the tap is what makes
+        # hotkeys actually work there, so count either backend as success.
+        ok = started or tap_active
         send(
             {
-                "status": "started" if started else "failed",
-                "started": started,
-                "backend": "carbon-helper",
+                "status": "started" if ok else "failed",
+                "started": ok,
+                "backend": "event-tap" if tap_active else "carbon-helper",
                 "ui_element": ui_element,
+                "hotkey_tap": tap_active,
                 "diagnostics": diagnostics,
             }
         )
-        if not started:
+        if not ok:
             return 1
         _run_carbon_loop(stop)
+        _teardown_hotkey_tap()
         _teardown_debug_key_monitor()
         listener.stop()
         return 0

@@ -801,7 +801,11 @@ class FlowController:
         if text and self._is_current(gen):
             paste = self.native.call(
                 "native.paste_text",
-                {"text": text, "target_pid": pending.paste_target_pid},
+                {
+                    "text": text,
+                    "target_pid": pending.paste_target_pid,
+                    "focus_token": int(pending.context.get("focus_token") or 0),
+                },
                 timeout=30.0,
             )
             paste = paste if isinstance(paste, dict) else {}
@@ -972,6 +976,9 @@ class FlowController:
                 "include_clipboard": bool(caller.get("context_clipboard", False)),
                 "include_selection": True,
                 "include_browser_content": include_browser and self._context_mode(caller, "browser") == "auto",
+                # Paste-back callers capture the focused text element so the rewrite
+                # can be written back in place (AX) without refocusing the app.
+                "capture_focus": bool(caller.get("paste_back")),
             },
             timeout=30.0,
         ) or {}

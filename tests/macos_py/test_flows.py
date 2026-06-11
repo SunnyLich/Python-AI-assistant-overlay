@@ -103,13 +103,18 @@ def make_flow(
     return flow, native, ui, brain, audio
 
 
-def context_handler(selected: str = "selected", clipboard: str = "", pid: int = 42):
-    def handler(_params: dict[str, Any]) -> dict[str, Any]:
-        return {
+def context_handler(selected: str = "selected", clipboard: str = "", pid: int = 42, focus_token: int = 0):
+    def handler(params: dict[str, Any]) -> dict[str, Any]:
+        result = {
             "selected_text": selected,
             "clipboard_text": clipboard,
             "active_app": {"name": "Notes", "pid": pid, "bundle_id": "com.apple.Notes"},
         }
+        # Mirror the native worker: a paste-back caller asks to capture the
+        # focused element and gets a token back for AX in-place write.
+        if params.get("capture_focus"):
+            result["focus_token"] = focus_token
+        return result
 
     return handler
 
@@ -464,7 +469,7 @@ def test_rewrite_flow_pastes_back_to_original_pid():
     ]
     native = FakeWorker(
         {
-            "native.context.snapshot": context_handler(selected="bad grammar", pid=777),
+            "native.context.snapshot": context_handler(selected="bad grammar", pid=777, focus_token=9),
             "native.paste_text": lambda _params: {"ok": True},
         }
     )
@@ -474,11 +479,16 @@ def test_rewrite_flow_pastes_back_to_original_pid():
         native.emit("native.hotkey", {"kind": "caller", "index": 1})
         ui.emit("ui.intent.chosen", {"custom": "Fix grammar"})
 
+    # The paste-back caller asked the native worker to capture the focused element.
+    snap = native.last_call("native.context.snapshot")["params"]
+    assert snap["capture_focus"] is True
     rewrite = brain.last_call("brain.rewrite")["params"]
     assert rewrite["selected_text"] == "bad grammar"
     paste = native.last_call("native.paste_text")["params"]
     assert paste["text"] == "good grammar"
     assert paste["target_pid"] == 777
+    # ...and the captured token is forwarded so paste_text can do the AX write.
+    assert paste["focus_token"] == 9
     # Success is silent: the bubble finishes, no status banner is written into it.
     assert ui.calls_for("ui.reply.done"), "bubble should be finished after paste"
     assert not ui.calls_for("ui.reply.notice"), "rewrite status must not go in the bubble"

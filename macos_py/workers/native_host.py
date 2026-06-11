@@ -356,6 +356,7 @@ def context_snapshot(
     include_clipboard: bool = True,
     include_selection: bool = True,
     include_browser_content: bool = False,
+    capture_focus: bool = False,
 ) -> dict[str, Any]:
     t0 = time.monotonic()
     active = _active_app()
@@ -367,8 +368,14 @@ def context_snapshot(
         "clipboard_text": "",
         "browser_url": "",
         "browser_content": "",
+        "focus_token": 0,
         "captured_at": time.time(),
     }
+    # Grab the focused text element first (before selection/clipboard work), while
+    # the user's field is still focused, so a later rewrite can be written back
+    # in place via Accessibility even if focus has since moved.
+    if capture_focus:
+        snapshot["focus_token"] = _ax_capture_focus()
     sel_dt = clip_dt = br_dt = 0.0
     if include_selection:
         _s = time.monotonic()
@@ -541,9 +548,98 @@ def _activate_pid(pid: int) -> dict[str, Any]:
         return result
 
 
-def paste_text(text: str = "", paste_combo: str = "", target_pid: int = 0) -> dict[str, Any]:
+# --- Accessibility (AX) in-place text replacement --------------------------
+# Lets a rewrite land in the originally-focused text field without refocusing
+# the app or synthesising Cmd+V, so it survives the user moving on to something
+# else. The focused AXUIElement is a live CFTypeRef, so capture (at hotkey time)
+# and apply (after the rewrite) must both run in THIS long-lived worker process;
+# only a small integer token crosses IPC. Best-effort: any failure returns False
+# and the caller falls back to activate + Cmd+V.
+_AX_FOCUSED_ATTR = "AXFocusedUIElement"
+_AX_SELECTED_TEXT_ATTR = "AXSelectedText"
+_AX_ROLE_ATTR = "AXRole"
+_AX_ERROR_SUCCESS = 0  # kAXErrorSuccess
+
+_focus_seq = 0
+_focus_cache: dict[str, Any] = {}  # {"token": int, "element": AXUIElement}
+
+
+def _ax_capture_focus() -> int:
+    """Cache the system-wide focused UI element; return a token (0 on failure)."""
+    global _focus_seq
+    if not IS_MAC:
+        return 0
+    try:
+        import HIServices  # type: ignore  # pyobjc-framework-ApplicationServices
+
+        system = HIServices.AXUIElementCreateSystemWide()
+        err, focused = HIServices.AXUIElementCopyAttributeValue(
+            system, _AX_FOCUSED_ATTR, None
+        )
+        if err != _AX_ERROR_SUCCESS or focused is None:
+            _plog(f"ax capture: no focused element (err={err})")
+            return 0
+        _focus_seq += 1
+        _focus_cache.clear()
+        _focus_cache["token"] = _focus_seq
+        _focus_cache["element"] = focused
+        _plog(f"ax capture token={_focus_seq} ok")
+        return _focus_seq
+    except Exception as exc:  # noqa: BLE001 - AX is best-effort
+        _plog(f"ax capture raised {type(exc).__name__}: {exc}")
+        return 0
+
+
+def _ax_apply_selected_text(token: int, text: str) -> dict[str, Any]:
+    """Replace the cached element's selected text in place. Best-effort."""
+    if not IS_MAC:
+        return {"ok": False, "error": "not macos"}
+    if not token or _focus_cache.get("token") != token:
+        return {"ok": False, "error": "stale or missing focus token"}
+    element = _focus_cache.get("element")
+    if element is None:
+        return {"ok": False, "error": "no cached element"}
+    try:
+        import HIServices  # type: ignore
+
+        # Confirm the element is still alive before writing to it.
+        err, _role = HIServices.AXUIElementCopyAttributeValue(element, _AX_ROLE_ATTR, None)
+        if err != _AX_ERROR_SUCCESS:
+            return {"ok": False, "error": f"element stale (err={err})"}
+        set_err = HIServices.AXUIElementSetAttributeValue(element, _AX_SELECTED_TEXT_ATTR, text)
+        if set_err == _AX_ERROR_SUCCESS:
+            return {"ok": True}
+        return {"ok": False, "error": f"set failed (err={set_err})"}
+    except Exception as exc:  # noqa: BLE001 - AX is best-effort
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def paste_text(text: str = "", paste_combo: str = "", target_pid: int = 0, focus_token: int = 0) -> dict[str, Any]:
     if IS_MAC:
         from core.platform import macos_native
+
+        # Preferred path: write straight into the originally-focused text element
+        # via Accessibility. No app refocus, no Cmd+V — survives the user moving
+        # to another window. Falls through to activate + Cmd+V if it can't.
+        if focus_token:
+            ax = _ax_apply_selected_text(int(focus_token), text)
+            if ax.get("ok"):
+                _plog(f"paste via AX in-place token={focus_token} ok")
+                return {
+                    "ok": True,
+                    "method": "ax",
+                    "activated": True,
+                    "confirmed": True,
+                    "keystroke_sent": False,
+                    "clipboard_ok": False,  # AX write doesn't touch the clipboard
+                    "target_pid": int(target_pid or 0),
+                    "app_name": "",
+                    "error": "",
+                }
+            _plog(
+                f"paste AX in-place token={focus_token} failed "
+                f"({ax.get('error')}); falling back to activate+Cmd+V"
+            )
 
         act = _activate_pid(target_pid)
         confirmed = bool(act.get("confirmed"))

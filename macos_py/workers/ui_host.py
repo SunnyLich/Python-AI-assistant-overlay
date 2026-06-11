@@ -739,6 +739,8 @@ class QtProtocolHost:
             return self._reply_done()
         if method == "ui.context.clear":
             return self._context_clear()
+        if method == "ui.context.add_item":
+            return self._context_add_item(**params)
         if method == "ui.context.summary":
             return self._context_summary(**params)
         if method == "ui.chat.chunk":
@@ -979,6 +981,14 @@ class QtProtocolHost:
         if self._overlay_signals is not None:
             self._overlay_signals.drop_context_cleared.emit()
         return {"cleared": True, "overlay": bool(overlay)}
+
+    def _context_add_item(self, name: str = "", item_type: str = "text") -> dict[str, Any]:
+        self._ensure_overlay()
+        if self._overlay_signals is not None:
+            self._overlay_signals.add_context_item.emit(
+                str(name or "Context"), str(item_type or "text")
+            )
+        return {"added": True}
 
     def _context_summary(self, items: list | None = None) -> dict[str, Any]:
         self._ensure_overlay()

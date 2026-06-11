@@ -249,6 +249,39 @@ def test_query_flow_streams_reply_and_adds_chat_conversation_with_context():
     assert ui.calls_for("ui.context.clear")
 
 
+def test_add_context_shows_panel_badge_not_bubble():
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="hello world selection")})
+    with caller_config([{}]):
+        flow, native, ui, brain, _audio = make_flow(native=native)
+        flow.add_context()
+    add_calls = ui.calls_for("ui.context.add_item")
+    assert add_calls, "added context should surface as a right-of-icon badge"
+    assert add_calls[-1]["params"]["item_type"] == "text"
+    assert not ui.calls_for("ui.reply.notice"), "added context must not go to the bubble"
+    assert len(flow._drop_context_items) == 1
+    assert flow._drop_context_items[0]["content"] == "hello world selection"
+
+
+def test_add_context_without_text_falls_back_to_notice():
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="", clipboard="")})
+    with caller_config([{}]):
+        flow, native, ui, brain, _audio = make_flow(native=native)
+        flow.add_context()
+    assert not ui.calls_for("ui.context.add_item")
+    assert ui.last_call("ui.reply.notice")["params"]["text"].startswith("No selected")
+
+
+def test_clear_context_empties_panel_without_bubble():
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="some text")})
+    with caller_config([{}]):
+        flow, native, ui, brain, _audio = make_flow(native=native)
+        flow.add_context()
+        flow.clear_context()
+    assert ui.calls_for("ui.context.clear"), "clear should empty the panel"
+    assert not ui.calls_for("ui.reply.notice"), "clear must not go to the bubble"
+    assert flow._drop_context_items == []
+
+
 def test_context_modes_map_to_auto_documents_and_allowed_tools():
     rows = [
         {

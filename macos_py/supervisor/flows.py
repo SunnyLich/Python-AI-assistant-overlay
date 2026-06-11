@@ -385,17 +385,22 @@ class FlowController:
     def add_context(self) -> None:
         context = self._context_snapshot({"context_clipboard": True})
         text = str(context.get("selected_text") or context.get("clipboard_text") or "").strip()
-        if text:
-            self._context_buffer.append(text)
-            self._notice(f"Added context ({len(text)} chars).")
-        else:
+        if not text:
             self._notice("No selected text or clipboard text to add.")
+            return
+        # Show the added context as a removable badge to the right of the icon,
+        # exactly like a dropped file -- not as a speech-bubble notice. Routing
+        # it through _drop_context_items keeps the badge's X-to-remove indexing
+        # consistent with remove_context_item.
+        name = f"Selection - {self._short(text, 18)}"
+        self._drop_context_items.append({"name": name, "content": text, "type": "text"})
+        self._fire(self.ui, "ui.context.add_item", {"name": name, "item_type": "text"})
 
     def clear_context(self) -> None:
         self._context_buffer.clear()
         self._drop_context_items.clear()
+        # The panel visibly empties (ui.context.clear), so no bubble notice.
         self._safe_call(self.ui, "ui.context.clear", timeout=30.0)
-        self._notice("Context cleared.")
 
     def context_items_dropped(self, items: list[dict[str, Any]]) -> None:
         cleaned = [self._normalize_context_item(item) for item in items]

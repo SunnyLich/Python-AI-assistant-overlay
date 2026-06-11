@@ -379,6 +379,55 @@ def _mac_focus_window(wid: int) -> None:
     run_on_main(_focus)
 
 
+def keep_overlay_visible_across_apps(widget) -> None:
+    """Stop a Qt.Tool overlay window from hiding when our app is not frontmost.
+
+    macOS backs a ``Qt.WindowType.Tool`` widget with an ``NSPanel`` whose
+    ``hidesOnDeactivate`` defaults to ``YES`` — so the icon, context panel and
+    bubble vanish the instant the user clicks into another app, regardless of
+    our own ``ICON_AUTO_HIDE`` logic. Clear that flag and let the window float
+    across every Space (and over full-screen apps) so it stays put.
+
+    Takes a Qt widget; ``winId()`` is an ``NSView*`` on macOS, whose ``window``
+    is the backing ``NSPanel``. No-op off macOS / when pyobjc is unavailable.
+    The AppKit mutation runs on the main thread (run_on_main is inline when
+    already there).
+    """
+    if not IS_MAC:
+        return
+    try:
+        ptr = int(widget.winId())  # forces native NSView/NSWindow creation
+    except Exception:
+        return
+    if not ptr:
+        return
+
+    def _apply() -> None:
+        try:
+            import objc  # type: ignore
+            from AppKit import (  # type: ignore
+                NSWindowCollectionBehaviorCanJoinAllSpaces,
+                NSWindowCollectionBehaviorFullScreenAuxiliary,
+                NSWindowCollectionBehaviorStationary,
+            )
+
+            view = objc.objc_object(c_void_p=ptr)
+            window = view.window() if view is not None else None
+            if window is None:
+                return
+            window.setHidesOnDeactivate_(False)
+            window.setCollectionBehavior_(
+                window.collectionBehavior()
+                | NSWindowCollectionBehaviorCanJoinAllSpaces
+                | NSWindowCollectionBehaviorStationary
+                | NSWindowCollectionBehaviorFullScreenAuxiliary
+            )
+        except Exception:
+            pass
+
+    run_on_main(_apply)
+
+
 def activate_self() -> None:
     """Bring *our own* application to the foreground and make it the active app.
 

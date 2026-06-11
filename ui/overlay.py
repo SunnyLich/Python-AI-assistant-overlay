@@ -50,6 +50,7 @@ class OverlaySignals(QObject):
     show_agent_task        = Signal()        # tray "Start agent task" clicked
     show_agent_history     = Signal()        # tray "Agent task history" clicked
     context_items_dropped  = Signal(object)  # list[(name, content, type)] from drag-drop
+    add_context_item       = Signal(str, str) # (name, type) add one removable badge (hotkey/voice add)
     show_context_summary   = Signal(object)  # list[(name, type)] of context sent with a prompt
     drop_context_cleared   = Signal()        # context panel should be cleared
     remove_dropped_item    = Signal(int)     # user clicked X on badge at this index
@@ -94,6 +95,7 @@ class IconOverlay(QMainWindow):
         self._context_panel.reposition(self._icon_label.pos(), config.ICON_SIZE)
         signals.drop_context_cleared.connect(self._context_panel.clear_items)
         signals.show_context_summary.connect(self._on_show_context_summary)
+        signals.add_context_item.connect(self._on_add_context_item)
 
         # Connect signals
         signals.set_state.connect(self._on_state_changed)
@@ -115,6 +117,23 @@ class IconOverlay(QMainWindow):
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self.hide)
+
+        # macOS: a Qt.Tool window is backed by an NSPanel that hides itself
+        # whenever our app is not frontmost. Pin the persistent overlay windows
+        # so the icon/context panel stay put when the user clicks into another
+        # app (independent of our own ICON_AUTO_HIDE logic).
+        self._pin_overlay_windows()
+
+    def _pin_overlay_windows(self):
+        """Stop the Tool overlay windows from auto-hiding on app deactivation (macOS)."""
+        from core.platform_utils import keep_overlay_visible_across_apps
+        for w in (
+            getattr(self, "_icon_label", None),
+            getattr(self, "_context_panel", None),
+            getattr(self, "_bubble", None),
+        ):
+            if w is not None:
+                keep_overlay_visible_across_apps(w)
 
     # ------------------------------------------------------------------
     # Window setup
@@ -369,6 +388,17 @@ class IconOverlay(QMainWindow):
         if hasattr(self, "_icon_label"):
             self._context_panel.reposition(self._icon_label.pos(), config.ICON_SIZE)
         self._context_panel.show_context_summary(items)
+
+    def _on_add_context_item(self, name: str, item_type: str):
+        """Add one removable badge to the right of the icon (hotkey/voice 'add context').
+
+        Surfaces added context the same way dropped files do — on the panel, not
+        in the speech bubble."""
+        if not hasattr(self, "_context_panel"):
+            return
+        if hasattr(self, "_icon_label"):
+            self._context_panel.reposition(self._icon_label.pos(), config.ICON_SIZE)
+        self._context_panel.add_item(name or "Context", item_type or "text")
 
     def _on_bubble_hidden(self):
         """Called by SpeechBubble.hideEvent -- hides the icon in lockstep with the bubble."""

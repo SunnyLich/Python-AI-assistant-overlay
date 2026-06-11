@@ -72,7 +72,16 @@ class _ModelFetchSignals(QObject):
 class _MemoryLoadSignals(QObject):
     """Marshals the lazy memory-store load back to the Qt main thread."""
 
-    done = Signal(object, object, str)
+    done = Signal(int, object, object, str)
+
+
+class _SettingsMemoryManagerProxy:
+    """Read-only bridge for the Settings memory tab."""
+
+    def get_all_facts(self) -> list[dict]:
+        from core.memory_store.store import get_all_facts_lightweight
+
+        return get_all_facts_lightweight()
 
 
 def _read_env() -> dict[str, str]:
@@ -121,10 +130,14 @@ class SettingsDialog(QDialog):
         self._latest_test_token: dict[str, int] = {}
         self._status_refresh_token = 0
         self._status_refresh_running = False
+        self._tabs = None
         self._memory_panel = None
         self._memory_tab_index = -1
         self._memory_browser_cv = None
         self._memory_loading = False
+        self._memory_load_token = 0
+        self._memory_load_timeout_ms = 12000
+        self._memory_load_start_delay_ms = 250
         self._memory_load_signals = _MemoryLoadSignals(self)
         self._memory_load_signals.done.connect(self._on_memory_panel_loaded)
         self._test_result_timer = QTimer(self)
@@ -222,6 +235,16 @@ class SettingsDialog(QDialog):
     def showEvent(self, event):                 # noqa: N802
         super().showEvent(event)
         fit_window_to_screen(self, preferred_width=620, preferred_height=620)
+        if self._tabs is not None:
+            self._maybe_load_memory_tab(self._tabs.currentIndex())
+
+    def reject(self) -> None:
+        self._cancel_memory_panel_load()
+        super().reject()
+
+    def closeEvent(self, event):                # noqa: N802
+        self._cancel_memory_panel_load()
+        super().closeEvent(event)
 
     _LIGHT_STYLE = """
         QDialog { background: #f2f2f7; }
@@ -344,6 +367,7 @@ class SettingsDialog(QDialog):
         self._memory_tab_index = tabs.addTab(self._tab_memory(), "Memory")
         tabs.addTab(self._tab_tools(),     "Tools")
         tabs.currentChanged.connect(self._maybe_load_memory_tab)
+        self._tabs = tabs
         root.addWidget(tabs)
 
         # Buttons
@@ -1367,6 +1391,7 @@ class SettingsDialog(QDialog):
         context_documents_mode: str | None = None,
         context_browser_mode: str = "off",
         context_github_mode: str = "off",
+        context_memory_mode: str = "auto",
         context_screenshot: str = "off",
         intents: "list[dict] | None" = None,
     ) -> None:
@@ -1442,6 +1467,13 @@ class SettingsDialog(QDialog):
             "On — read local git status and diff before sending the prompt.\n"
             "Let model decide — expose git status/diff and GitHub repo/issue tools."
         )
+        memory_combo = _context_mode_combo(context_memory_mode, allow_auto=True)
+        memory_combo.setToolTip(
+            "Memory:\n"
+            "Off — do not use stored facts for this caller.\n"
+            "On — fetch relevant stored facts before sending the prompt.\n"
+            "Let model decide — expose a memory search tool during the answer."
+        )
         screenshot_combo = _context_mode_combo(context_screenshot, allow_auto=True)
         screenshot_combo.setToolTip(
             "Screenshot of your screen:\n"
@@ -1459,6 +1491,8 @@ class SettingsDialog(QDialog):
         context_h.addWidget(browser_combo, 1, 3)
         context_h.addWidget(QLabel("Git/GitHub:"), 1, 4)
         context_h.addWidget(github_combo, 1, 5)
+        context_h.addWidget(QLabel("Memory:"), 2, 2)
+        context_h.addWidget(memory_combo, 2, 3)
         context_h.setColumnStretch(6, 1)
         outer.addWidget(context_row)
 
@@ -1496,6 +1530,7 @@ class SettingsDialog(QDialog):
             "context_documents_mode": docs_combo,
             "context_browser_mode": browser_combo,
             "context_github_mode": github_combo,
+            "context_memory_mode": memory_combo,
             "context_screenshot": screenshot_combo,
             "intents_layout": intents_vlayout,
             "intent_rows":    [],
@@ -1616,7 +1651,6 @@ class SettingsDialog(QDialog):
         mem_budget.setPlaceholderText("tokens before STM compression kicks in")
         self._fields["MEMORY_STM_TOKEN_BUDGET"] = mem_budget
         f.addRow("STM token budget:", mem_budget)
-        f.addRow("", self._button_row(("Clean up low-value stored facts", self._cleanup_memory)))
 
         cfg_cv.addWidget(fw)
         root.addWidget(cfg_card)
@@ -1637,9 +1671,24 @@ class SettingsDialog(QDialog):
         if index != self._memory_tab_index or self._memory_panel is not None or self._memory_loading:
             return
         self._memory_loading = True
+        self._memory_load_token = getattr(self, "_memory_load_token", 0) + 1
+        token = self._memory_load_token
         if self._memory_browser_cv is not None:
             self._replace_memory_browser_message("Loading stored facts...")
-        QTimer.singleShot(0, self._load_memory_panel)
+        QTimer.singleShot(
+            self._memory_load_timeout_ms,
+            lambda: self._on_memory_panel_load_timeout(token),
+        )
+        QTimer.singleShot(
+            self._memory_load_start_delay_ms,
+            lambda: self._load_memory_panel(token),
+        )
+
+    def _cancel_memory_panel_load(self) -> None:
+        if not getattr(self, "_memory_loading", False):
+            return
+        self._memory_load_token = getattr(self, "_memory_load_token", 0) + 1
+        self._memory_loading = False
 
     def _replace_memory_browser_message(self, text: str, *, error: bool = False) -> None:
         layout = self._memory_browser_cv
@@ -1656,21 +1705,32 @@ class SettingsDialog(QDialog):
         label.setStyleSheet("color: #c00;" if error else "color: palette(placeholder-text);")
         layout.addWidget(label)
 
-    def _load_memory_panel(self) -> None:
+    def _load_memory_panel(self, token: int | None = None) -> None:
         layout = self._memory_browser_cv
         if layout is None:
             self._memory_loading = False
             return
+        if token is None:
+            token = getattr(self, "_memory_load_token", 0)
+        if token != getattr(self, "_memory_load_token", 0) or not self._memory_loading:
+            return
+        try:
+            visible = self.isVisible()
+        except RuntimeError:
+            visible = True
+        if not visible:
+            self._cancel_memory_panel_load()
+            return
 
         def worker() -> None:
             try:
-                from core.memory_store.store import get_manager
+                from core.memory_store.store import get_all_facts_lightweight
 
-                manager = get_manager()
-                facts = manager.get_all_facts()
-                self._memory_load_signals.done.emit(manager, facts, "")
+                manager = _SettingsMemoryManagerProxy()
+                facts = get_all_facts_lightweight()
+                self._memory_load_signals.done.emit(token, manager, facts, "")
             except Exception as exc:
-                self._memory_load_signals.done.emit(None, [], str(exc))
+                self._memory_load_signals.done.emit(token, None, [], str(exc))
 
         threading.Thread(
             target=worker,
@@ -1678,7 +1738,18 @@ class SettingsDialog(QDialog):
             daemon=True,
         ).start()
 
-    def _on_memory_panel_loaded(self, manager, facts, error: str) -> None:
+    def _on_memory_panel_load_timeout(self, token: int) -> None:
+        if token != self._memory_load_token or not self._memory_loading or self._memory_panel is not None:
+            return
+        self._memory_loading = False
+        self._replace_memory_browser_message(
+            "Memory store is still starting up. Close and reopen Settings to try again.",
+            error=True,
+        )
+
+    def _on_memory_panel_loaded(self, token: int, manager, facts, error: str) -> None:
+        if token != self._memory_load_token:
+            return
         layout = self._memory_browser_cv
         self._memory_loading = False
         if layout is None:
@@ -1694,7 +1765,7 @@ class SettingsDialog(QDialog):
                 widget = item.widget()
                 if widget is not None:
                     widget.deleteLater()
-            panel = MemoryPanel(manager, self, initial_facts=list(facts or []))
+            panel = MemoryPanel(manager, self, initial_facts=list(facts or []), read_only=True)
             self._memory_panel = panel
             panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             layout.addWidget(panel)
@@ -1792,21 +1863,6 @@ class SettingsDialog(QDialog):
             QTimer.singleShot(3000, lambda: self._status_lbl.setText(""))
         except Exception as exc:
             QMessageBox.warning(self, "Save failed", str(exc))
-
-    def _cleanup_memory(self) -> None:
-        try:
-            from core.memory_store.store import get_manager
-            count = get_manager().prune_low_value_facts()
-            panel = getattr(self, "_memory_panel", None)
-            if panel is not None:
-                panel._load_facts()
-            QMessageBox.information(
-                self,
-                "Memory cleanup",
-                f"Archived {count} low-value fact(s).",
-            )
-        except Exception as exc:
-            QMessageBox.warning(self, "Memory cleanup failed", str(exc))
 
     def _tab_app(self) -> QWidget:
         from PySide6.QtWidgets import QScrollArea
@@ -2258,6 +2314,10 @@ class SettingsDialog(QDialog):
                 f"CALLER_{n}_CONTEXT_GITHUB_MODE",
                 "model" if legacy_tools else (cr.get("context_github_mode") or "off"),
             )
+            memory_mode = self._env.get(
+                f"CALLER_{n}_CONTEXT_MEMORY_MODE",
+                cr.get("context_memory_mode") or "auto",
+            )
             self._add_caller_block(
                 hotkey     = self._env.get(f"CALLER_{n}_HOTKEY",     cr.get("hotkey", "")),
                 label      = self._env.get(f"CALLER_{n}_LABEL",      cr.get("label", "")),
@@ -2265,10 +2325,11 @@ class SettingsDialog(QDialog):
                 custom_key = self._env.get(f"CALLER_{n}_CUSTOM_KEY", cr.get("custom_key", "s")),
                 context_ambient = self._env.get(f"CALLER_{n}_CONTEXT_AMBIENT", str(cr.get("context_ambient", True))).lower() == "true",
                 context_documents = documents_mode == "auto",
-                context_tools = any(mode == "model" for mode in (documents_mode, browser_mode, github_mode)),
+                context_tools = any(mode == "model" for mode in (documents_mode, browser_mode, github_mode, memory_mode)),
                 context_documents_mode = documents_mode,
                 context_browser_mode = browser_mode,
                 context_github_mode = github_mode,
+                context_memory_mode = memory_mode,
                 context_screenshot = normalize_screenshot_mode(self._env.get(f"CALLER_{n}_CONTEXT_SCREENSHOT", cr.get("context_screenshot", "off"))),
                 intents    = intents,
             )
@@ -2791,13 +2852,15 @@ class SettingsDialog(QDialog):
             documents_mode = str(blk["context_documents_mode"].currentData())  # type: ignore[attr-defined]
             browser_mode = str(blk["context_browser_mode"].currentData())  # type: ignore[attr-defined]
             github_mode = str(blk["context_github_mode"].currentData())  # type: ignore[attr-defined]
+            memory_mode = str(blk["context_memory_mode"].currentData())  # type: ignore[attr-defined]
             vals[f"CALLER_{n}_CONTEXT_DOCUMENTS_MODE"] = documents_mode
             vals[f"CALLER_{n}_CONTEXT_BROWSER_MODE"] = browser_mode
             vals[f"CALLER_{n}_CONTEXT_GITHUB_MODE"] = github_mode
+            vals[f"CALLER_{n}_CONTEXT_MEMORY_MODE"] = memory_mode
             # Compatibility values for older branches/scripts.
             vals[f"CALLER_{n}_CONTEXT_DOCUMENTS"] = str(documents_mode == "auto")
             vals[f"CALLER_{n}_CONTEXT_TOOLS"] = str(
-                any(mode == "model" for mode in (documents_mode, browser_mode, github_mode))
+                any(mode == "model" for mode in (documents_mode, browser_mode, github_mode, memory_mode))
             )
             vals[f"CALLER_{n}_CONTEXT_SCREENSHOT"] = str(blk["context_screenshot"].currentData())  # type: ignore
             vals[f"CALLER_{n}_INTENT_COUNT"]  = str(len(blk["intent_rows"]))
@@ -2841,6 +2904,7 @@ class SettingsDialog(QDialog):
                         str(blk["context_documents_mode"].currentData()),  # type: ignore[attr-defined]
                         str(blk["context_browser_mode"].currentData()),  # type: ignore[attr-defined]
                         str(blk["context_github_mode"].currentData()),  # type: ignore[attr-defined]
+                        str(blk["context_memory_mode"].currentData()),  # type: ignore[attr-defined]
                     ]
                 )
             warnings += tool_capability_warnings(

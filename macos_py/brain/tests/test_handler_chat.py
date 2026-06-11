@@ -77,6 +77,26 @@ def test_chat_normalizes_messages_and_forwards_memory_context(record_ctx, monkey
     }
 
 
+def test_chat_memory_disabled_skips_retrieval(record_ctx, monkeypatch):
+    from core.memory_store import store
+
+    class FailingManager:
+        def retrieve_relevant(self, _query):
+            raise AssertionError("memory should not be fetched")
+
+    monkeypatch.setattr(store, "get_manager", lambda: FailingManager())
+
+    events, ctx = record_ctx()
+    result = handlers.HANDLERS["brain.chat"](
+        ctx,
+        messages=[{"role": "user", "content": "what do you know about me"}],
+        memory_enabled=False,
+    )
+
+    assert result["text"].startswith("[fake-chat]")
+    assert "".join(_chunks(events)) == result["text"]
+
+
 def test_chat_precancelled_yields_empty(record_ctx):
     events, ctx = record_ctx()
     ctx.cancelled = True

@@ -244,6 +244,23 @@ def _execute_get_context(inputs: dict) -> str:
     return "Open document windows were detected, but none of their file types were readable."
 
 
+def _execute_memory_search(inputs: dict) -> str:
+    query = str((inputs or {}).get("query") or "").strip()
+    top_k_raw = (inputs or {}).get("top_k")
+    try:
+        top_k = int(top_k_raw) if top_k_raw is not None else None
+    except (TypeError, ValueError):
+        top_k = None
+    if not query:
+        return "Memory search requires a query."
+    try:
+        from core.memory_store import store
+
+        return store.get_manager().retrieve_relevant(query, top_k=top_k) or "No relevant memory found."
+    except Exception as exc:  # noqa: BLE001 - memory should not block the answer path
+        return f"Memory search failed: {type(exc).__name__}: {exc}"
+
+
 def _execute_git_status(inputs: dict) -> str:
     cwd = inputs.get("cwd") or config.TOOL_GIT_ROOT
     return _run_read_only_command(["git", "status", "--short"], cwd=cwd)
@@ -362,6 +379,31 @@ def _register_builtin_tools() -> None:
             executor=lambda _inputs: (
                 "Screen capture could not be returned in this context."
             ),
+            opt_in=True,
+        )
+    )
+    _TOOL_REGISTRY.register_builtin(
+        ToolSpec(
+            name="memory_search",
+            description=(
+                "Search the user's stored long-term memory for relevant facts. "
+                "Use this only when personal or project memory would help answer."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Short search query for the memory facts to retrieve.",
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Optional maximum number of facts to return.",
+                    },
+                },
+                "required": ["query"],
+            },
+            executor=_execute_memory_search,
             opt_in=True,
         )
     )
@@ -686,6 +728,10 @@ def _get_tool_schemas(
         spec = _TOOL_REGISTRY.get_tool("capture_screen")
         if spec is not None:
             schemas.append(spec.anthropic_schema())
+    if allowed_tools is not None and _tools_allow(allowed_tools, "memory_search"):
+        spec = _TOOL_REGISTRY.get_tool("memory_search")
+        if spec is not None:
+            schemas.append(spec.anthropic_schema())
     return schemas
 
 
@@ -713,6 +759,10 @@ def _get_openai_tool_schemas(
         ]
     if include_screenshot:
         spec = _TOOL_REGISTRY.get_tool("capture_screen")
+        if spec is not None:
+            schemas.append(spec.openai_schema())
+    if allowed_tools is not None and _tools_allow(allowed_tools, "memory_search"):
+        spec = _TOOL_REGISTRY.get_tool("memory_search")
         if spec is not None:
             schemas.append(spec.openai_schema())
     return schemas

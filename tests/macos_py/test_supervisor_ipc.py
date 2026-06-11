@@ -203,6 +203,38 @@ def test_ui_worker_show_settings_does_not_block_event_loop(tmp_path):
 
 
 @pytest.mark.skipif(importlib.util.find_spec("PySide6") is None, reason="PySide6 not installed")
+def test_ui_worker_show_memory_does_not_crash_or_block_event_loop(tmp_path):
+    worker = _worker(
+        "macos_py.workers.ui_host",
+        "ui",
+        env={
+            **os.environ,
+            "QT_QPA_PLATFORM": "offscreen",
+            "WISP_RUN_LOG_DIR": str(tmp_path),
+            "WISP_UI_FREEZE_THRESHOLD_SECONDS": "0.5",
+            "WISP_UI_FREEZE_WATCHDOG_INTERVAL_SECONDS": "0.1",
+        },
+    )
+    try:
+        started = time.perf_counter()
+        result = worker.call(
+            "ui.show_memory",
+            {"facts": [{"id": "1", "text": "remember this", "category": "general"}]},
+            timeout=10,
+        )
+        elapsed = time.perf_counter() - started
+        assert result == {"queued": True}
+        assert elapsed < 1.0
+
+        time.sleep(0.5)
+        ping = worker.call("ui.ping", timeout=10)
+        assert ping["pong"] is True
+        assert not list(tmp_path.glob("ui_freeze_*.log"))
+    finally:
+        worker.shutdown()
+
+
+@pytest.mark.skipif(importlib.util.find_spec("PySide6") is None, reason="PySide6 not installed")
 def test_ui_worker_bubble_clear_does_not_import_audio_or_freeze(tmp_path):
     worker = _worker(
         "macos_py.workers.ui_host",

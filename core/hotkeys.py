@@ -282,7 +282,6 @@ class HotkeyListener:
             self._hotkey_defs.append((config.HOTKEY_CLEAR_CONTEXT, on_clear_context))
         if on_snip:
             self._hotkey_defs.append((config.HOTKEY_SNIP, on_snip))
-
         self._on_voice_start = on_voice_start
         self._on_voice_stop  = on_voice_stop
 

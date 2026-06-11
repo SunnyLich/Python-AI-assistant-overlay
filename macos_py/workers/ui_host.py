@@ -1138,21 +1138,35 @@ class QtProtocolHost:
         return {"queued": True}
 
     def _show_memory(self, facts: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        from ui.memory_viewer import MemoryViewer
+        from PySide6.QtCore import QTimer
 
         manager = self._memory_manager()
         if hasattr(manager, "replace_facts"):
             manager.replace_facts(facts or [])
-        if self._memory_viewer is not None and self._memory_viewer.isVisible():
-            self._memory_viewer.raise_()
-            self._memory_viewer.activateWindow()
-            return {"shown": True, "reused": True}
-        self._memory_viewer = MemoryViewer(manager, parent=None)
-        self._memory_viewer.destroyed.connect(lambda: setattr(self, "_memory_viewer", None))
-        self._memory_viewer.show()
-        self._memory_viewer.raise_()
-        self._memory_viewer.activateWindow()
-        return {"shown": True, "reused": False}
+
+        def _open() -> None:
+            try:
+                from ui.memory_viewer import MemoryViewer
+
+                if self._memory_viewer is not None and self._memory_viewer.isVisible():
+                    self._memory_viewer.raise_()
+                    self._memory_viewer.activateWindow()
+                    return
+
+                viewer = MemoryViewer(manager, parent=None)
+                if viewer is None:
+                    print("[ui] MemoryViewer construction returned None")
+                    return
+                self._memory_viewer = viewer
+                viewer.destroyed.connect(lambda: setattr(self, "_memory_viewer", None))
+                viewer.show()
+                viewer.raise_()
+                viewer.activateWindow()
+            except Exception:
+                traceback.print_exc()
+
+        QTimer.singleShot(0, _open)
+        return {"queued": True}
 
     def _show_plugins(
         self,

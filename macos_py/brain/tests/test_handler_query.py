@@ -56,6 +56,26 @@ def test_query_includes_intent_and_selected_in_prompt(record_ctx):
     assert "def add(a, b)" in result["text"]
 
 
+def test_query_memory_disabled_skips_retrieval(record_ctx, monkeypatch):
+    from core.memory_store import store
+
+    class FailingManager:
+        def retrieve_relevant(self, _query):
+            raise AssertionError("memory should not be fetched")
+
+    monkeypatch.setattr(store, "get_manager", lambda: FailingManager())
+
+    events, ctx = record_ctx()
+    result = handlers.HANDLERS["brain.query"](
+        ctx,
+        intent_prompt="what do you remember",
+        memory_enabled=False,
+    )
+
+    assert result["text"].startswith("[fake-llm]")
+    assert "".join(_chunks(events)) == result["text"]
+
+
 def test_query_forwards_tool_policy(record_ctx, monkeypatch):
     captured = {}
 

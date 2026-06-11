@@ -1016,6 +1016,7 @@ class FlowController:
             screenshot_tool_b64 = self._capture_model_tool_b64()
         allowed_tools = self._allowed_model_tools(caller)
         frontload_tools = self._frontloaded_model_tools(caller)
+        memory_mode = self._context_mode(caller, "memory")
         if caller.get("context_ambient", True):
             active_app = context.get("active_app")
             if isinstance(active_app, dict) and active_app.get("name"):
@@ -1067,6 +1068,7 @@ class FlowController:
             "selected": context.get("selected_text") or "",
             "screenshot_b64": screenshot_b64,
             "ambient_text": "\n\n".join(ambient_parts),
+            "memory_enabled": memory_mode == "auto",
             "use_tools": bool(allowed_tools),
             "allowed_tools": allowed_tools,
             "frontload_tools": frontload_tools,
@@ -1089,6 +1091,8 @@ class FlowController:
                 return "model"
         if name in {"browser", "github"} and caller.get("context_tools", False):
             return "model"
+        if name == "memory":
+            return "auto"
         return "off"
 
     def _allowed_model_tools(self, caller: dict[str, Any]) -> list[str]:
@@ -1099,6 +1103,8 @@ class FlowController:
             allowed.extend(["web_search", "get_context.browser"])
         if self._context_mode(caller, "github") == "model":
             allowed.extend(["git_status", "git_diff", "github_repo", "github_issue"])
+        if self._context_mode(caller, "memory") == "model":
+            allowed.append("memory_search")
         return allowed
 
     def _frontloaded_model_tools(self, caller: dict[str, Any]) -> list[str]:

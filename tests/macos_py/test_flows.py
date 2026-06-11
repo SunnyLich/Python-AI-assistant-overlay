@@ -664,6 +664,76 @@ def test_chat_request_streams_through_brain_chat():
     assert ui.last_call("ui.chat.done")["params"]["request_id"] == "chat-1"
 
 
+def test_icon_summon_routes_to_first_caller_like_default_hotkey():
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents": False,
+            "context_tools": False,
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="icon selected")})
+    with caller_config(rows):
+        _flow, native, ui, _brain, _audio = make_flow(native=native)
+        ui.emit("ui.summon_caller", {"caller_idx": 0})
+
+    assert native.last_call("native.context.snapshot")["params"]["include_selection"] is True
+    assert ui.last_call("ui.show_intent")["params"]["caller_idx"] == 0
+
+
+def test_caller_memory_modes_map_to_injected_or_model_decided_access():
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents": False,
+            "context_tools": False,
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        },
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents": False,
+            "context_tools": True,
+            "context_memory_mode": "model",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        },
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents": False,
+            "context_tools": False,
+            "context_memory_mode": "auto",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        },
+    ]
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="selected")})
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("reply")})
+    with caller_config(rows):
+        _flow, native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "use no memory"})
+        _flow.begin_caller(1)
+        ui.emit("ui.intent.chosen", {"custom": "model may search memory"})
+        _flow.begin_caller(2)
+        ui.emit("ui.intent.chosen", {"custom": "use injected memory"})
+
+    calls = brain.calls_for("brain.query")
+    assert calls[0]["params"]["memory_enabled"] is False
+    assert "memory_search" not in calls[0]["params"]["allowed_tools"]
+    assert calls[1]["params"]["memory_enabled"] is False
+    assert "memory_search" in calls[1]["params"]["allowed_tools"]
+    assert calls[2]["params"]["memory_enabled"] is True
+    assert "memory_search" not in calls[2]["params"]["allowed_tools"]
+
+
 def test_memory_events_route_to_brain_and_seed_ui_viewer():
     brain = FakeWorker({"brain.memory.list": lambda _params: {"facts": [{"id": "1", "text": "remember"}]}})
     _flow, _native, ui, brain, _audio = make_flow(brain=brain)

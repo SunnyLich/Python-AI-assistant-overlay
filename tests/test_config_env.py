@@ -95,6 +95,7 @@ class ConfigEnvTests(unittest.TestCase):
                     "CALLER_1_CONTEXT_DOCUMENTS_MODE": "model",
                     "CALLER_1_CONTEXT_BROWSER_MODE": "model",
                     "CALLER_1_CONTEXT_GITHUB_MODE": "off",
+                    "CALLER_1_CONTEXT_MEMORY_MODE": "model",
                     "CALLER_1_CONTEXT_SCREENSHOT": "auto",
                 },
                 clear=False,
@@ -105,6 +106,7 @@ class ConfigEnvTests(unittest.TestCase):
             self.assertEqual(row["context_documents_mode"], "model")
             self.assertEqual(row["context_browser_mode"], "model")
             self.assertEqual(row["context_github_mode"], "off")
+            self.assertEqual(row["context_memory_mode"], "model")
             self.assertFalse(row["context_documents"])
             self.assertTrue(row["context_tools"])
         finally:

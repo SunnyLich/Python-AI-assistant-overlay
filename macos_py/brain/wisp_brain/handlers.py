@@ -1019,6 +1019,7 @@ def brain_query(
     screenshot_b64: str | None = None,
     ambient_text: str = "",
     memory_context: str = "",
+    memory_enabled: bool = True,
     use_tools: bool = False,
     allowed_tools: list[str] | None = None,
     frontload_tools: list[str] | None = None,
@@ -1036,7 +1037,7 @@ def brain_query(
     """
     from core.query_pipeline import ContextInputs, build_context
 
-    if not memory_context:
+    if memory_enabled and not memory_context:
         try:
             from core.memory_store import store
             memory_context = store.get_manager().retrieve_relevant(intent_prompt) or ""
@@ -1225,13 +1226,14 @@ def brain_chat(
     ctx: StreamContext,
     messages: list[dict[str, Any]] | None = None,
     memory_context: str = "",
+    memory_enabled: bool = True,
 ) -> dict[str, Any]:
     """Stream a multi-turn chat reply from the existing chat LLM path."""
     turns = _normalize_chat_messages(messages or [])
     if not turns:
         raise ValueError("messages must include at least one user turn")
 
-    if not memory_context:
+    if memory_enabled and not memory_context:
         last_user = next(
             (str(m.get("content") or "") for m in reversed(turns) if m.get("role") == "user"),
             "",

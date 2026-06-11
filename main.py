@@ -322,6 +322,22 @@ class App(QObject):
         if config.ICON_AUTO_HIDE:
             self._signals.hide_icon.emit()
 
+    @staticmethod
+    def _context_mode(caller: dict, name: str) -> str:
+        mode = str(caller.get(f"context_{name}_mode") or "").strip().lower()
+        if mode in {"off", "auto", "model"}:
+            return mode
+        if name == "memory":
+            return "auto"
+        if name == "documents":
+            if caller.get("context_documents", False):
+                return "auto"
+            if caller.get("context_tools", False):
+                return "model"
+        if name in {"browser", "github"} and caller.get("context_tools", False):
+            return "model"
+        return "off"
+
     def _finish_idle(self, gen_id: int) -> None:
         """Return to idle only if this generation is still the active one."""
         if self._generations.is_current(gen_id):
@@ -884,8 +900,12 @@ class App(QObject):
             self._memory.add_explicit_fact(remember_fact)
 
         query_for_retrieval = user_message + (" " + (selected or "")).strip()
-        ltm_facts  = self._memory.retrieve_relevant(query_for_retrieval)
-        stm_ctx    = self._memory.get_stm_context()
+        ltm_facts = ""
+        stm_ctx = ""
+        memory_mode = self._context_mode(caller, "memory")
+        if memory_mode == "auto":
+            ltm_facts = self._memory.retrieve_relevant(query_for_retrieval)
+            stm_ctx = self._memory.get_stm_context()
         memory_ctx_parts: list[str] = []
         if ltm_facts:
             memory_ctx_parts.append(ltm_facts)
@@ -916,13 +936,29 @@ class App(QObject):
 
         def llm_producer():
             nonlocal full_text, reply_text
+            use_tools = not screenshot_b64 and caller.get("context_tools", True)
+            allowed_tools = None
+            if memory_mode == "model":
+                use_tools = True
+                allowed_tools = [
+                    "web_search",
+                    "get_context",
+                    "get_context.browser",
+                    "get_context.documents",
+                    "git_status",
+                    "git_diff",
+                    "github_repo",
+                    "github_issue",
+                    "memory_search",
+                ]
             try:
                 for chunk in llm.stream_response(
                     user_message,
                     screenshot_b64,
                     ambient_context=ambient_ctx,
                     memory_context=memory_context,
-                    use_tools=(not screenshot_b64 and caller.get("context_tools", True)),
+                    use_tools=use_tools,
+                    allowed_tools=allowed_tools,
                     allow_screenshot_tool=(
                         not screenshot_b64
                         and caller.get("context_screenshot") == "model"

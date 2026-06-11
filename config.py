@@ -38,6 +38,7 @@ _CALLER_DEFAULTS: list[dict] = [
         "context_documents_mode": "auto",
         "context_browser_mode": "off",
         "context_github_mode": "off",
+        "context_memory_mode": "auto",
         "context_screenshot": "off",   # "off" | "auto" | "model"
         "context_clipboard": False,
         "intents": [
@@ -57,6 +58,7 @@ _CALLER_DEFAULTS: list[dict] = [
         "context_documents_mode": "off",
         "context_browser_mode": "off",
         "context_github_mode": "off",
+        "context_memory_mode": "off",
         "context_screenshot": "off",   # "off" | "auto" | "model"
         "context_clipboard": False,
         "intents": [
@@ -109,6 +111,10 @@ def _load_caller_rows() -> list[dict]:
         github_default = "model" if legacy_tools else str(default.get("context_github_mode") or "off")
         browser_mode = _context_mode(os.getenv(f"CALLER_{n}_CONTEXT_BROWSER_MODE"), browser_default)
         github_mode = _context_mode(os.getenv(f"CALLER_{n}_CONTEXT_GITHUB_MODE"), github_default)
+        memory_mode = _context_mode(
+            os.getenv(f"CALLER_{n}_CONTEXT_MEMORY_MODE"),
+            str(default.get("context_memory_mode") or "auto"),
+        )
         rows.append({
             "hotkey":     os.getenv(f"CALLER_{n}_HOTKEY",     default.get("hotkey", "")),
             "label":      os.getenv(f"CALLER_{n}_LABEL",      default.get("label", "")),
@@ -116,10 +122,11 @@ def _load_caller_rows() -> list[dict]:
             "custom_key": os.getenv(f"CALLER_{n}_CUSTOM_KEY", default.get("custom_key", "s")),
             "context_ambient": env_bool(f"CALLER_{n}_CONTEXT_AMBIENT", bool(default.get("context_ambient", True))),
             "context_documents": documents_mode == "auto",
-            "context_tools": any(m == "model" for m in (documents_mode, browser_mode, github_mode)),
+            "context_tools": any(m == "model" for m in (documents_mode, browser_mode, github_mode, memory_mode)),
             "context_documents_mode": documents_mode,
             "context_browser_mode": browser_mode,
             "context_github_mode": github_mode,
+            "context_memory_mode": memory_mode,
             "context_screenshot": env_screenshot_mode(f"CALLER_{n}_CONTEXT_SCREENSHOT", default.get("context_screenshot", "off")),
             "context_clipboard": env_bool(f"CALLER_{n}_CONTEXT_CLIPBOARD", bool(default.get("context_clipboard", False))),
             "intents":    intents,

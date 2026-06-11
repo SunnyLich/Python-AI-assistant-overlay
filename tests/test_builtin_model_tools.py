@@ -40,6 +40,19 @@ class BuiltinModelToolsTests(unittest.TestCase):
         self.assertIn("get_context", names)
         self.assertTrue(self._GIT_TOOLS.isdisjoint(names))
 
+    def test_memory_search_is_opt_in(self):
+        default_names = {schema["name"] for schema in llm._get_tool_schemas("remember my project")}
+        allowed_names = {
+            schema["name"]
+            for schema in llm._get_tool_schemas(
+                "remember my project",
+                allowed_tools=["memory_search"],
+            )
+        }
+
+        self.assertNotIn("memory_search", default_names)
+        self.assertIn("memory_search", allowed_names)
+
     def test_get_context_execution_respects_source_allowlist(self):
         self.assertIn(
             "disabled",

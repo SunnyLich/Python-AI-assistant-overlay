@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -49,6 +50,7 @@ except Exception:
 _MEMORY_DIR = str(MEMORY_DIR)
 _CHROMA_DIR = os.path.join(_MEMORY_DIR, "chroma")
 _FALLBACK_PATH = os.path.join(_MEMORY_DIR, "facts_fallback.json")
+_FALLBACK_LOCK = threading.RLock()
 
 _CATEGORIES = ("project_context", "general")
 
@@ -170,6 +172,134 @@ def _lexical_overlap(query: str, fact: str) -> int:
     return len(q_words & f_words)
 
 
+def _merge_fact_lists(*fact_lists: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for facts in fact_lists:
+        for fact in facts:
+            key = str(fact.get("id") or "").strip()
+            if not key:
+                key = _normalize_fact_text(str(fact.get("text", ""))).lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(fact)
+    return merged
+
+
+def _semantic_memory_query_enabled() -> bool:
+    return os.environ.get("WISP_ENABLE_SEMANTIC_MEMORY_QUERY", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _format_memory_block(facts: list[dict], query: str = "", top_k: int | None = None) -> str:
+    if not facts:
+        return ""
+    active = [
+        fact for fact in facts
+        if not fact.get("archived") and _lexical_overlap(query, fact.get("text", "")) > 0
+    ]
+    if not active:
+        active = [fact for fact in facts if not fact.get("archived")]
+    k = max(1, top_k if top_k is not None else config.MEMORY_TOP_K)
+    lines: list[str] = []
+    seen: set[str] = set()
+    for fact in active[:k]:
+        text = _normalize_fact_text(str(fact.get("text", "")))
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        lines.append(f"- {text}")
+    return "[Memory]\n" + "\n".join(lines) if lines else ""
+
+
+def _fallback_read_all_unlocked() -> list[dict]:
+    if not os.path.exists(_FALLBACK_PATH):
+        return []
+    try:
+        with open(_FALLBACK_PATH, encoding="utf-8") as f:
+            facts = json.load(f)
+        return facts if isinstance(facts, list) else []
+    except Exception:
+        return []
+
+
+def _fallback_write_all_unlocked(facts: list[dict]) -> None:
+    os.makedirs(_MEMORY_DIR, exist_ok=True)
+    with open(_FALLBACK_PATH, "w", encoding="utf-8") as f:
+        json.dump(facts, f, indent=2, ensure_ascii=False)
+
+
+def add_fact_manual_lightweight(text: str, category: str = "general") -> bool:
+    """Store a manual fact in the JSON fact store without initializing Chroma."""
+    if category not in _CATEGORIES:
+        category = "general"
+    text = _normalize_fact_text(text)
+    if not _is_memory_worthy_fact(text, source="manual"):
+        return False
+    with _FALLBACK_LOCK:
+        _fallback_upsert_unlocked(text, category, "manual")
+    return True
+
+
+def update_fact_lightweight(fact_id: str, new_text: str, new_category: Optional[str] = None) -> bool:
+    """Update a JSON-backed fact without initializing Chroma."""
+    with _FALLBACK_LOCK:
+        facts = _fallback_read_all_unlocked()
+        updated = False
+        for fact in facts:
+            if str(fact.get("id")) == str(fact_id):
+                fact["text"] = _normalize_fact_text(new_text)
+                fact["last_seen"] = _now_iso()
+                if new_category in _CATEGORIES:
+                    fact["category"] = new_category
+                updated = True
+                break
+        if updated:
+            _fallback_write_all_unlocked(facts)
+        return updated
+
+
+def delete_fact_lightweight(fact_id: str) -> bool:
+    """Delete a JSON-backed fact without initializing Chroma."""
+    with _FALLBACK_LOCK:
+        facts = _fallback_read_all_unlocked()
+        kept = [fact for fact in facts if str(fact.get("id")) != str(fact_id)]
+        if len(kept) == len(facts):
+            return False
+        _fallback_write_all_unlocked(kept)
+        return True
+
+
+def _fallback_upsert_unlocked(text: str, category: str, source: str) -> None:
+    facts = _fallback_read_all_unlocked()
+    now = _now_iso()
+    for fact in facts:
+        if fact.get("archived"):
+            continue
+        existing = fact.get("text", "")
+        if (
+            existing.lower() == text.lower()
+            or _lexical_overlap(existing, text) >= max(3, min(6, len(text.split()) // 2))
+        ):
+            fact["last_seen"] = now
+            fact["category"] = category
+            fact["source"] = source
+            break
+    else:
+        facts.append({
+            "id": str(uuid.uuid4()),
+            "text": text,
+            "category": category,
+            "source": source,
+            "created_at": now,
+            "last_seen": now,
+            "archived": False,
+        })
+    _fallback_write_all_unlocked(facts)
+
+
 # ---------------------------------------------------------------------------
 # MemoryManager
 # ---------------------------------------------------------------------------
@@ -192,6 +322,7 @@ class MemoryManager:
         self._compressing = False           # guard against concurrent compression
         self._collection = None             # chromadb collection (None = unavailable)
         self._chroma_ok = False
+        self._ltm_lock = threading.RLock()
         self._consolidation_timer: threading.Timer | None = None
         self._ctx_router = None
         self._ctx_router_lock = threading.Lock()
@@ -360,7 +491,8 @@ class MemoryManager:
         Called when the user's message starts with "remember that -¦".
         """
         category = _infer_category(text)
-        self._upsert_fact(text.strip(), category, source="explicit")
+        with self._ltm_lock:
+            self._upsert_fact(text.strip(), category, source="explicit")
         print(f"[memory] Explicit fact stored ({category}): {text!r}")
 
 
@@ -417,9 +549,12 @@ class MemoryManager:
 
     def retrieve_relevant(self, query, top_k=None):
         k = top_k if top_k is not None else config.MEMORY_TOP_K
+        fast_block = _format_memory_block(get_all_facts_lightweight(), query, top_k=k)
+        if not _semantic_memory_query_enabled():
+            return fast_block
 
         if not self._chroma_ok or self._collection is None:
-            return self._fallback_all_facts(query)
+            return fast_block
 
         router = self._get_router()
         if router is not None:
@@ -428,7 +563,7 @@ class MemoryManager:
                 level = result.context_level
 
                 if level == 'none':
-                    return ''
+                    return fast_block
 
                 if level == 'tiny':
                     k = min(1, k)
@@ -440,7 +575,13 @@ class MemoryManager:
                     )
                     docs = fetched.get('documents', [])
                     if docs:
-                        return '[Memory]\n' + '\n'.join('- ' + d for d in docs)
+                        lines = ['- ' + d for d in docs]
+                        if fast_block:
+                            lines.extend(
+                                line for line in fast_block.splitlines()[1:]
+                                if line and line not in lines
+                            )
+                        return '[Memory]\n' + '\n'.join(lines)
 
             except Exception as exc:
                 print('[memory] Router error, falling back to chromadb: %s' % exc)
@@ -448,7 +589,7 @@ class MemoryManager:
         try:
             count = self._collection.count()
             if count == 0:
-                return ''
+                return fast_block
             results = self._collection.query(
                 query_texts=[query],
                 n_results=min(k, count),
@@ -458,38 +599,27 @@ class MemoryManager:
             docs = results.get('documents', [[]])[0]
             dists = results.get('distances', [[]])[0]
             if not docs:
-                return ''
+                return fast_block
             max_dist = config.MEMORY_RELEVANCE_MAX_DISTANCE
             filtered = [
                 doc for doc, dist in zip(docs, dists)
                 if dist <= max_dist or _lexical_overlap(query, doc) > 0
             ]
             if not filtered:
-                return ''
+                return fast_block
             lines = ['- ' + doc for doc in filtered[:k]]
+            if fast_block:
+                for line in fast_block.splitlines()[1:]:
+                    if line and line not in lines:
+                        lines.append(line)
             return '[Memory]\n' + '\n'.join(lines)
         except Exception as exc:
             print('[memory] Retrieval error: %s' % exc)
-            return ''
+            return fast_block
 
     def _fallback_all_facts(self, query: str = "") -> str:
         """Return all active facts as a plain list when chromadb is unavailable."""
-        if not os.path.exists(_FALLBACK_PATH):
-            return ""
-        try:
-            with open(_FALLBACK_PATH, encoding="utf-8") as f:
-                facts: list[dict] = json.load(f)
-            active = [
-                fa for fa in facts
-                if not fa.get("archived") and _lexical_overlap(query, fa.get("text", "")) > 0
-            ]
-            if not active:
-                active = [fa for fa in facts if not fa.get("archived")][:max(1, config.MEMORY_TOP_K)]
-            if not active:
-                return ""
-            return "[Memory]\n" + "\n".join(f"- {fa['text']}" for fa in active)
-        except Exception:
-            return ""
+        return _format_memory_block(_fallback_get_all_from_path(), query)
 
     # ------------------------------------------------------------------
     # Long-term memory -” periodic consolidation
@@ -569,8 +699,9 @@ class MemoryManager:
                 cat = item.get("category", "personal")
                 if cat not in _CATEGORIES:
                     cat = "general"
-                if self._upsert_fact(item["text"], cat, source="summarizer"):
-                    count += 1
+                with self._ltm_lock:
+                    if self._upsert_fact(item["text"], cat, source="summarizer"):
+                        count += 1
 
         print(f"[memory] Consolidation complete -” {count} fact(s) extracted.")
 
@@ -660,36 +791,8 @@ class MemoryManager:
         self, text: str, category: str, source: str
     ) -> None:
         text = _normalize_fact_text(text)
-        facts: list[dict] = []
-        if os.path.exists(_FALLBACK_PATH):
-            try:
-                with open(_FALLBACK_PATH, encoding="utf-8") as f:
-                    facts = json.load(f)
-            except Exception:
-                facts = []
-
-        now = _now_iso()
-        for fact in facts:
-            if fact.get("archived"):
-                continue
-            existing = fact.get("text", "")
-            if existing.lower() == text.lower() or _lexical_overlap(existing, text) >= max(3, min(6, len(text.split()) // 2)):
-                fact["last_seen"] = now
-                fact["category"] = category
-                fact["source"] = source
-                break
-        else:
-            facts.append({
-            "id": str(uuid.uuid4()),
-            "text": text,
-            "category": category,
-            "source": source,
-            "created_at": now,
-            "last_seen": now,
-            "archived": False,
-            })
-        with open(_FALLBACK_PATH, "w", encoding="utf-8") as f:
-            json.dump(facts, f, indent=2, ensure_ascii=False)
+        with _FALLBACK_LOCK:
+            _fallback_upsert_unlocked(text, category, source)
 
     # ------------------------------------------------------------------
     # Viewer API -” read
@@ -697,8 +800,9 @@ class MemoryManager:
 
     def get_all_facts(self) -> list[dict]:
         """Return all non-archived facts for the memory viewer."""
+        fallback_facts = self._fallback_get_all()
         if not self._chroma_ok or self._collection is None:
-            return self._fallback_get_all()
+            return fallback_facts
         try:
             results = self._collection.get(
                 where={"archived": {"$eq": False}},
@@ -718,20 +822,15 @@ class MemoryManager:
                     "created_at": meta.get("created_at", ""),
                     "last_seen": meta.get("last_seen", ""),
                 })
-            return facts
+            return _merge_fact_lists(fallback_facts, facts)
         except Exception as exc:
             print(f"[memory] get_all_facts error: {exc}")
-            return []
+            return fallback_facts
 
     def _fallback_get_all(self) -> list[dict]:
-        if not os.path.exists(_FALLBACK_PATH):
-            return []
-        try:
-            with open(_FALLBACK_PATH, encoding="utf-8") as f:
-                facts = json.load(f)
+        with _FALLBACK_LOCK:
+            facts = _fallback_read_all_unlocked()
             return [fa for fa in facts if not fa.get("archived")]
-        except Exception:
-            return []
 
     # ------------------------------------------------------------------
     # Viewer API -” write
@@ -739,14 +838,15 @@ class MemoryManager:
 
     def delete_fact(self, fact_id: str) -> None:
         """Hard-delete a fact (viewer action -” user explicitly removed it)."""
-        if not self._chroma_ok or self._collection is None:
-            self._fallback_delete(fact_id)
-            return
-        try:
-            self._collection.delete(ids=[fact_id])
-            self._invalidate_router()
-        except Exception as exc:
-            print(f"[memory] delete_fact error: {exc}")
+        with self._ltm_lock:
+            if not self._chroma_ok or self._collection is None:
+                self._fallback_delete(fact_id)
+                return
+            try:
+                self._collection.delete(ids=[fact_id])
+                self._invalidate_router()
+            except Exception as exc:
+                print(f"[memory] delete_fact error: {exc}")
 
     def update_fact(
         self,
@@ -755,64 +855,67 @@ class MemoryManager:
         new_category: Optional[str] = None,
     ) -> None:
         """Update text and/or category of a fact (viewer action)."""
-        if not self._chroma_ok or self._collection is None:
-            self._fallback_update(fact_id, new_text, new_category)
-            return
-        try:
-            existing = self._collection.get(
-                ids=[fact_id],
-                include=["documents", "metadatas"],
-            )
-            if not existing.get("ids"):
+        with self._ltm_lock:
+            if not self._chroma_ok or self._collection is None:
+                self._fallback_update(fact_id, new_text, new_category)
                 return
-            meta = dict(existing["metadatas"][0])
-            meta["last_seen"] = _now_iso()
-            if new_category and new_category in _CATEGORIES:
-                meta["category"] = new_category
-            self._collection.update(
-                ids=[fact_id],
-                documents=[new_text],
-                metadatas=[meta],
-            )
-            self._invalidate_router()
-        except Exception as exc:
-            print(f"[memory] update_fact error: {exc}")
+            try:
+                existing = self._collection.get(
+                    ids=[fact_id],
+                    include=["documents", "metadatas"],
+                )
+                if not existing.get("ids"):
+                    return
+                meta = dict(existing["metadatas"][0])
+                meta["last_seen"] = _now_iso()
+                if new_category and new_category in _CATEGORIES:
+                    meta["category"] = new_category
+                self._collection.update(
+                    ids=[fact_id],
+                    documents=[new_text],
+                    metadatas=[meta],
+                )
+                self._invalidate_router()
+            except Exception as exc:
+                print(f"[memory] update_fact error: {exc}")
 
     def add_fact_manual(self, text: str, category: str) -> None:
         """Add a fact directly from the viewer (manual entry)."""
         if category not in _CATEGORIES:
             category = "general"
-        self._upsert_fact(text.strip(), category, source="manual")
+        with self._ltm_lock:
+            self._upsert_fact(text.strip(), category, source="manual")
 
     def prune_low_value_facts(self) -> int:
         """
         Archive stored facts that fail the current memory-quality filter.
         This is intentionally conservative for manual/explicit facts.
         """
-        if not self._chroma_ok or self._collection is None:
-            return self._fallback_prune_low_value()
-        try:
-            results = self._collection.get(
-                where={"archived": {"$eq": False}},
-                include=["documents", "metadatas"],
-            )
-            ids: list[str] = results.get("ids", [])
-            docs: list[str] = results.get("documents", [])
-            metas: list[dict] = results.get("metadatas", [])
-            archived = 0
-            for fact_id, doc, meta in zip(ids, docs, metas):
-                source = str(meta.get("source", "summarizer"))
-                if _is_memory_worthy_fact(doc, source=source):
-                    continue
-                new_meta = dict(meta)
-                new_meta["archived"] = True
-                new_meta["archived_reason"] = "low_value_cleanup"
-                self._collection.update(ids=[fact_id], metadatas=[new_meta])
-                archived += 1
-            return archived
-        except Exception as exc:
-            print(f"[memory] prune_low_value_facts error: {exc}")
-            return 0
+        with self._ltm_lock:
+            if not self._chroma_ok or self._collection is None:
+                return self._fallback_prune_low_value()
+            try:
+                results = self._collection.get(
+                    where={"archived": {"$eq": False}},
+                    include=["documents", "metadatas"],
+                )
+                ids: list[str] = results.get("ids", [])
+                docs: list[str] = results.get("documents", [])
+                metas: list[dict] = results.get("metadatas", [])
+                archived = 0
+                for fact_id, doc, meta in zip(ids, docs, metas):
+                    source = str(meta.get("source", "summarizer"))
+                    if _is_memory_worthy_fact(doc, source=source):
+                        continue
+                    new_meta = dict(meta)
+                    new_meta["archived"] = True
+                    new_meta["archived_reason"] = "low_value_cleanup"
+                    self._collection.update(ids=[fact_id], metadatas=[new_meta])
+                    archived += 1
+                return archived
+            except Exception as exc:
+                print(f"[memory] prune_low_value_facts error: {exc}")
+                return 0
 
     def _fallback_prune_low_value(self) -> int:
         if not os.path.exists(_FALLBACK_PATH):
@@ -838,36 +941,12 @@ class MemoryManager:
             return 0
 
     def _fallback_delete(self, fact_id: str) -> None:
-        if not os.path.exists(_FALLBACK_PATH):
-            return
-        try:
-            with open(_FALLBACK_PATH, encoding="utf-8") as f:
-                facts = json.load(f)
-            facts = [fa for fa in facts if fa.get("id") != fact_id]
-            with open(_FALLBACK_PATH, "w", encoding="utf-8") as f:
-                json.dump(facts, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        delete_fact_lightweight(fact_id)
 
     def _fallback_update(
         self, fact_id: str, new_text: str, new_category: Optional[str]
     ) -> None:
-        if not os.path.exists(_FALLBACK_PATH):
-            return
-        try:
-            with open(_FALLBACK_PATH, encoding="utf-8") as f:
-                facts = json.load(f)
-            for fa in facts:
-                if fa.get("id") == fact_id:
-                    fa["text"] = new_text
-                    if new_category:
-                        fa["category"] = new_category
-                    fa["last_seen"] = _now_iso()
-                    break
-            with open(_FALLBACK_PATH, "w", encoding="utf-8") as f:
-                json.dump(facts, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        update_fact_lightweight(fact_id, new_text, new_category)
 
     # ------------------------------------------------------------------
     # Blocking LLM call for memory operations
@@ -961,12 +1040,88 @@ class MemoryManager:
 # ---------------------------------------------------------------------------
 
 _manager: Optional[MemoryManager] = None
+_manager_lock = threading.Lock()
 
 
 def get_manager() -> MemoryManager:
     """Return the process-wide MemoryManager, creating it on first call."""
     global _manager
     if _manager is None:
-        _manager = MemoryManager()
+        with _manager_lock:
+            if _manager is None:
+                _manager = MemoryManager()
     return _manager
+
+
+def get_loaded_manager() -> Optional[MemoryManager]:
+    """Return the MemoryManager only if it has already been initialized."""
+    return _manager
+
+
+def get_all_facts_lightweight() -> list[dict]:
+    """
+    Return active facts for read-only UI surfaces without constructing
+    MemoryManager.  MemoryManager startup can initialize Chroma embedding
+    machinery, which is unnecessary when Settings only needs to list facts.
+    """
+    facts = _fallback_get_all_from_path()
+    if _chroma_embedding_count() == 0:
+        return facts
+
+    try:
+        import chromadb
+
+        client = chromadb.PersistentClient(path=_CHROMA_DIR)
+        collection = client.get_collection(name="ltm_facts")
+        results = collection.get(
+            where={"archived": {"$eq": False}},
+            include=["documents", "metadatas"],
+        )
+        chroma_facts = []
+        for doc, meta, fid in zip(
+            results.get("documents", []),
+            results.get("metadatas", []),
+            results.get("ids", []),
+        ):
+            meta = meta or {}
+            chroma_facts.append({
+                "id": fid,
+                "text": doc,
+                "category": meta.get("category", "general"),
+                "source": meta.get("source", "summarizer"),
+                "created_at": meta.get("created_at", ""),
+                "last_seen": meta.get("last_seen", ""),
+            })
+        facts = _merge_fact_lists(facts, chroma_facts)
+    except Exception as exc:
+        if facts:
+            return facts
+        print(f"[memory] lightweight fact list unavailable: {exc}")
+    return facts
+
+
+def _chroma_embedding_count() -> int | None:
+    db_path = os.path.join(_CHROMA_DIR, "chroma.sqlite3")
+    if not os.path.exists(db_path):
+        return 0
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1.0)
+        try:
+            row = con.execute("select count(*) from embeddings").fetchone()
+        finally:
+            con.close()
+        return int(row[0]) if row is not None else 0
+    except Exception:
+        return None
+
+
+def _fallback_get_all_from_path() -> list[dict]:
+    if not os.path.exists(_FALLBACK_PATH):
+        return []
+    try:
+        with open(_FALLBACK_PATH, encoding="utf-8") as f:
+            facts = json.load(f)
+        return [fa for fa in facts if not fa.get("archived")]
+    except Exception:
+        return []
 

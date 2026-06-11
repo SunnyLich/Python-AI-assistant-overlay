@@ -126,17 +126,40 @@ def tts_synthesize(text: str = "", voice: str | None = None) -> dict[str, Any]:
 
     provider = config.TTS_PROVIDER.lower()
     print(f"[audio] tts.synthesize provider={provider!r} text={text[:40]!r}", flush=True)
-    # Capture Cartesia word timestamps alongside the PCM so the UI can lock the
-    # word highlight to the spoken voice instead of a fixed-WPM estimate. Only
-    # Cartesia emits these; other providers leave the lists empty.
-    words: list[str] = []
-    start_ms: list[int] = []
 
-    def _collect_ts(ws: list, sms: list) -> None:
-        words.extend(ws)
-        start_ms.extend(int(x) for x in sms)
+    def _synth() -> tuple[list[bytes], list[str], list[int]]:
+        # Capture Cartesia word timestamps alongside the PCM so the UI can lock
+        # the word highlight to the spoken voice instead of a fixed-WPM estimate.
+        # Only Cartesia emits these; other providers leave the lists empty. Fresh
+        # lists per call so a retry can't accumulate duplicate timestamps.
+        words: list[str] = []
+        start_ms: list[int] = []
 
-    chunks = list(tts.stream_audio_from_chunks([text], on_word_timestamps=_collect_ts))
+        def _collect_ts(ws: list, sms: list) -> None:
+            words.extend(ws)
+            start_ms.extend(int(x) for x in sms)
+
+        chunks = list(tts.stream_audio_from_chunks([text], on_word_timestamps=_collect_ts))
+        return chunks, words, start_ms
+
+    # The prewarmed Cartesia WebSocket can be stale/dead on the first prompt of a
+    # session (idle since startup). It either raises (the socket is dropped by
+    # _stream_cartesia) or returns no audio — both yield silence on the first try.
+    # Retry once with a fresh connection so the first prompt isn't lost.
+    expects_audio = provider not in ("none", "")
+    try:
+        chunks, words, start_ms = _synth()
+        if expects_audio and not chunks:
+            raise RuntimeError(f"{provider} returned no audio")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[audio] tts.synthesize first attempt failed ({type(exc).__name__}: {exc}); retrying fresh", flush=True)
+        tts.reset_connections()
+        try:
+            chunks, words, start_ms = _synth()
+        except Exception as exc2:  # noqa: BLE001 — surface as silence, not a crash
+            print(f"[audio] tts.synthesize retry failed ({type(exc2).__name__}: {exc2})", flush=True)
+            chunks, words, start_ms = [], [], []
+
     path = _output_dir() / f"tts-{int(time.time() * 1000)}.wav"
     if provider == "none" or not chunks:
         return _write_empty_wav(path)

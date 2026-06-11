@@ -181,7 +181,12 @@ class IconOverlay(QMainWindow):
         self._icon_hide_timer = QTimer(self)
         self._icon_hide_timer.setSingleShot(True)
         self._icon_hide_timer.setInterval(self._icon_backstop_ms())
-        self._icon_hide_timer.timeout.connect(self._icon_label.hide)
+        # Route the backstop through a guarded slot rather than hiding directly:
+        # several callers (e.g. notify_agent_approval) start this timer without
+        # checking ICON_AUTO_HIDE, and the icon must NEVER auto-hide when the user
+        # has auto-hide off. The manual "Hide icon" action bypasses this via
+        # _hide_icon_now.
+        self._icon_hide_timer.timeout.connect(self._on_icon_hide_timeout)
 
     def _update_tray_context_menu(self) -> None:
         if hasattr(self, "_tray") and hasattr(self, "_tray_menu"):
@@ -218,8 +223,12 @@ class IconOverlay(QMainWindow):
 
         last_chat_action = QAction("Last chat", self)
         last_chat_action.triggered.connect(self.signals.show_last_chat.emit)
-        hide_icon_action = QAction("Hide icon", self)
-        hide_icon_action.triggered.connect(self._hide_icon_now)
+        # Toggle: label reflects current icon visibility, refreshed on menu open
+        # (aboutToShow) so it reads "Show icon" once the icon is hidden — the only
+        # way back to a visible icon after Hide.
+        self._icon_toggle_action = QAction("Hide icon", self)
+        self._icon_toggle_action.triggered.connect(self._toggle_icon)
+        menu.aboutToShow.connect(self._sync_icon_toggle_text)
         memory_action = QAction("Memory", self)
         memory_action.triggered.connect(self.signals.show_memory_viewer.emit)
         settings_action = QAction("Settings", self)
@@ -227,7 +236,7 @@ class IconOverlay(QMainWindow):
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(QApplication.quit)
         menu.addAction(last_chat_action)
-        menu.addAction(hide_icon_action)
+        menu.addAction(self._icon_toggle_action)
         menu.addSeparator()
         menu.addAction(memory_action)
         plugin_manager_action = QAction("Plugin Manager", self)
@@ -368,6 +377,11 @@ class IconOverlay(QMainWindow):
         if hasattr(self, '_icon_hide_timer'):
             self._icon_hide_timer.stop()
 
+    def _on_icon_hide_timeout(self):
+        """Backstop timer fired — only hide if auto-hide is on (see _icon_hide_timer)."""
+        if config.ICON_AUTO_HIDE and hasattr(self, "_icon_label"):
+            self._icon_label.hide()
+
     def _hide_icon_now(self):
         """Manual 'Hide icon' tray action — always hides, regardless of auto-hide."""
         if not hasattr(self, '_icon_hide_timer') or not hasattr(self, '_icon_label'):
@@ -376,6 +390,19 @@ class IconOverlay(QMainWindow):
         if hasattr(self, "_bubble"):
             self._bubble.clear()
         self._icon_label.hide()
+
+    def _toggle_icon(self):
+        """Tray/right-click 'Show/Hide icon' toggle for the floating icon."""
+        if hasattr(self, "_icon_label") and self._icon_label.isVisible():
+            self._hide_icon_now()
+        else:
+            self._show_icon()
+
+    def _sync_icon_toggle_text(self):
+        """Keep the toggle action label in step with the icon's current visibility."""
+        if hasattr(self, "_icon_toggle_action") and hasattr(self, "_icon_label"):
+            visible = self._icon_label.isVisible()
+            self._icon_toggle_action.setText("Hide icon" if visible else "Show icon")
 
     @staticmethod
     def _icon_backstop_ms() -> int:

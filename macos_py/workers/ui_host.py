@@ -1182,15 +1182,17 @@ class QtProtocolHost:
             QLabel,
             QPushButton,
             QScrollArea,
-            QSizePolicy,
             QVBoxLayout,
             QWidget,
         )
 
-        if self._plugins_dialog is not None and self._plugins_dialog.isVisible():
-            self._plugins_dialog.raise_()
-            self._plugins_dialog.activateWindow()
-            return {"shown": True, "reused": True}
+        # Always rebuild from the latest payload: this method is also called to
+        # refresh the list after an enable/disable toggle, so reusing the open
+        # dialog would show stale state.
+        reused = self._plugins_dialog is not None and self._plugins_dialog.isVisible()
+        if self._plugins_dialog is not None:
+            self._plugins_dialog.close()
+            self._plugins_dialog = None
 
         dialog = QDialog()
         dialog.setWindowTitle("Plugin Manager")
@@ -1242,10 +1244,10 @@ class QtProtocolHost:
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
-        return {"shown": True, "reused": False}
+        return {"shown": True, "reused": reused}
 
     def _plugin_card(self, plugin: dict[str, Any]):
-        from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout
+        from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
         card = QFrame()
         card.setObjectName("pluginCard")
@@ -1263,9 +1265,19 @@ class QtProtocolHost:
         name_lbl.setStyleSheet("font-size: 11pt; font-weight: 600;")
         name_row.addWidget(name_lbl)
         name_row.addStretch()
-        status = QLabel(str(plugin.get("status") or "unknown"))
-        status.setStyleSheet("font-size: 8pt; opacity: 0.55;")
-        name_row.addWidget(status)
+
+        enabled = bool(plugin.get("enabled", True))
+        enable = QCheckBox("Enabled")
+        enable.setChecked(enabled)
+        # "discovered" (not yet loaded into a manager) plugins can't be toggled live.
+        enable.setEnabled(str(plugin.get("status") or "") == "loaded")
+        enable.toggled.connect(
+            lambda checked, plugin_name=name: self.emit(
+                "ui.plugins.set_enabled",
+                {"plugin_name": plugin_name, "enabled": bool(checked)},
+            )
+        )
+        name_row.addWidget(enable)
         layout.addLayout(name_row)
 
         path = str(plugin.get("path") or "")
@@ -1287,23 +1299,11 @@ class QtProtocolHost:
             detail_lbl.setStyleSheet("font-size: 8pt; opacity: 0.65;")
             layout.addWidget(detail_lbl)
 
-        actions = plugin.get("tray_actions") or []
-        if actions:
-            action_row = QHBoxLayout()
-            action_row.setSpacing(6)
-            for label in actions:
-                text = str(label)
-                btn = QPushButton(text)
-                btn.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-                btn.clicked.connect(
-                    lambda _checked=False, plugin_name=name, action_label=text: self.emit(
-                        "ui.plugins.run_action",
-                        {"plugin_name": plugin_name, "label": action_label},
-                    )
-                )
-                action_row.addWidget(btn)
-            action_row.addStretch()
-            layout.addLayout(action_row)
+        # Per-mod settings (replaces the old tray-action buttons)
+        settings_box = self._plugin_settings_box(name, plugin.get("settings") or [])
+        if settings_box is not None:
+            settings_box.setEnabled(enabled)
+            layout.addWidget(settings_box)
 
         error = str(plugin.get("error") or "")
         if error:
@@ -1312,6 +1312,61 @@ class QtProtocolHost:
             error_lbl.setStyleSheet("font-size: 8pt; color: #b42318;")
             layout.addWidget(error_lbl)
         return card
+
+    def _plugin_settings_box(self, plugin_name: str, settings: list):
+        from PySide6.QtWidgets import (
+            QCheckBox, QComboBox, QFormLayout, QFrame, QLineEdit,
+        )
+
+        if not settings:
+            return None
+        box = QFrame()
+        form = QFormLayout(box)
+        form.setContentsMargins(0, 4, 0, 0)
+        form.setSpacing(6)
+        truthy = {"1", "true", "yes", "on"}
+
+        def save(key, value):
+            self.emit(
+                "ui.plugins.set_setting",
+                {"plugin_name": plugin_name, "key": key, "value": value},
+            )
+
+        for s in settings:
+            if not isinstance(s, dict):
+                continue
+            key = str(s.get("key") or "").strip()
+            if not key:
+                continue
+            label = str(s.get("label") or key)
+            stype = str(s.get("type") or "text").lower()
+            value = s.get("value")
+            options = s.get("options") or []
+
+            if stype == "bool":
+                w = QCheckBox()
+                w.setChecked(str(value).strip().lower() in truthy)
+                w.toggled.connect(
+                    lambda checked, k=key: save(k, "true" if checked else "false")
+                )
+            elif stype == "choice" and options:
+                w = QComboBox()
+                opts = [str(o) for o in options]
+                w.addItems(opts)
+                if str(value) in opts:
+                    w.setCurrentText(str(value))
+                w.currentTextChanged.connect(lambda text, k=key: save(k, text))
+            else:
+                w = QLineEdit("" if value is None else str(value))
+                if stype == "number":
+                    w.setPlaceholderText("number")
+                w.editingFinished.connect(lambda k=key, e=w: save(k, e.text()))
+
+            help_text = str(s.get("help") or "")
+            if help_text:
+                w.setToolTip(help_text)
+            form.addRow(label, w)
+        return box
 
     def _show_agent_task(self, spec: dict[str, Any] | None = None) -> dict[str, Any]:
         from core.agent.task_spec import agent_task_spec_from_dict

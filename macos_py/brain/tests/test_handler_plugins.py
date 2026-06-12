@@ -38,9 +38,11 @@ def test_plugins_list_returns_discovered_plugin_folder(tmp_path, monkeypatch):
             "name": "example",
             "path": str(example),
             "status": "loaded",
+            "enabled": True,
             "hooks": ["before_query", "get_tools"],
             "tray_actions": [],
             "tools": [],
+            "settings": [],
             "error": "",
         }
     ]
@@ -73,9 +75,11 @@ def test_plugins_list_initializes_shared_manager_and_action_can_run(tmp_path, mo
             "name": "native_action",
             "path": str(example),
             "status": "loaded",
+            "enabled": True,
             "hooks": ["get_tray_actions"],
             "tray_actions": ["Do Native Thing"],
             "tools": [],
+            "settings": [],
             "error": "",
         }
     ]
@@ -121,9 +125,11 @@ def test_plugins_list_prefers_loaded_manager(monkeypatch, tmp_path):
             "name": "loaded",
             "path": str(tmp_path / "plugins" / "loaded"),
             "status": "loaded",
+            "enabled": True,
             "hooks": ["get_tools", "get_tray_actions"],
             "tray_actions": ["Do Thing"],
             "tools": ["loaded_tool"],
+            "settings": [],
             "error": "",
         }
     ]

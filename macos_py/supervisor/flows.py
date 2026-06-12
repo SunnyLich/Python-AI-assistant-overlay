@@ -102,6 +102,8 @@ class FlowController:
         self.ui.on_event("ui.memory.delete", self._on_memory_delete)
         self.ui.on_event("ui.plugins.open_requested", self._on_plugins_open_requested)
         self.ui.on_event("ui.plugins.run_action", self._on_plugins_run_action)
+        self.ui.on_event("ui.plugins.set_enabled", self._on_plugins_set_enabled)
+        self.ui.on_event("ui.plugins.set_setting", self._on_plugins_set_setting)
         self.ui.on_event("ui.agent.task_requested", self._on_agent_task_requested)
         self.ui.on_event("ui.agent.history_requested", self._on_agent_history_requested)
         self.ui.on_event("ui.agent.run_requested", self._on_agent_run_requested)
@@ -202,6 +204,12 @@ class FlowController:
 
     def _on_plugins_run_action(self, data: dict[str, Any], _req_id: Any = None) -> None:
         self._schedule(self.plugin_run_action, data or {})
+
+    def _on_plugins_set_enabled(self, data: dict[str, Any], _req_id: Any = None) -> None:
+        self._schedule(self.plugin_set_enabled, data or {})
+
+    def _on_plugins_set_setting(self, data: dict[str, Any], _req_id: Any = None) -> None:
+        self._schedule(self.plugin_set_setting, data or {})
 
     def _on_agent_task_requested(self, _data: dict[str, Any], _req_id: Any = None) -> None:
         self._schedule(self.open_agent_task)
@@ -558,6 +566,30 @@ class FlowController:
         if isinstance(result, dict) and result.get("message"):
             message = str(result["message"])
         self._notice(message)
+
+    def plugin_set_enabled(self, data: dict[str, Any]) -> None:
+        name = str(data.get("plugin_name") or "")
+        if not name:
+            return
+        self._safe_call(
+            self.brain,
+            "brain.plugins.set_enabled",
+            {"plugin_name": name, "enabled": bool(data.get("enabled"))},
+            timeout=30.0,
+        )
+        self.open_plugins()  # refresh the dialog so it reflects the new state
+
+    def plugin_set_setting(self, data: dict[str, Any]) -> None:
+        name = str(data.get("plugin_name") or "")
+        key = str(data.get("key") or "")
+        if not name or not key:
+            return
+        self._safe_call(
+            self.brain,
+            "brain.plugins.set_setting",
+            {"plugin_name": name, "key": key, "value": data.get("value")},
+            timeout=30.0,
+        )
 
     def open_agent_task(self, spec: dict[str, Any] | None = None) -> None:
         params = {"spec": spec} if isinstance(spec, dict) and spec else {}

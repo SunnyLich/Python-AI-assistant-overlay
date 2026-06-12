@@ -552,11 +552,40 @@ def brain_plugins_run_action(plugin_name: str = "", label: str = "") -> dict[str
     raise ValueError(f"Plugin not loaded: {plugin_name}")
 
 
+@handler("brain.plugins.set_enabled")
+def brain_plugins_set_enabled(plugin_name: str = "", enabled: bool = True) -> dict[str, Any]:
+    """Enable or disable a loaded plugin; persists to .env and applies live."""
+    plugin_name = plugin_name.strip()
+    if not plugin_name:
+        raise ValueError("plugin_name is required")
+    from core.system.paths import PLUGINS_DIR
+
+    manager = _loaded_plugin_manager(Path(PLUGINS_DIR))
+    state = manager.set_enabled(plugin_name, bool(enabled))
+    return {"ok": True, "name": plugin_name, "enabled": bool(state)}
+
+
+@handler("brain.plugins.set_setting")
+def brain_plugins_set_setting(plugin_name: str = "", key: str = "", value: Any = "") -> dict[str, Any]:
+    """Persist a single plugin setting value to .env."""
+    plugin_name = plugin_name.strip()
+    key = str(key).strip()
+    if not plugin_name:
+        raise ValueError("plugin_name is required")
+    if not key:
+        raise ValueError("key is required")
+    from core.system.paths import PLUGINS_DIR
+
+    manager = _loaded_plugin_manager(Path(PLUGINS_DIR))
+    manager.set_setting(plugin_name, key, value)
+    return {"ok": True, "name": plugin_name, "key": key}
+
+
 def _plugin_summaries(plugins_dir: Path) -> list[dict[str, Any]]:
     try:
         manager = _loaded_plugin_manager(plugins_dir)
         mods = getattr(manager, "_mods", [])
-        return [_loaded_plugin_payload(mod) for mod in mods]
+        return [_loaded_plugin_payload(mod, manager) for mod in mods]
     except Exception:
         return _discover_plugin_payloads(plugins_dir)
 
@@ -622,17 +651,26 @@ def run_plugin_shutdown() -> None:
         _log(f"plugin shutdown skipped: {type(exc).__name__}: {exc}")
 
 
-def _loaded_plugin_payload(mod: Any) -> dict[str, Any]:
+def _loaded_plugin_payload(mod: Any, manager: Any = None) -> dict[str, Any]:
     module = getattr(mod, "module", None)
     path = getattr(module, "__file__", "") or ""
     hooks = _plugin_hook_names(module)
+    name = str(getattr(mod, "name", ""))
+    settings: list[dict[str, Any]] = []
+    if manager is not None:
+        try:
+            settings = manager.get_settings(name)
+        except Exception:
+            settings = []
     return {
-        "name": str(getattr(mod, "name", "")),
+        "name": name,
         "path": str(Path(path).parent) if path else "",
         "status": "loaded",
+        "enabled": bool(getattr(mod, "enabled", True)),
         "hooks": hooks,
         "tray_actions": _safe_tray_action_labels(module),
         "tools": _safe_tool_names(module),
+        "settings": settings,
         "error": "",
     }
 
@@ -651,9 +689,11 @@ def _discover_plugin_payloads(plugins_dir: Path) -> list[dict[str, Any]]:
             "name": child.name,
             "path": str(child),
             "status": "discovered",
+            "enabled": True,
             "hooks": hooks,
             "tray_actions": [],
             "tools": [],
+            "settings": [],
             "error": "",
         })
     return payloads
@@ -721,6 +761,7 @@ _PLUGIN_HOOKS = (
     "after_response",
     "get_tools",
     "get_tray_actions",
+    "get_settings",
     "get_system_prompt_section",
 )
 

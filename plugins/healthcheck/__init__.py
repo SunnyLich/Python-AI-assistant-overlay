@@ -14,7 +14,13 @@ from __future__ import annotations
 import datetime
 from pathlib import Path
 
+from core.plugin_manager import plugin_setting
+
 _LOG = Path(__file__).with_name("healthcheck.log")
+
+
+def _prefix() -> str:
+    return str(plugin_setting("healthcheck", "log_prefix", "[healthcheck]"))
 
 
 def _log(event: str) -> None:
@@ -24,7 +30,26 @@ def _log(event: str) -> None:
             f.write(line)
     except Exception:
         pass
-    print(f"[healthcheck] {event}", flush=True)
+    print(f"{_prefix()} {event}", flush=True)
+
+
+def get_settings() -> list[dict]:
+    return [
+        {
+            "key": "log_prefix",
+            "label": "Log prefix",
+            "type": "text",
+            "default": "[healthcheck]",
+            "help": "Text prefixed to every line this mod writes to stderr.",
+        },
+        {
+            "key": "echo_emoji",
+            "label": "Echo emoji in pong",
+            "type": "bool",
+            "default": "false",
+            "help": "Append a checkmark to healthcheck_ping replies.",
+        },
+    ]
 
 
 def on_startup(app_context) -> None:
@@ -77,4 +102,7 @@ def get_tools() -> list[dict]:
 def _ping_executor(inputs: dict) -> str:
     note = str((inputs or {}).get("note", "")).strip()
     _log(f"healthcheck_ping executed — note={note!r}")
-    return f"pong{(' — ' + note) if note else ''}"
+    reply = f"pong{(' — ' + note) if note else ''}"
+    if str(plugin_setting("healthcheck", "echo_emoji", "false")).strip().lower() in ("1", "true", "yes", "on"):
+        reply += " ✓"
+    return reply

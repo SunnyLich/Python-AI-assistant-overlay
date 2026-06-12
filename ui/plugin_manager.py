@@ -14,9 +14,12 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QWidget, QFrame, QSizePolicy,
+    QScrollArea, QWidget, QFrame, QCheckBox, QLineEdit, QComboBox, QFormLayout,
 )
 from ui.shared.window_utils import enable_standard_window_controls, fit_window_to_screen
+
+
+_TRUE = {"1", "true", "yes", "on"}
 
 
 class PluginManagerDialog(QDialog):
@@ -57,9 +60,10 @@ class PluginManagerDialog(QDialog):
 
         try:
             from core.plugin_manager import get_manager
-            manager = get_manager()
-            mods = manager._mods  # access internal list for display
+            self._manager = get_manager()
+            mods = self._manager._mods  # access internal list for display
         except RuntimeError:
+            self._manager = None
             mods = []
 
         if not mods:
@@ -103,28 +107,30 @@ class PluginManagerDialog(QDialog):
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(6)
 
-        # Mod name row
+        # Mod name row, with an enable toggle on the right
         name_row = QHBoxLayout()
         name_lbl = QLabel(mod.name)
         name_lbl.setStyleSheet("font-size: 11pt; font-weight: 600;")
         name_row.addWidget(name_lbl)
         name_row.addStretch()
 
+        enable = QCheckBox("Enabled")
+        enable.setChecked(bool(getattr(mod, "enabled", True)))
+        name_row.addWidget(enable)
+        layout.addLayout(name_row)
+
         # Module file path as subtitle
         mod_file = getattr(mod.module, "__file__", None)
         if mod_file:
             path_lbl = QLabel(str(Path(mod_file).parent))
             path_lbl.setStyleSheet("font-size: 8pt; opacity: 0.45;")
-            path_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            name_row.addWidget(path_lbl)
-
-        layout.addLayout(name_row)
+            layout.addWidget(path_lbl)
 
         # Hooks summary
         hook_names = [
             h for h in ("on_startup", "on_shutdown", "before_query",
                          "after_response", "get_tools", "get_tray_actions",
-                         "get_system_prompt_section")
+                         "get_settings", "get_system_prompt_section")
             if hasattr(mod.module, h)
         ]
         if hook_names:
@@ -132,41 +138,84 @@ class PluginManagerDialog(QDialog):
             hooks_lbl.setStyleSheet("font-size: 8pt; opacity: 0.55;")
             layout.addWidget(hooks_lbl)
 
-        # Tray actions as buttons
-        try:
-            fn = getattr(mod.module, "get_tray_actions", None)
-            actions = fn() if fn else []
-        except Exception:
-            actions = []
-
-        if actions:
-            actions_row = QHBoxLayout()
-            actions_row.setSpacing(6)
-            for item in actions:
-                label = str(item.get("label", "Action"))
-                cb = item.get("callback")
-                btn = QPushButton(label)
-                btn.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-                if callable(cb):
-                    btn.clicked.connect(cb)
-                actions_row.addWidget(btn)
-            actions_row.addStretch()
-            layout.addLayout(actions_row)
-
         # Model tools contributed
         try:
             fn = getattr(mod.module, "get_tools", None)
             tools = fn() if fn else []
         except Exception:
             tools = []
-
         if tools:
             tool_names = [t.get("name", "?") for t in tools if isinstance(t, dict)]
             tools_lbl = QLabel("Model tools: " + ", ".join(tool_names))
             tools_lbl.setStyleSheet("font-size: 8pt; opacity: 0.55;")
             layout.addWidget(tools_lbl)
 
+        # Per-mod settings (replaces the old tray-action buttons)
+        settings = []
+        if self._manager is not None:
+            settings = self._manager.get_settings(mod.name)
+        settings_box = self._settings_box(mod.name, settings)
+        if settings_box is not None:
+            settings_box.setEnabled(enable.isChecked())
+            layout.addWidget(settings_box)
+
+        # Toggle enable; grey out settings when disabled
+        def _on_toggle(checked: bool, _name=mod.name, _box=settings_box):
+            if self._manager is not None:
+                self._manager.set_enabled(_name, checked)
+            if _box is not None:
+                _box.setEnabled(checked)
+        enable.toggled.connect(_on_toggle)
+
         return card
+
+    def _settings_box(self, mod_name: str, settings: list) -> QWidget | None:
+        if not settings:
+            return None
+        box = QFrame()
+        form = QFormLayout(box)
+        form.setContentsMargins(0, 4, 0, 0)
+        form.setSpacing(6)
+        for s in settings:
+            key = str(s.get("key", "")).strip()
+            if not key:
+                continue
+            label = str(s.get("label") or key)
+            stype = str(s.get("type") or "text").lower()
+            value = s.get("value")
+            widget = self._setting_widget(mod_name, key, stype, value, s.get("options") or [])
+            if widget is None:
+                continue
+            help_text = str(s.get("help") or "")
+            if help_text:
+                widget.setToolTip(help_text)
+            form.addRow(label, widget)
+        return box
+
+    def _setting_widget(self, mod_name, key, stype, value, options):
+        def _save(v):
+            if self._manager is not None:
+                self._manager.set_setting(mod_name, key, v)
+
+        if stype == "bool":
+            cb = QCheckBox()
+            cb.setChecked(str(value).strip().lower() in _TRUE)
+            cb.toggled.connect(lambda checked: _save("true" if checked else "false"))
+            return cb
+        if stype == "choice" and options:
+            combo = QComboBox()
+            opts = [str(o) for o in options]
+            combo.addItems(opts)
+            if str(value) in opts:
+                combo.setCurrentText(str(value))
+            combo.currentTextChanged.connect(_save)
+            return combo
+        # text / number → line edit, persisted on edit-finished
+        edit = QLineEdit("" if value is None else str(value))
+        if stype == "number":
+            edit.setPlaceholderText("number")
+        edit.editingFinished.connect(lambda e=edit: _save(e.text()))
+        return edit
 
     @staticmethod
     def _open_plugins_folder():

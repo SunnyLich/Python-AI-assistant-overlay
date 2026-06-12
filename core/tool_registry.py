@@ -140,6 +140,14 @@ class ToolRegistry:
             raise ValueError(f"Invalid tool name {spec.name!r} — use only letters, digits, _ or -")
         self._builtins[spec.name] = spec
 
+    def unregister_source(self, source: str) -> int:
+        """Drop every builtin tool registered under `source` (e.g. "mod:<name>").
+        Returns the number removed."""
+        doomed = [name for name, spec in self._builtins.items() if spec.source == source]
+        for name in doomed:
+            del self._builtins[name]
+        return len(doomed)
+
     def schemas(self, include_server_tools: bool = True) -> list[dict]:
         specs = self.list_tools(include_server_tools=include_server_tools)
         return [spec.anthropic_schema() for spec in specs]

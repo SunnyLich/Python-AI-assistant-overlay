@@ -525,6 +525,58 @@ def test_active_document_request_includes_hotkey_time_window():
     assert brain.last_call("brain.query")["params"]["active_document_text"] == "CALC CELLS"
 
 
+def test_active_document_request_prefers_captured_macos_window_title():
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "auto",
+            "context_browser_mode": "off",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+    native = FakeWorker(
+        {
+            "native.context.snapshot": lambda _params: {
+                "selected_text": "",
+                "clipboard_text": "",
+                "active_app": {
+                    "name": "TextEdit",
+                    "pid": 202,
+                    "bundle_id": "com.apple.TextEdit",
+                },
+                "debug": {
+                    "window": {
+                        "chosen_process": "TextEdit",
+                        "chosen_title": "Notes.txt",
+                        "chosen_pid": 202,
+                    }
+                },
+            }
+        }
+    )
+    brain = FakeWorker(
+        handlers={"brain.context.active_document": lambda _params: {"text": "TXT BODY"}},
+        stream_handlers={"brain.query": query_stream("ok")},
+    )
+    with caller_config(rows):
+        _flow, _native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "Read the txt"})
+
+    params = brain.last_call("brain.context.active_document")["params"]
+    assert params["active_window"] == {
+        "title": "Notes.txt",
+        "process_name": "TextEdit",
+        "pid": 202,
+        "window_id": 0,
+    }
+    assert brain.last_call("brain.query")["params"]["active_document_text"] == "TXT BODY"
+
+
 def test_no_tts_reply_done_lets_wpm_reveal_drain():
     # With TTS off, reply.done must NOT flush the bubble: the WPM reveal keeps
     # pacing the text (flush=False), instead of the full reply slamming in the

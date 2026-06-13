@@ -410,6 +410,7 @@ def _runtime_debug() -> dict[str, Any]:
 
 
 def _active_app() -> dict[str, Any]:
+    global _last_context_window_debug
     if not IS_MAC:
         try:
             from core.platform_utils import (
@@ -436,10 +437,43 @@ def _active_app() -> dict[str, Any]:
         app = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
         if app is None:
             return {}
+        app_name = str(app.localizedName() or "")
+        pid = int(app.processIdentifier())
+        _last_context_window_debug = {}
+        try:
+            from core.platform import macos_native
+
+            rows = macos_native.list_document_windows()
+            frontmost = [
+                row for row in rows
+                if bool(row.get("frontmost"))
+                and (
+                    int(row.get("pid") or 0) == pid
+                    or str(row.get("process_name") or "") == app_name
+                )
+            ]
+            if frontmost:
+                row = frontmost[0]
+                title = str(row.get("title") or "")
+                process_name = str(row.get("process_name") or app_name)
+                row_pid = int(row.get("pid") or pid)
+                _last_context_window_debug = {
+                    "raw_hwnd": 0,
+                    "raw_title": title,
+                    "raw_pid": row_pid,
+                    "raw_process": process_name,
+                    "corrected": False,
+                    "chosen_hwnd": 0,
+                    "chosen_title": title,
+                    "chosen_pid": row_pid,
+                    "chosen_process": process_name,
+                }
+        except Exception:
+            _last_context_window_debug = {}
         return {
-            "name": str(app.localizedName() or ""),
+            "name": app_name,
             "bundle_id": str(app.bundleIdentifier() or ""),
-            "pid": int(app.processIdentifier()),
+            "pid": pid,
         }
     except Exception:
         return {}

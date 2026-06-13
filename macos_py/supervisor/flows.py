@@ -1162,8 +1162,8 @@ class FlowController:
             debug = context.get("debug") if isinstance(context.get("debug"), dict) else {}
             window_debug = debug.get("window") if isinstance(debug.get("window"), dict) else {}
             active_window = {
-                "title": active_app.get("name") or window_debug.get("chosen_title") or window_debug.get("raw_title") or "",
-                "process_name": window_debug.get("chosen_process") or window_debug.get("raw_process") or "",
+                "title": window_debug.get("chosen_title") or window_debug.get("raw_title") or active_app.get("name") or "",
+                "process_name": window_debug.get("chosen_process") or window_debug.get("raw_process") or active_app.get("name") or "",
                 "pid": active_app.get("pid") or window_debug.get("chosen_pid") or window_debug.get("raw_pid") or 0,
                 "window_id": active_app.get("window_id") or window_debug.get("chosen_hwnd") or window_debug.get("raw_hwnd") or 0,
             }

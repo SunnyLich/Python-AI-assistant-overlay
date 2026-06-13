@@ -396,7 +396,11 @@ _BROWSER_PROCS = _BROWSER_PROCS_WIN if _IS_WIN else _BROWSER_PROCS_LINUX
 
 
 def _fetch_active_window() -> WindowInfo:
-    return _fetch_active_window_win() if _IS_WIN else _fetch_active_window_linux()
+    if _IS_WIN:
+        return _fetch_active_window_win()
+    if _IS_MAC:
+        return _fetch_active_window_macos()
+    return _fetch_active_window_linux()
 
 
 def _fetch_active_window_win() -> WindowInfo:
@@ -528,6 +532,50 @@ def _fetch_active_window_linux() -> WindowInfo:
                     info.exe_path = proc.exe()
                 except Exception:
                     pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return info
+
+
+def _fetch_active_window_macos() -> WindowInfo:
+    info = WindowInfo()
+    try:
+        from core.platform import macos_native
+
+        rows = macos_native.list_document_windows()
+        rows.sort(key=lambda row: (not bool(row.get("frontmost")), str(row.get("title") or "")))
+        for row in rows:
+            if not bool(row.get("frontmost")):
+                continue
+            title = str(row.get("title") or "").strip()
+            process_name = str(row.get("process_name") or "").strip()
+            if not title or not process_name:
+                continue
+            info.title = title
+            info.process_name = process_name
+            try:
+                info.pid = int(row.get("pid") or 0)
+            except Exception:
+                info.pid = 0
+            return info
+    except Exception:
+        pass
+    try:
+        from core.platform_utils import get_foreground_window, get_window_pid, get_window_title
+
+        wid = get_foreground_window()
+        if not wid:
+            return info
+        info.hwnd = int(wid)
+        info.title = get_window_title(wid)
+        info.pid = int(get_window_pid(wid) or 0)
+        if info.pid:
+            try:
+                import psutil
+
+                info.process_name = psutil.Process(info.pid).name()
             except Exception:
                 pass
     except Exception:
@@ -1205,6 +1253,10 @@ _DOC_APP_PROCESS_NAMES: set[str] = {
     "pdfxedit.exe", "pdfxview.exe", "pxceditor.exe",
     "sumatrapdf.exe", "sumatrapdf",
     # Plain-text / markdown editors
+    "textedit",
+    "coteditor",
+    "bbedit",
+    "textmate",
     "notepad.exe", "notepad",
     "notepad++.exe", "notepad++",
     "sublime_text.exe", "sublime_text",
@@ -1213,6 +1265,12 @@ _DOC_APP_PROCESS_NAMES: set[str] = {
     "marktext.exe", "marktext",
     "gvim.exe", "gvim",
     "emacs.exe", "emacs",
+    # macOS document apps whose titles are commonly just the document name
+    "preview",
+    "skim",
+    "pages",
+    "numbers",
+    "keynote",
 }
 
 _DOC_TITLE_SEPARATORS: tuple[str, ...] = (" - ", " \u2013 ", " \u2014 ")

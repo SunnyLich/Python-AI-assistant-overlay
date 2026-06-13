@@ -48,6 +48,36 @@ class MacContextFetcherDocumentTests(unittest.TestCase):
 
         self.assertEqual(resolved, "/Users/test/Documents/Notes.txt")
 
+    def test_fetch_active_window_uses_frontmost_macos_window(self):
+        rows = [
+            {"process_name": "Finder", "pid": 202, "frontmost": False, "title": "Downloads"},
+            {"process_name": "TextEdit", "pid": 101, "frontmost": True, "title": "Notes.txt"},
+        ]
+
+        with patch("core.platform.macos_native.list_document_windows", return_value=rows):
+            win = self.cf._fetch_active_window()
+
+        self.assertEqual(win.title, "Notes.txt")
+        self.assertEqual(win.process_name, "TextEdit")
+        self.assertEqual(win.pid, 101)
+
+    def test_plain_textedit_title_resolves_open_file_from_lsof(self):
+        win = self.cf.WindowInfo(title="Notes.txt", process_name="TextEdit", pid=101)
+        lsof_result = types.SimpleNamespace(
+            returncode=0,
+            stdout="p101\nn/Users/test/Documents/Notes.txt\n",
+            stderr="",
+        )
+
+        def _isfile(path):
+            return path == "/Users/test/Documents/Notes.txt"
+
+        with patch("subprocess.run", return_value=lsof_result), \
+             patch.object(self.cf.os.path, "isfile", side_effect=_isfile):
+            resolved = self.cf._resolve_doc_path(win)
+
+        self.assertEqual(resolved, "/Users/test/Documents/Notes.txt")
+
 
 if __name__ == "__main__":
     unittest.main()

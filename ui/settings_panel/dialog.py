@@ -20,7 +20,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QObject, Signal
 from PySide6.QtGui import QFont
 from core import secret_store
-from core.system.env_utils import normalize_screenshot_mode
+from core.system.env_utils import (
+    format_tool_modes, normalize_screenshot_mode, parse_tool_modes,
+)
 import ui.settings_panel.env as settings_env
 from ui.settings_panel.hotkey_capture import HotkeyCaptureEdit
 from ui.settings_panel.helpers import parse_fallback_rows
@@ -1297,6 +1299,41 @@ class SettingsDialog(QDialog):
 
         outer_layout.addWidget(caller_card)
 
+        # ── VOICE (PUSH-TO-TALK) card ─────────────────────────────────────
+        voice_card, voice_cv = self._card("Voice (hold to talk)")
+        voice_note = QLabel(
+            "<small>Hold the key, speak, release to transcribe and ask. "
+            "Context and tools below apply to voice queries, just like a caller hotkey.</small>"
+        )
+        voice_note.setWordWrap(True)
+        voice_cv.addWidget(voice_note)
+
+        voice_hdr = QWidget()
+        voice_hdr_h = QHBoxLayout(voice_hdr)
+        voice_hdr_h.setContentsMargins(0, 2, 0, 2)
+        voice_hdr_h.setSpacing(8)
+        voice_hotkey_edit = HotkeyCaptureEdit()
+        voice_hotkey_edit.setFixedWidth(120)
+        voice_hotkey_edit.setPlaceholderText("Hotkey...")
+        self._fields["HOTKEY_VOICE"] = voice_hotkey_edit
+        voice_hdr_h.addWidget(voice_hotkey_edit)
+        voice_lbl = QLabel("Hold to record voice")
+        voice_lbl.setStyleSheet("font-style: italic; color: palette(placeholder-text);")
+        voice_hdr_h.addWidget(voice_lbl)
+        voice_hdr_h.addStretch()
+        voice_tools_btn = QPushButton("Allowed tools…")
+        voice_tools_btn.setToolTip("Choose which installed/plugin tools voice queries may use")
+        voice_hdr_h.addWidget(voice_tools_btn)
+        voice_cv.addWidget(voice_hdr)
+
+        voice_context_row, voice_controls = self._build_context_controls()
+        voice_cv.addWidget(voice_context_row)
+        self._voice_block: dict = {**voice_controls, "tool_overrides": {}}
+        voice_tools_btn.clicked.connect(
+            lambda: self._open_tool_access_dialog(self._voice_block, "Voice")
+        )
+        outer_layout.addWidget(voice_card)
+
         # ── OTHER HOTKEYS card ────────────────────────────────────────────
         other_card, other_cv = self._card("Other Hotkeys")
         self._keybinds_layout = other_cv
@@ -1348,65 +1385,21 @@ class SettingsDialog(QDialog):
         self._keybinds_layout.addWidget(row_w)
         return key_edit
 
-    def _add_caller_block(
+    def _build_context_controls(
         self,
-        hotkey: str = "",
-        label: str = "",
-        paste_back: bool = False,
-        custom_key: str = "s",
+        *,
         context_ambient: bool = True,
-        context_documents: bool = True,
-        context_tools: bool = False,
-        context_documents_mode: str | None = None,
+        context_documents_mode: str = "auto",
         context_browser_mode: str = "off",
         context_github_mode: str = "off",
         context_memory_mode: str = "auto",
         context_screenshot: str = "off",
-        intents: "list[dict] | None" = None,
-    ) -> None:
-        """Add a caller block (framed panel with header + intent rows) to the UI."""
-        from PySide6.QtWidgets import QSizePolicy
-        frame = QFrame()
-        frame.setFrameShape(QFrame.Shape.StyledPanel)
-        frame.setStyleSheet("QFrame { border: 1px solid palette(mid); border-radius: 4px; }")
-        outer = QVBoxLayout(frame)
-        outer.setSpacing(4)
-        outer.setContentsMargins(8, 6, 8, 6)
+    ) -> tuple[QWidget, dict]:
+        """Build the shared per-hotkey context grid (used by callers and voice).
 
-        # Header row
-        hdr = QWidget()
-        hdr_h = QHBoxLayout(hdr)
-        hdr_h.setContentsMargins(0, 0, 0, 0)
-        hdr_h.setSpacing(6)
-
-        hotkey_edit = HotkeyCaptureEdit()
-        hotkey_edit.setFixedWidth(120)
-        if hotkey:
-            hotkey_edit.setText(hotkey)
-        hotkey_edit.setPlaceholderText("Hotkey...")
-        hdr_h.addWidget(hotkey_edit)
-
-        hdr_h.addWidget(QLabel("Name:"))
-        label_edit = QLineEdit(label)
-        label_edit.setFixedWidth(110)
-        label_edit.setPlaceholderText("Label")
-        hdr_h.addWidget(label_edit)
-
-        paste_cb = QCheckBox("Paste result back")
-        paste_cb.setChecked(paste_back)
-        hdr_h.addWidget(paste_cb)
-
-        hdr_h.addWidget(QLabel("Enter key:"))
-        custom_key_edit = QLineEdit(custom_key)
-        custom_key_edit.setFixedWidth(36)
-        custom_key_edit.setPlaceholderText("s")
-        hdr_h.addWidget(custom_key_edit)
-
-        hdr_h.addStretch()
-        del_caller_btn = QPushButton("X Remove")
-        hdr_h.addWidget(del_caller_btn)
-        outer.addWidget(hdr)
-
+        Returns (row_widget, controls) where controls holds the ambient checkbox
+        and the five mode combos keyed exactly like the caller block dict.
+        """
         context_row = QWidget()
         context_h = QGridLayout(context_row)
         context_h.setContentsMargins(0, 0, 0, 0)
@@ -1414,8 +1407,7 @@ class SettingsDialog(QDialog):
         context_h.setVerticalSpacing(4)
         ambient_cb = QCheckBox("Ambient")
         ambient_cb.setChecked(context_ambient)
-        docs_mode = context_documents_mode or ("auto" if context_documents else ("model" if context_tools else "off"))
-        docs_combo = _context_mode_combo(docs_mode, allow_auto=True)
+        docs_combo = _context_mode_combo(context_documents_mode, allow_auto=True)
         docs_combo.setToolTip(
             "Open documents:\n"
             "Off — do not include document text.\n"
@@ -1463,6 +1455,111 @@ class SettingsDialog(QDialog):
         context_h.addWidget(QLabel("Memory:"), 1, 4)
         context_h.addWidget(memory_combo, 1, 5)
         context_h.setColumnStretch(6, 1)
+        controls = {
+            "context_ambient": ambient_cb,
+            "context_documents_mode": docs_combo,
+            "context_browser_mode": browser_combo,
+            "context_github_mode": github_combo,
+            "context_memory_mode": memory_combo,
+            "context_screenshot": screenshot_combo,
+        }
+        return context_row, controls
+
+    def _open_tool_access_dialog(self, blk: dict, method_label: str) -> None:
+        """Open the per-method Allowed Tools dialog and store the result on blk."""
+        from ui.settings_panel.tool_access import ToolAccessDialog
+
+        def _mode_data(combo) -> str:
+            return str(combo.currentData() or "off")
+
+        governed_modes = {
+            "Open docs": _mode_data(blk["context_documents_mode"]),
+            "Browser/Web": _mode_data(blk["context_browser_mode"]),
+            "Git/GitHub": _mode_data(blk["context_github_mode"]),
+            "Memory": _mode_data(blk["context_memory_mode"]),
+            "Screenshot": _mode_data(blk["context_screenshot"]),
+        }
+        dlg = ToolAccessDialog(
+            self,
+            method_label=method_label or "this hotkey",
+            overrides=dict(blk.get("tool_overrides") or {}),
+            governed_modes=governed_modes,
+        )
+        if dlg.exec():
+            blk["tool_overrides"] = dlg.selected_overrides()
+
+    def _add_caller_block(
+        self,
+        hotkey: str = "",
+        label: str = "",
+        paste_back: bool = False,
+        custom_key: str = "s",
+        context_ambient: bool = True,
+        context_documents: bool = True,
+        context_tools: bool = False,
+        context_documents_mode: str | None = None,
+        context_browser_mode: str = "off",
+        context_github_mode: str = "off",
+        context_memory_mode: str = "auto",
+        context_screenshot: str = "off",
+        tools: "dict[str, str] | None" = None,
+        intents: "list[dict] | None" = None,
+    ) -> None:
+        """Add a caller block (framed panel with header + intent rows) to the UI."""
+        from PySide6.QtWidgets import QSizePolicy
+        frame = QFrame()
+        frame.setFrameShape(QFrame.Shape.StyledPanel)
+        frame.setStyleSheet("QFrame { border: 1px solid palette(mid); border-radius: 4px; }")
+        outer = QVBoxLayout(frame)
+        outer.setSpacing(4)
+        outer.setContentsMargins(8, 6, 8, 6)
+
+        # Header row
+        hdr = QWidget()
+        hdr_h = QHBoxLayout(hdr)
+        hdr_h.setContentsMargins(0, 0, 0, 0)
+        hdr_h.setSpacing(6)
+
+        hotkey_edit = HotkeyCaptureEdit()
+        hotkey_edit.setFixedWidth(120)
+        if hotkey:
+            hotkey_edit.setText(hotkey)
+        hotkey_edit.setPlaceholderText("Hotkey...")
+        hdr_h.addWidget(hotkey_edit)
+
+        hdr_h.addWidget(QLabel("Name:"))
+        label_edit = QLineEdit(label)
+        label_edit.setFixedWidth(110)
+        label_edit.setPlaceholderText("Label")
+        hdr_h.addWidget(label_edit)
+
+        paste_cb = QCheckBox("Paste result back")
+        paste_cb.setChecked(paste_back)
+        hdr_h.addWidget(paste_cb)
+
+        hdr_h.addWidget(QLabel("Enter key:"))
+        custom_key_edit = QLineEdit(custom_key)
+        custom_key_edit.setFixedWidth(36)
+        custom_key_edit.setPlaceholderText("s")
+        hdr_h.addWidget(custom_key_edit)
+
+        hdr_h.addStretch()
+        tools_btn = QPushButton("Allowed tools…")
+        tools_btn.setToolTip("Choose which installed/plugin tools this hotkey may use")
+        hdr_h.addWidget(tools_btn)
+        del_caller_btn = QPushButton("X Remove")
+        hdr_h.addWidget(del_caller_btn)
+        outer.addWidget(hdr)
+
+        docs_mode = context_documents_mode or ("auto" if context_documents else ("model" if context_tools else "off"))
+        context_row, context_controls = self._build_context_controls(
+            context_ambient=context_ambient,
+            context_documents_mode=docs_mode,
+            context_browser_mode=context_browser_mode,
+            context_github_mode=context_github_mode,
+            context_memory_mode=context_memory_mode,
+            context_screenshot=context_screenshot,
+        )
         outer.addWidget(context_row)
 
         # Intent rows column header
@@ -1494,16 +1591,22 @@ class SettingsDialog(QDialog):
             "label":          label_edit,
             "paste_back":     paste_cb,
             "custom_key":     custom_key_edit,
-            "context_ambient": ambient_cb,
-            "context_documents": docs_combo,
-            "context_documents_mode": docs_combo,
-            "context_browser_mode": browser_combo,
-            "context_github_mode": github_combo,
-            "context_memory_mode": memory_combo,
-            "context_screenshot": screenshot_combo,
+            "context_ambient": context_controls["context_ambient"],
+            "context_documents": context_controls["context_documents_mode"],
+            "context_documents_mode": context_controls["context_documents_mode"],
+            "context_browser_mode": context_controls["context_browser_mode"],
+            "context_github_mode": context_controls["context_github_mode"],
+            "context_memory_mode": context_controls["context_memory_mode"],
+            "context_screenshot": context_controls["context_screenshot"],
+            "tool_overrides": dict(tools or {}),
             "intents_layout": intents_vlayout,
             "intent_rows":    [],
         }
+        tools_btn.clicked.connect(
+            lambda: self._open_tool_access_dialog(
+                blk, _get(blk["label"]).strip() or _get(blk["hotkey"]).strip() or "Caller"
+            )
+        )
 
         for r in (intents or []):
             self._add_caller_intent_row(blk, r.get("key", ""), r.get("label", ""), r.get("prompt", ""))
@@ -1758,6 +1861,11 @@ class SettingsDialog(QDialog):
         self._fields["BUBBLE_REVEAL_WPM"].setPlaceholderText("e.g. 170")
         self._fields["BUBBLE_HOLD_REVEAL_WPM"] = QLineEdit()
         self._fields["BUBBLE_HOLD_REVEAL_WPM"].setPlaceholderText("e.g. 480")
+        self._fields["BUBBLE_HIDE_DELAY_S"] = QLineEdit()
+        self._fields["BUBBLE_HIDE_DELAY_S"].setPlaceholderText("e.g. 3.5")
+        self._fields["BUBBLE_HIDE_DELAY_S"].setToolTip(
+            "How long the text bubble stays on screen after the last word, in seconds."
+        )
         self._fields["TTS_PLAYBACK_RATE"] = QLineEdit()
         self._fields["TTS_PLAYBACK_RATE"].setPlaceholderText("e.g. 1.0")
         self._fields["TTS_HOLD_PLAYBACK_RATE"] = QLineEdit()
@@ -1769,13 +1877,14 @@ class SettingsDialog(QDialog):
         f.addRow("Elaborate prompt", self._fields["CHAT_ELABORATE_PROMPT"])
         f.addRow(_sep(), _sep())
         f.addRow("Icon size (px)", self._fields["ICON_SIZE"])
-        f.addRow("Bubble width (px)", self._fields["BUBBLE_WIDTH"])
-        f.addRow("Bubble lines", self._fields["BUBBLE_LINES"])
-        f.addRow("Bubble color", _bubble_color_row)
-        f.addRow("Bubble text color", _bubble_text_color_row)
+        f.addRow("Text bubble width (px)", self._fields["BUBBLE_WIDTH"])
+        f.addRow("Text bubble lines", self._fields["BUBBLE_LINES"])
+        f.addRow("Text bubble color", _bubble_color_row)
+        f.addRow("Text bubble text color", _bubble_text_color_row)
         f.addRow("Read word color", _read_word_color_row)
-        f.addRow("Bubble text speed (WPM)", self._fields["BUBBLE_REVEAL_WPM"])
-        f.addRow("Bubble hold speed (WPM)", self._fields["BUBBLE_HOLD_REVEAL_WPM"])
+        f.addRow("Text bubble speed (WPM)", self._fields["BUBBLE_REVEAL_WPM"])
+        f.addRow("Text bubble hold speed (WPM)", self._fields["BUBBLE_HOLD_REVEAL_WPM"])
+        f.addRow("Text bubble display time (s)", self._fields["BUBBLE_HIDE_DELAY_S"])
         f.addRow("TTS speed", self._fields["TTS_PLAYBACK_RATE"])
         f.addRow("TTS hold speed", self._fields["TTS_HOLD_PLAYBACK_RATE"])
         cv.addWidget(fw)
@@ -2173,6 +2282,12 @@ class SettingsDialog(QDialog):
                 f"CALLER_{n}_CONTEXT_MEMORY_MODE",
                 cr.get("context_memory_mode") or "auto",
             )
+            tools_env = self._env.get(f"CALLER_{n}_TOOLS")
+            caller_tools = (
+                parse_tool_modes(tools_env)
+                if tools_env is not None
+                else dict(cr.get("tools") or {})
+            )
             self._add_caller_block(
                 hotkey     = self._env.get(f"CALLER_{n}_HOTKEY",     cr.get("hotkey", "")),
                 label      = self._env.get(f"CALLER_{n}_LABEL",      cr.get("label", "")),
@@ -2186,8 +2301,45 @@ class SettingsDialog(QDialog):
                 context_github_mode = github_mode,
                 context_memory_mode = memory_mode,
                 context_screenshot = normalize_screenshot_mode(self._env.get(f"CALLER_{n}_CONTEXT_SCREENSHOT", cr.get("context_screenshot", "off"))),
+                tools      = caller_tools,
                 intents    = intents,
             )
+
+        # Voice (push-to-talk) block
+        vc = dict(getattr(cfg, "VOICE_CALLER", {}) or {})
+        _set(self._fields["HOTKEY_VOICE"], self._env.get("HOTKEY_VOICE", vc.get("hotkey", cfg.HOTKEY_VOICE)))
+        vb = self._voice_block
+        vb["context_ambient"].setChecked(
+            self._env.get("VOICE_CONTEXT_AMBIENT", str(vc.get("context_ambient", True))).lower() == "true"
+        )
+        _set(
+            vb["context_documents_mode"],
+            self._env.get("VOICE_CONTEXT_DOCUMENTS_MODE", vc.get("context_documents_mode") or "auto"),
+        )
+        _set(
+            vb["context_browser_mode"],
+            self._env.get("VOICE_CONTEXT_BROWSER_MODE", vc.get("context_browser_mode") or "off"),
+        )
+        _set(
+            vb["context_github_mode"],
+            self._env.get("VOICE_CONTEXT_GITHUB_MODE", vc.get("context_github_mode") or "off"),
+        )
+        _set(
+            vb["context_memory_mode"],
+            self._env.get("VOICE_CONTEXT_MEMORY_MODE", vc.get("context_memory_mode") or "auto"),
+        )
+        _set(
+            vb["context_screenshot"],
+            normalize_screenshot_mode(
+                self._env.get("VOICE_CONTEXT_SCREENSHOT", vc.get("context_screenshot", "off"))
+            ),
+        )
+        voice_tools_env = self._env.get("VOICE_TOOLS")
+        vb["tool_overrides"] = (
+            parse_tool_modes(voice_tools_env)
+            if voice_tools_env is not None
+            else dict(vc.get("tools") or {})
+        )
 
         # Read ICON_AUTO_HIDE, falling back to the legacy DOLL_AUTO_HIDE key.
         auto_hide = self._env.get(
@@ -2213,6 +2365,13 @@ class SettingsDialog(QDialog):
         _set(self._fields["BUBBLE_READ_WORD_COLOR"], self._env.get("BUBBLE_READ_WORD_COLOR", cfg.BUBBLE_READ_WORD_COLOR))
         _set(self._fields["BUBBLE_REVEAL_WPM"], self._env.get("BUBBLE_REVEAL_WPM", str(cfg.BUBBLE_REVEAL_WPM)))
         _set(self._fields["BUBBLE_HOLD_REVEAL_WPM"], self._env.get("BUBBLE_HOLD_REVEAL_WPM", str(cfg.BUBBLE_HOLD_REVEAL_WPM)))
+        _set(
+            self._fields["BUBBLE_HIDE_DELAY_S"],
+            _ms_to_seconds_str(
+                self._env.get("BUBBLE_HIDE_DELAY_MS", str(cfg.BUBBLE_HIDE_DELAY_MS)),
+                cfg.BUBBLE_HIDE_DELAY_MS,
+            ),
+        )
         _set(self._fields["TTS_PLAYBACK_RATE"], self._env.get("TTS_PLAYBACK_RATE", str(cfg.TTS_PLAYBACK_RATE)))
         _set(self._fields["TTS_HOLD_PLAYBACK_RATE"], self._env.get("TTS_HOLD_PLAYBACK_RATE", str(cfg.TTS_HOLD_PLAYBACK_RATE)))
 
@@ -2535,7 +2694,10 @@ class SettingsDialog(QDialog):
         }
         keys = set(exact.get(page, set()))
         if page == "Keybinds":
-            keys.update(key for key in env if key.startswith("CALLER_"))
+            keys.update(
+                key for key in env
+                if key.startswith("CALLER_") or key.startswith("VOICE_")
+            )
         return keys
 
     def _reload_after_page_reset(self) -> None:
@@ -2795,14 +2957,28 @@ class SettingsDialog(QDialog):
             "BUBBLE_READ_WORD_COLOR": _get(self._fields["BUBBLE_READ_WORD_COLOR"]),
             "BUBBLE_REVEAL_WPM": _get(self._fields["BUBBLE_REVEAL_WPM"]),
             "BUBBLE_HOLD_REVEAL_WPM": _get(self._fields["BUBBLE_HOLD_REVEAL_WPM"]),
+            "BUBBLE_HIDE_DELAY_MS": _seconds_str_to_ms(
+                _get(self._fields["BUBBLE_HIDE_DELAY_S"]), 3500
+            ),
             "TTS_PLAYBACK_RATE": _get(self._fields["TTS_PLAYBACK_RATE"]),
             "TTS_HOLD_PLAYBACK_RATE": _get(self._fields["TTS_HOLD_PLAYBACK_RATE"]),
             "SYSTEM_PROMPT_UTILITY": self._fields["SYSTEM_PROMPT_UTILITY"].toPlainText(),  # type: ignore
         }
+        vb = self._voice_block
+        vals.update({
+            "HOTKEY_VOICE": _get(self._fields["HOTKEY_VOICE"]),
+            "VOICE_CONTEXT_AMBIENT": str(vb["context_ambient"].isChecked()),
+            "VOICE_CONTEXT_DOCUMENTS_MODE": str(vb["context_documents_mode"].currentData()),
+            "VOICE_CONTEXT_BROWSER_MODE": str(vb["context_browser_mode"].currentData()),
+            "VOICE_CONTEXT_GITHUB_MODE": str(vb["context_github_mode"].currentData()),
+            "VOICE_CONTEXT_MEMORY_MODE": str(vb["context_memory_mode"].currentData()),
+            "VOICE_CONTEXT_SCREENSHOT": str(vb["context_screenshot"].currentData()),
+            "VOICE_TOOLS": format_tool_modes(vb.get("tool_overrides") or {}),
+        })
         # Key conflict check (caller hotkeys + special hotkeys)
         all_keys = (
             [_get(blk["hotkey"]).strip().lower() for blk in self._caller_blocks]
-            + [_get(self._fields[k]).strip().lower() for k in ("HOTKEY_ADD_CONTEXT", "HOTKEY_CLEAR_CONTEXT", "HOTKEY_SNIP")]
+            + [_get(self._fields[k]).strip().lower() for k in ("HOTKEY_ADD_CONTEXT", "HOTKEY_CLEAR_CONTEXT", "HOTKEY_SNIP", "HOTKEY_VOICE")]
         )
         non_empty = [k for k in all_keys if k]
         if len(non_empty) != len(set(non_empty)):
@@ -2830,6 +3006,7 @@ class SettingsDialog(QDialog):
                 any(mode == "model" for mode in (documents_mode, browser_mode, github_mode, memory_mode))
             )
             vals[f"CALLER_{n}_CONTEXT_SCREENSHOT"] = str(blk["context_screenshot"].currentData())  # type: ignore
+            vals[f"CALLER_{n}_TOOLS"] = format_tool_modes(blk.get("tool_overrides") or {})
             vals[f"CALLER_{n}_INTENT_COUNT"]  = str(len(blk["intent_rows"]))
             for j, row in enumerate(blk["intent_rows"]):
                 m = j + 1
@@ -2854,7 +3031,8 @@ class SettingsDialog(QDialog):
                 subscription_auth_warnings,
             )
             warnings += screenshot_capability_warnings(
-                [blk["context_screenshot"].currentData() for blk in self._caller_blocks],  # type: ignore
+                [blk["context_screenshot"].currentData() for blk in self._caller_blocks]  # type: ignore
+                + [vb["context_screenshot"].currentData()],
                 llm_provider=vals.get("LLM_PROVIDER", ""),
                 llm_model=vals.get("LLM_MODEL", ""),
                 vision_provider=vals.get("VISION_LLM_PROVIDER", ""),
@@ -2865,7 +3043,8 @@ class SettingsDialog(QDialog):
                 vision_provider=vals.get("VISION_LLM_PROVIDER", ""),
             )
             live_tool_modes = []
-            for blk in self._caller_blocks:
+            tools_overridden = False
+            for blk in [*self._caller_blocks, vb]:
                 live_tool_modes.extend(
                     [
                         str(blk["context_documents_mode"].currentData()),  # type: ignore[attr-defined]
@@ -2874,8 +3053,13 @@ class SettingsDialog(QDialog):
                         str(blk["context_memory_mode"].currentData()),  # type: ignore[attr-defined]
                     ]
                 )
+                if any(
+                    mode in {"on", "model"}
+                    for mode in (blk.get("tool_overrides") or {}).values()
+                ):
+                    tools_overridden = True
             warnings += tool_capability_warnings(
-                any(mode == "model" for mode in live_tool_modes),
+                tools_overridden or any(mode == "model" for mode in live_tool_modes),
                 llm_provider=vals.get("LLM_PROVIDER", ""),
             )
         except Exception:
@@ -3089,6 +3273,23 @@ def _get(widget) -> str:
     elif isinstance(widget, QTextEdit):
         return widget.toPlainText()
     return ""
+
+
+def _ms_to_seconds_str(ms_value, default_ms: int) -> str:
+    """Render a millisecond env value as a compact seconds string (e.g. "3.5")."""
+    try:
+        ms = int(float(str(ms_value).strip()))
+    except (TypeError, ValueError):
+        ms = default_ms
+    return f"{ms / 1000:g}"
+
+
+def _seconds_str_to_ms(text, fallback_ms: int) -> str:
+    """Parse a seconds field back to a millisecond env value (min 0.5s)."""
+    try:
+        return str(max(500, int(round(float(str(text).strip()) * 1000))))
+    except (TypeError, ValueError):
+        return str(fallback_ms)
 
 
 def _desc_label(title: str, description: str) -> QLabel:

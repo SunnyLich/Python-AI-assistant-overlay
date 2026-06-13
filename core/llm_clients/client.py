@@ -470,6 +470,21 @@ _SCREENSHOT_TOOL_NOTE = (
 )
 
 
+# Appended to the system prompt only when general tools are actually attached
+# to the request, so the model is never promised access it does not have.
+_TOOLS_NOTE = (
+    "You have live tools available for this query — use real tool calls when "
+    "they would improve the answer. Never print or simulate tool calls in the "
+    "reply text."
+)
+
+
+def _with_tools_note(system: str, tools_offered: bool) -> str:
+    if not tools_offered:
+        return system
+    return f"{system}\n\n{_TOOLS_NOTE}" if system else _TOOLS_NOTE
+
+
 def _with_screenshot_note(system: str, allow_screenshot_tool: bool) -> str:
     """Append the screenshot capability note when that tool is exposed."""
     if allow_screenshot_tool:
@@ -698,6 +713,7 @@ def _get_tool_schemas(
     include_general: bool = True,
     include_screenshot: bool = False,
     allowed_tools: list[str] | None = None,
+    pinned_tools: list[str] | None = None,
     unfiltered: bool = False,
 ) -> list[dict]:
     """Anthropic tool schemas for a query.
@@ -705,6 +721,9 @@ def _get_tool_schemas(
     capture_screen is opt-in (include_screenshot) and is never part of the
     general set, so it only appears when the caller explicitly allows the model
     to take screenshots. include_general gates every other built-in tool.
+
+    ``pinned_tools`` are caller-level "always on" tools: they are offered even
+    when the per-prompt keyword filter would have dropped them.
 
     ``unfiltered`` skips the per-prompt keyword filter and returns the full,
     stable built-in set. Multi-turn chat uses this so the tool list (which renders
@@ -724,6 +743,7 @@ def _get_tool_schemas(
             for schema in base
             if _tool_schema_allowed(schema.get("name", ""), allowed_tools)
         ]
+        _append_pinned_tool_schemas(schemas, pinned_tools, allowed_tools)
     if include_screenshot:
         spec = _TOOL_REGISTRY.get_tool("capture_screen")
         if spec is not None:
@@ -741,6 +761,7 @@ def _get_openai_tool_schemas(
     include_general: bool = True,
     include_screenshot: bool = False,
     allowed_tools: list[str] | None = None,
+    pinned_tools: list[str] | None = None,
 ) -> list[dict]:
     """OpenAI/Groq function schemas for a query (mirror of _get_tool_schemas).
 
@@ -757,6 +778,7 @@ def _get_openai_tool_schemas(
                 allowed_tools,
             )
         ]
+        _append_pinned_tool_schemas(schemas, pinned_tools, allowed_tools, openai_format=True)
     if include_screenshot:
         spec = _TOOL_REGISTRY.get_tool("capture_screen")
         if spec is not None:
@@ -775,6 +797,75 @@ def _tool_schema_allowed(name: str, allowed_tools: list[str] | None) -> bool:
     if name == "get_context":
         return bool({"get_context", "get_context.browser", "get_context.documents"} & allowed)
     return name in allowed
+
+
+def _append_pinned_tool_schemas(
+    schemas: list[dict],
+    pinned_tools: list[str] | None,
+    allowed_tools: list[str] | None,
+    *,
+    openai_format: bool = False,
+) -> None:
+    """Add back pinned ("always on") tools the per-prompt keyword filter dropped.
+
+    Mutates *schemas* in place. Opt-in tools (capture_screen, memory_search) are
+    skipped — they have dedicated caller settings — and Anthropic-only server
+    tools never cross to the OpenAI format.
+    """
+    if not pinned_tools:
+        return
+    if openai_format:
+        present = {((s.get("function") or {}).get("name") or "") for s in schemas}
+    else:
+        present = {s.get("name", "") for s in schemas}
+    for name in pinned_tools:
+        if name in present or not _tool_schema_allowed(name, allowed_tools):
+            continue
+        spec = _TOOL_REGISTRY.get_tool(name)
+        if spec is None or spec.opt_in:
+            continue
+        if openai_format:
+            if spec.server_schema:
+                continue
+            schemas.append(spec.openai_schema())
+        else:
+            schemas.append(spec.anthropic_schema())
+        present.add(name)
+
+
+def _tool_schema_names(schemas: list[dict] | None, *, openai_format: bool = False) -> list[str]:
+    names: list[str] = []
+    for schema in schemas or []:
+        if openai_format:
+            name = str((schema.get("function") or {}).get("name") or "")
+        else:
+            name = str(schema.get("name") or "")
+        if name:
+            names.append(name)
+    return names
+
+
+def _log_offered_model_tools(
+    provider: str,
+    model: str,
+    *,
+    allowed_tools: list[str] | None,
+    pinned_tools: list[str] | None,
+    schemas: list[dict] | None,
+    openai_format: bool = False,
+) -> None:
+    offered = _tool_schema_names(schemas, openai_format=openai_format)
+    print(
+        f"[llm] tools offered provider={provider or 'unknown'} model={model!r} "
+        f"allowed={allowed_tools if allowed_tools is not None else 'all'} "
+        f"pinned={pinned_tools or []} offered={offered}",
+        flush=True,
+    )
+    if not offered:
+        print(
+            "[llm] warning: model tools were requested, but no tool schemas were offered.",
+            flush=True,
+        )
 
 
 def _execute_model_tool(name: str, inputs: dict, allowed_tools: list[str] | None = None) -> str:
@@ -899,19 +990,68 @@ def read_document_file(path: str, max_chars: int | None = None) -> str:
     return _read_document_file(path, max_chars=max_chars)
 
 
-def read_active_document_for_context() -> str:
+def read_active_document_for_context_with_debug(active_window: dict | None = None) -> tuple[str, dict]:
     """
     Read all open doc-app windows (foreground and background) and return their
     redacted plain text for proactive injection into the system prompt.
     Multiple documents are separated by per-file headers.
-    Returns "" if no readable documents are found.
+    Returns ("", debug) if no readable documents are found.
     """
-    from core.context_fetcher import get_all_open_document_paths
+    from core.context_fetcher import (
+        WindowInfo,
+        get_all_open_document_paths,
+        get_all_open_document_window_texts,
+    )
 
-    paths = get_all_open_document_paths()
-    if not paths:
-        return ""
-    return _read_document_paths(paths)
+    active_win = None
+    if isinstance(active_window, dict) and (
+        active_window.get("title") or active_window.get("name") or active_window.get("window_id")
+    ):
+        active_win = WindowInfo(
+            title=str(active_window.get("title") or active_window.get("name") or ""),
+            process_name=str(active_window.get("process_name") or ""),
+            pid=int(active_window.get("pid") or 0),
+            hwnd=int(active_window.get("window_id") or active_window.get("hwnd") or 0),
+        )
+
+    debug: dict = {
+        "active_window": active_window or {},
+        "paths": [],
+        "path_chars": 0,
+        "window_labels": [],
+        "window_chars": 0,
+    }
+    paths = get_all_open_document_paths(active_window=active_win)
+    debug["paths"] = list(paths)
+    if paths:
+        text = _read_document_paths(paths)
+        debug["path_chars"] = len(text or "")
+        print(
+            f"[llm] active document paths={len(paths)} paths={paths!r} chars={len(text or '')}",
+            flush=True,
+        )
+        if text:
+            return text, debug
+
+    window_texts = get_all_open_document_window_texts(
+        max_chars_per_doc=_ambient_document_max_chars(),
+        active_window=active_win,
+    )
+    debug["window_labels"] = [label for label, _text in window_texts]
+    debug["window_chars"] = sum(len(text) for _label, text in window_texts)
+    print(
+        f"[llm] active document window_texts={len(window_texts)} "
+        f"labels={debug['window_labels']!r} chars={debug['window_chars']}",
+        flush=True,
+    )
+    if not window_texts:
+        return "", debug
+    return "\n\n".join(f"[{label}]\n{text}" for label, text in window_texts if text), debug
+
+
+def read_active_document_for_context() -> str:
+    text, _debug = read_active_document_for_context_with_debug()
+    return text
 
 
 # ------------------------------------------------------------------
@@ -2305,6 +2445,7 @@ def stream_response(
     memory_context: str = "",
     use_tools: bool = False,
     allowed_tools: list[str] | None = None,
+    pinned_tools: list[str] | None = None,
     allow_screenshot_tool: bool = False,
     screenshot_tool_b64: str | None = None,
     route_provider: str | None = None,
@@ -2400,6 +2541,7 @@ def stream_response(
                 memory_context,
                 use_tools=use_tools,
                 allowed_tools=allowed_tools,
+                pinned_tools=pinned_tools,
                 allow_screenshot_tool=allow_screenshot_tool,
                 screenshot_tool_b64=screenshot_tool_b64,
                 route_name="LLM",
@@ -2482,6 +2624,7 @@ def _stream_single_response_route(
     use_tools: bool,
     route_name: str,
     allowed_tools: list[str] | None = None,
+    pinned_tools: list[str] | None = None,
     allow_screenshot_tool: bool = False,
     screenshot_tool_b64: str | None = None,
     max_tokens: int | None = None,
@@ -2512,6 +2655,8 @@ def _stream_single_response_route(
                 image_base64,
                 model,
                 client,
+                ambient_context,
+                memory_context,
                 provider=provider,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -2522,11 +2667,20 @@ def _stream_single_response_route(
                 image_base64,
                 model,
                 _dynamic_anthropic_client(),
+                ambient_context,
+                memory_context,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
         elif provider == "chatgpt":
-            yield from _stream_codex_vision(user_message, image_base64, model, _get_codex_client())
+            yield from _stream_codex_vision(
+                user_message,
+                image_base64,
+                model,
+                _get_codex_client(),
+                ambient_context,
+                memory_context,
+            )
         else:
             raise ValueError(f"Unknown vision provider: {provider}")
         return
@@ -2541,6 +2695,7 @@ def _stream_single_response_route(
             memory_context,
             use_tools=use_tools,
             allowed_tools=allowed_tools,
+            pinned_tools=pinned_tools,
             allow_screenshot_tool=allow_screenshot_tool,
             screenshot_tool_b64=screenshot_tool_b64,
             provider=provider,
@@ -2558,6 +2713,7 @@ def _stream_single_response_route(
             memory_context,
             use_tools,
             allowed_tools=allowed_tools,
+            pinned_tools=pinned_tools,
             allow_screenshot_tool=allow_screenshot_tool,
             screenshot_tool_b64=screenshot_tool_b64,
             max_tokens=max_tokens,
@@ -2619,6 +2775,7 @@ def _stream_openai_compat(
     memory_context: str = "",
     use_tools: bool = False,
     allowed_tools: list[str] | None = None,
+    pinned_tools: list[str] | None = None,
     allow_screenshot_tool: bool = False,
     screenshot_tool_b64: str | None = None,
     provider: str = "",
@@ -2652,10 +2809,22 @@ def _stream_openai_compat(
             include_general=use_tools,
             include_screenshot=allow_screenshot_tool,
             allowed_tools=allowed_tools,
+            pinned_tools=pinned_tools,
         )
         if tools_requested and tools_allowed
         else None
     )
+    if tools_requested and tools_allowed:
+        _log_offered_model_tools(
+            provider or "openai-compatible",
+            model,
+            allowed_tools=allowed_tools,
+            pinned_tools=pinned_tools,
+            schemas=tools,
+            openai_format=True,
+        )
+    if tools and messages and messages[0].get("role") == "system":
+        messages[0]["content"] = _with_tools_note(messages[0]["content"], True)
 
     kwargs: dict = {
         "model": model,
@@ -2762,6 +2931,7 @@ def _stream_openai_compat(
                 memory_context,
                 use_tools=use_tools,
                 allowed_tools=allowed_tools,
+                pinned_tools=pinned_tools,
                 allow_screenshot_tool=allow_screenshot_tool,
                 screenshot_tool_b64=screenshot_tool_b64,
                 provider=provider,
@@ -2936,6 +3106,19 @@ def _stream_codex(
     # Claude would otherwise fetch on demand: open supported documents and clipboard.
     if use_tools:
         _update_route_capabilities("chatgpt", model, supports_tools=False)
+        print(
+            f"[llm] ChatGPT/Codex route does not support live model tools here; "
+            f"front-loading supported local context instead. allowed={allowed_tools or []}",
+            flush=True,
+        )
+        if _tools_allow(allowed_tools, "web_search", "get_context.browser"):
+            print(
+                "[llm] warning: Browser/Web model tools are enabled, but this "
+                "ChatGPT/Codex route cannot call web_search/get_context live. "
+                "Use Browser/Web auto mode to attach the page, or a live-tool "
+                "provider for model-decided browser/web calls.",
+                flush=True,
+            )
         ambient_context = _inject_frontloaded_tool_context(ambient_context, allowed_tools)
     text = _build_codex_text(user_message, ambient_context, memory_context)
     yield from _response_stream_text(
@@ -2956,10 +3139,13 @@ def _stream_codex_vision(
     image_base64: str,
     model: str,
     client,
+    ambient_context: str = "",
+    memory_context: str = "",
 ) -> Generator[str, None, None]:
     """Stream a vision response via the Codex endpoint (Responses API with image input)."""
+    text = _build_codex_text(user_message, ambient_context, memory_context)
     input_content = [
-        {"type": "input_text",  "text": user_message},
+        {"type": "input_text",  "text": text},
         {"type": "input_image", "image_url": f"data:image/png;base64,{image_base64}"},
     ]
     for chunk in _response_stream_text(
@@ -3021,6 +3207,7 @@ def _run_anthropic_tool_loop(
     include_screenshot: bool = False,
     screenshot_tool_b64: str | None = None,
     allowed_tools: list[str] | None = None,
+    pinned_tools: list[str] | None = None,
 ) -> Generator[str, None, None]:
     """
     Execute Anthropic tool calls and yield text from subsequent rounds.
@@ -3073,6 +3260,7 @@ def _run_anthropic_tool_loop(
                 include_general=include_general,
                 include_screenshot=include_screenshot,
                 allowed_tools=allowed_tools,
+                pinned_tools=pinned_tools,
             ),
         )
         for block in response.content:
@@ -3095,6 +3283,7 @@ def _stream_anthropic(
     memory_context: str = "",
     use_tools: bool = False,
     allowed_tools: list[str] | None = None,
+    pinned_tools: list[str] | None = None,
     allow_screenshot_tool: bool = False,
     screenshot_tool_b64: str | None = None,
     max_tokens: int | None = None,
@@ -3103,12 +3292,18 @@ def _stream_anthropic(
     tools_active = use_tools or allow_screenshot_tool
     cap = _get_route_capabilities("anthropic", model)
     if tools_active and cap.supports_tools is False:
+        print(
+            f"[llm] Anthropic live tools disabled by route capability cache; "
+            f"front-loading supported context instead. allowed={allowed_tools or []}",
+            flush=True,
+        )
         ambient_context = _inject_frontloaded_tool_context(ambient_context, allowed_tools)
         tools_active = False
         use_tools = False
         allow_screenshot_tool = False
 
     system = _with_screenshot_note(config.get_system_prompt(), allow_screenshot_tool)
+    system = _with_tools_note(system, use_tools)
     if memory_context:
         system += f"\n\n{memory_context}"
     if ambient_context:
@@ -3156,18 +3351,43 @@ def _stream_anthropic(
     # If no tool is called (common case), text streams immediately.
     # Only falls back to blocking create() if Claude actually invokes a tool.
     messages: list[dict] = [{"role": "user", "content": content}]
+    tool_schemas = _get_tool_schemas(
+        user_message,
+        include_general=use_tools,
+        include_screenshot=allow_screenshot_tool,
+        allowed_tools=allowed_tools,
+        pinned_tools=pinned_tools,
+    )
+    _log_offered_model_tools(
+        "anthropic",
+        model,
+        allowed_tools=allowed_tools,
+        pinned_tools=pinned_tools,
+        schemas=tool_schemas,
+    )
+    if not tool_schemas:
+        yield from _stream_anthropic(
+            user_message,
+            image_base64,
+            model,
+            client,
+            _inject_frontloaded_tool_context(ambient_context, allowed_tools),
+            memory_context,
+            use_tools=False,
+            allowed_tools=allowed_tools,
+            allow_screenshot_tool=False,
+            screenshot_tool_b64=screenshot_tool_b64,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        return
 
     request = {
         "model": model,
         "max_tokens": anthropic_max_tokens,
         "system": system,
         "messages": messages,
-        "tools": _get_tool_schemas(
-            user_message,
-            include_general=use_tools,
-            include_screenshot=allow_screenshot_tool,
-            allowed_tools=allowed_tools,
-        ),
+        "tools": tool_schemas,
     }
     if temperature is not None:
         request["temperature"] = temperature
@@ -3222,6 +3442,7 @@ def _stream_anthropic(
         include_screenshot=allow_screenshot_tool,
         screenshot_tool_b64=screenshot_tool_b64,
         allowed_tools=allowed_tools,
+        pinned_tools=pinned_tools,
     )
 
 

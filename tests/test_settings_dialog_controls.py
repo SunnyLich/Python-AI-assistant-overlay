@@ -245,3 +245,111 @@ def test_memory_panel_add_runs_on_background_thread(monkeypatch):
     finally:
         panel.deleteLater()
         app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_settings_keybinds_has_voice_block_and_tools_buttons():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog()
+
+    try:
+        assert "HOTKEY_VOICE" in dialog._fields
+        vb = dialog._voice_block
+        assert set(vb) >= {
+            "context_ambient",
+            "context_documents_mode",
+            "context_browser_mode",
+            "context_github_mode",
+            "context_memory_mode",
+            "context_screenshot",
+            "tool_overrides",
+        }
+        tools_buttons = [
+            b for b in dialog.findChildren(QPushButton) if b.text() == "Allowed tools…"
+        ]
+        # One per caller block plus one for the voice block.
+        assert len(tools_buttons) == len(dialog._caller_blocks) + 1
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+def test_reset_keybinds_page_includes_voice_keys():
+    from ui.settings_panel.dialog import SettingsDialog
+
+    env = {
+        "VOICE_TOOLS": "x:on",
+        "VOICE_CONTEXT_BROWSER_MODE": "model",
+        "CALLER_1_TOOLS": "y:model",
+    }
+    keys = SettingsDialog._reset_env_keys_for_page("Keybinds", env)
+    assert {
+        "VOICE_TOOLS",
+        "VOICE_CONTEXT_BROWSER_MODE",
+        "CALLER_1_TOOLS",
+        "HOTKEY_VOICE",
+    } <= keys
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_tool_access_dialog_round_trips_overrides():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from ui.settings_panel.tool_access import ToolAccessDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dlg = ToolAccessDialog(
+        method_label="Test",
+        overrides={"github_repo": "off"},
+        governed_modes={
+            "Open docs": "auto",
+            "Browser/Web": "off",
+            "Git/GitHub": "model",
+            "Memory": "model",
+            "Screenshot": "off",
+        },
+    )
+
+    try:
+        combos = dlg._combos
+        # Every context tool gets its own selector now.
+        assert {
+            "web_search", "get_context", "git_status", "git_diff",
+            "github_repo", "github_issue", "memory_search", "capture_screen",
+        } <= set(combos)
+        # Defaults follow the dropdowns: Git/GitHub + Memory are "Let model
+        # decide"; a stored override (github_repo: off) wins over that.
+        assert combos["git_status"].currentData() == "model"
+        assert combos["memory_search"].currentData() == "model"
+        assert combos["github_repo"].currentData() == "off"
+        assert combos["web_search"].currentData() == "off"
+
+        # A selector left matching its dropdown default stores nothing; the
+        # explicit deviations round-trip.
+        combos["web_search"].setCurrentIndex(combos["web_search"].findData("on"))
+        result = dlg.selected_overrides()
+        assert result["web_search"] == "on"
+        assert result["github_repo"] == "off"
+        assert "git_status" not in result
+        assert "memory_search" not in result
+    finally:
+        dlg.deleteLater()
+        app.processEvents()
+
+
+def test_bubble_hide_delay_seconds_round_trip():
+    from ui.settings_panel.dialog import _ms_to_seconds_str, _seconds_str_to_ms
+
+    assert _ms_to_seconds_str("3500", 3500) == "3.5"
+    assert _ms_to_seconds_str("8000", 3500) == "8"
+    assert _ms_to_seconds_str("garbage", 3500) == "3.5"
+    assert _seconds_str_to_ms("3.5", 3500) == "3500"
+    assert _seconds_str_to_ms("8", 3500) == "8000"
+    assert _seconds_str_to_ms("0.1", 3500) == "500"  # clamped to the 0.5s floor
+    assert _seconds_str_to_ms("garbage", 3500) == "3500"

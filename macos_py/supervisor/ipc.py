@@ -140,7 +140,10 @@ class WorkerClient:
                         log_file.flush()
                     except Exception:
                         pass
-                log.debug("[%s] %s", self.spec.name, line)
+                if line.startswith("[plugin]") or line.startswith("[plugin:"):
+                    log.info("[%s] %s", self.spec.name, line)
+                else:
+                    log.debug("[%s] %s", self.spec.name, line)
         if log_file is not None:
             log_file.close()
 

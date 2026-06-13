@@ -12,6 +12,7 @@ SECURITY: Mods run in-process with full Python access. Only install mods you tru
 from __future__ import annotations
 
 import datetime
+import sys
 from pathlib import Path
 
 from core.plugin_manager import plugin_setting
@@ -30,7 +31,7 @@ def _log(event: str) -> None:
             f.write(line)
     except Exception:
         pass
-    print(f"{_prefix()} {event}", flush=True)
+    print(f"[plugin:healthcheck] {_prefix()} {event}", file=sys.stderr, flush=True)
 
 
 def get_settings() -> list[dict]:

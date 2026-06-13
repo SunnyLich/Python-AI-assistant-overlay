@@ -19,6 +19,7 @@ IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform == "win32"
 _emit: Callable[[str, Any, Any], None] | None = None
 _hotkeys = None
+_last_context_window_debug: dict[str, Any] = {}
 
 
 class _HotkeyHelper:
@@ -249,16 +250,178 @@ def permissions_snapshot() -> dict[str, Any]:
     }
 
 
+def _win_window_pid(hwnd: int) -> int:
+    if not IS_WIN or not hwnd:
+        return 0
+    try:
+        import ctypes
+
+        pid = ctypes.c_ulong()
+        ctypes.windll.user32.GetWindowThreadProcessId(int(hwnd), ctypes.byref(pid))
+        return int(pid.value or 0)
+    except Exception:
+        return 0
+
+
+def _win_window_title(hwnd: int) -> str:
+    if not IS_WIN or not hwnd:
+        return ""
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        length = user32.GetWindowTextLengthW(int(hwnd))
+        if length <= 0:
+            return ""
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(int(hwnd), buf, length + 1)
+        return str(buf.value or "")
+    except Exception:
+        return ""
+
+
+def _win_process_name(pid: int) -> str:
+    if not IS_WIN or pid <= 0:
+        return ""
+    try:
+        import psutil  # type: ignore
+
+        return str(psutil.Process(pid).name() or "")
+    except Exception:
+        return ""
+
+
+def _win_is_wisp_ui_window(hwnd: int) -> bool:
+    pid = _win_window_pid(hwnd)
+    title = _win_window_title(hwnd).strip().lower()
+    proc = _win_process_name(pid).strip().lower()
+    if pid == os.getpid():
+        return True
+    if proc == "wisp.exe":
+        return True
+    if proc in {"python.exe", "pythonw.exe"} and title in {"wisp", "wisp settings", "wisp memory"}:
+        return True
+    return False
+
+
+def _win_is_external_context_window(hwnd: int) -> bool:
+    if not IS_WIN or not hwnd:
+        return False
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        hwnd = int(hwnd)
+        if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd):
+            return False
+        if _win_is_wisp_ui_window(hwnd):
+            return False
+        return bool(_win_window_title(hwnd).strip())
+    except Exception:
+        return False
+
+
+def _win_find_external_context_window(start_hwnd: int) -> int:
+    if not IS_WIN:
+        return 0
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        gw_hwndnext = 2
+        hwnd = user32.GetWindow(int(start_hwnd or 0), gw_hwndnext) if start_hwnd else 0
+        if not hwnd:
+            hwnd = user32.GetTopWindow(0)
+        seen: set[int] = set()
+        while hwnd and len(seen) < 200:
+            hwnd_i = int(hwnd)
+            if hwnd_i in seen:
+                break
+            seen.add(hwnd_i)
+            if _win_is_external_context_window(hwnd_i):
+                return hwnd_i
+            hwnd = user32.GetWindow(hwnd_i, gw_hwndnext)
+    except Exception:
+        return 0
+    return 0
+
+
+def _win_context_window_id(raw_hwnd: int = 0) -> int:
+    global _last_context_window_debug
+    if not IS_WIN:
+        _last_context_window_debug = {}
+        return int(raw_hwnd or 0)
+    if not raw_hwnd:
+        try:
+            import ctypes
+
+            raw_hwnd = int(ctypes.windll.user32.GetForegroundWindow() or 0)
+        except Exception:
+            raw_hwnd = 0
+    _last_context_window_debug = {
+        "raw_hwnd": int(raw_hwnd or 0),
+        "raw_title": _win_window_title(raw_hwnd),
+        "raw_pid": _win_window_pid(raw_hwnd),
+        "raw_process": _win_process_name(_win_window_pid(raw_hwnd)),
+        "corrected": False,
+        "chosen_hwnd": int(raw_hwnd or 0),
+        "chosen_title": _win_window_title(raw_hwnd),
+        "chosen_pid": _win_window_pid(raw_hwnd),
+        "chosen_process": _win_process_name(_win_window_pid(raw_hwnd)),
+    }
+    if raw_hwnd and _win_is_external_context_window(raw_hwnd):
+        return int(raw_hwnd)
+    replacement = _win_find_external_context_window(raw_hwnd)
+    if replacement:
+        _last_context_window_debug.update(
+            {
+                "corrected": True,
+                "chosen_hwnd": int(replacement),
+                "chosen_title": _win_window_title(replacement),
+                "chosen_pid": _win_window_pid(replacement),
+                "chosen_process": _win_process_name(_win_window_pid(replacement)),
+            }
+        )
+        print(
+            "[context.snapshot] corrected foreground "
+            f"raw_hwnd={raw_hwnd} raw_title={_win_window_title(raw_hwnd)!r} "
+            f"-> hwnd={replacement} title={_win_window_title(replacement)!r}",
+            flush=True,
+        )
+        return int(replacement)
+    return int(raw_hwnd or 0)
+
+
+def _runtime_debug() -> dict[str, Any]:
+    debug = {
+        "cwd": os.getcwd(),
+        "repo_root": str(repo_root()),
+        "executable": sys.executable,
+        "platform": sys.platform,
+    }
+    try:
+        import config
+
+        debug["config_file"] = str(getattr(config, "__file__", "") or "")
+        debug["env_file"] = str(getattr(config, "_ENV_FILE", "") or "")
+    except Exception as exc:
+        debug["config_error"] = f"{type(exc).__name__}: {exc}"
+    return debug
+
+
 def _active_app() -> dict[str, Any]:
     if not IS_MAC:
         try:
             from core.platform_utils import (
-                get_foreground_window,
                 get_window_pid,
                 get_window_title,
             )
 
-            wid = int(get_foreground_window() or 0)
+            wid = _win_context_window_id() if IS_WIN else 0
+            if not wid:
+                from core.platform_utils import get_foreground_window
+
+                wid = int(get_foreground_window() or 0)
             return {
                 "name": get_window_title(wid),
                 "bundle_id": "",
@@ -365,6 +528,7 @@ def context_snapshot(
     include_clipboard: bool = True,
     include_selection: bool = True,
     include_browser_content: bool = False,
+    include_browser_url: bool = False,
     capture_focus: bool = False,
 ) -> dict[str, Any]:
     t0 = time.monotonic()
@@ -376,9 +540,14 @@ def context_snapshot(
         "selected_text": "",
         "clipboard_text": "",
         "browser_url": "",
+        "browser_hwnd": 0,
         "browser_content": "",
         "focus_token": 0,
         "captured_at": time.time(),
+        "debug": {
+            "runtime": _runtime_debug(),
+            "window": dict(_last_context_window_debug),
+        },
     }
     # Grab the focused text element first (before selection/clipboard work), while
     # the user's field is still focused, so a later rewrite can be written back
@@ -397,22 +566,73 @@ def context_snapshot(
     if include_browser_content:
         _s = time.monotonic()
         try:
-            from core.context_fetcher import fetch_and_save
+            from core.context_fetcher import _browser_content, get_browser_window_for_context
 
-            browser_snapshot = fetch_and_save(fetch_browser_content=True)
-            active_window = getattr(browser_snapshot, "active_window", None)
-            snapshot["browser_url"] = getattr(active_window, "url", "") if active_window else ""
-            snapshot["browser_content"] = getattr(browser_snapshot, "browser_content", "") or ""
+            active_hwnd = int(active.get("window_id") or 0) if IS_WIN else None
+            browser_window = get_browser_window_for_context(active_hwnd or 0)
+            snapshot["browser_url"] = getattr(browser_window, "url", "") or ""
+            snapshot["browser_hwnd"] = int(getattr(browser_window, "hwnd", 0) or 0)
+            snapshot["browser_content"] = _browser_content(browser_window) if browser_window.hwnd or browser_window.url else ""
+            snapshot["debug"]["browser_window"] = {
+                "title": getattr(browser_window, "title", ""),
+                "process_name": getattr(browser_window, "process_name", ""),
+                "pid": getattr(browser_window, "pid", 0),
+                "hwnd": getattr(browser_window, "hwnd", 0),
+                "url": getattr(browser_window, "url", ""),
+            }
         except Exception as exc:  # noqa: BLE001 - browser context should not block answering
+            snapshot["browser_error"] = f"{type(exc).__name__}: {exc}"
+        br_dt = time.monotonic() - _s
+    elif include_browser_url and not IS_MAC:
+        # Cheap URL + window-handle grab while the browser is still foreground
+        # (hotkey time). The page text itself is fetched later via
+        # native.context.browser_content, which reads the window by handle and
+        # therefore does not care that focus has moved to the picker by then.
+        _s = time.monotonic()
+        try:
+            from core.context_fetcher import get_browser_window_for_context
+
+            active_hwnd = int(active.get("window_id") or 0)
+            win = get_browser_window_for_context(active_hwnd)
+            snapshot["debug"]["browser_window"] = {
+                "title": getattr(win, "title", ""),
+                "process_name": getattr(win, "process_name", ""),
+                "pid": getattr(win, "pid", 0),
+                "hwnd": getattr(win, "hwnd", 0),
+                "url": getattr(win, "url", ""),
+            }
+            if win.url:
+                snapshot["browser_url"] = win.url
+            if win.hwnd:
+                snapshot["browser_hwnd"] = int(win.hwnd or 0)
+        except Exception as exc:  # noqa: BLE001 - browser context should not block the picker
             snapshot["browser_error"] = f"{type(exc).__name__}: {exc}"
         br_dt = time.monotonic() - _s
     print(
         f"[context.snapshot] active_app={t_app - t0:.2f}s selected={sel_dt:.2f}s "
         f"clipboard={clip_dt:.2f}s browser={br_dt:.2f}s total={time.monotonic() - t0:.2f}s "
-        f"(sel_len={len(snapshot['selected_text'])})",
+        f"(app={active.get('name')!r} hwnd={active.get('window_id') or 0} "
+        f"sel_len={len(snapshot['selected_text'])} url={'y' if snapshot['browser_url'] else 'n'})",
         flush=True,
     )
     return snapshot
+
+
+def context_browser_content(url: str = "", hwnd: int = 0) -> dict[str, Any]:
+    """Read the page text for a browser window captured at hotkey time.
+
+    Reads the rendered window by handle first (works even when the browser is
+    no longer foreground — UIA does not need focus), then falls back to an
+    HTTP fetch of the URL. Returns {"url", "content"}.
+    """
+    try:
+        from core.context_fetcher import WindowInfo, _browser_content
+
+        win = WindowInfo(url=str(url or ""), hwnd=int(hwnd or 0))
+        content = _browser_content(win)
+        return {"url": win.url, "content": content or "", "hwnd": int(hwnd or 0)}
+    except Exception as exc:  # noqa: BLE001 - browser context should not block answering
+        return {"url": url, "content": "", "hwnd": int(hwnd or 0), "error": f"{type(exc).__name__}: {exc}"}
 
 
 def capture_fullscreen(path: str = "") -> dict[str, Any]:
@@ -426,13 +646,21 @@ def capture_fullscreen(path: str = "") -> dict[str, Any]:
 
             img = get_screen_snippet()
             img.save(path, format="PNG")
-            return {"ok": True, "path": path}
+            return {
+                "ok": True,
+                "path": path,
+                "size": os.path.getsize(path) if os.path.exists(path) else 0,
+            }
         except Exception as exc:  # noqa: BLE001 - surface capture failure to caller
             return {"ok": False, "path": path, "error": f"{type(exc).__name__}: {exc}"}
     from core.platform import macos_native
 
     ok = macos_native.capture_screen_to_file(path)
-    return {"ok": ok, "path": path}
+    return {
+        "ok": ok,
+        "path": path,
+        "size": os.path.getsize(path) if os.path.exists(path) else 0,
+    }
 
 
 def _normalize_region(region: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -803,6 +1031,7 @@ HANDLERS = {
     "native.hotkeys.start": hotkeys_start,
     "native.hotkeys.stop": hotkeys_stop,
     "native.context.snapshot": context_snapshot,
+    "native.context.browser_content": context_browser_content,
     "native.capture.fullscreen": capture_fullscreen,
     "native.capture.region": capture_region,
     "native.clipboard.get": clipboard_get,

@@ -73,8 +73,9 @@ def build_context(
          document paths are read and labelled; anything else is appended verbatim
       3. clipboard text (only when the caller opted in, i.e. clipboard_text set)
       4. selected text
-    The active document is appended to ambient context only when no screenshot
-    is present, since a vision query already carries its own context.
+    The active document is appended to ambient context whenever the caller
+    provided it — including alongside a screenshot, which shows pixels but not
+    the document text the user explicitly enabled.
     """
     if read_document_file is None:
         from core.llm_clients.client import read_document_file as _rdf
@@ -107,7 +108,7 @@ def build_context(
         )
         ambient_ctx = f"{ambient_ctx}\n\n---\n{ctx_block}" if ambient_ctx else ctx_block
 
-    if inp.active_document_text and not screenshot_b64:
+    if inp.active_document_text:
         ambient_ctx = (
             f"{ambient_ctx}\n\n---\n[Active document]\n{inp.active_document_text}"
             if ambient_ctx

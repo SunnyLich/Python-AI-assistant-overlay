@@ -74,6 +74,7 @@ class FlowController:
         self._lock = threading.RLock()
         self._pending: PendingInvocation | None = None
         self._voice_context: dict[str, Any] = {}
+        self._voice_screenshot_b64: str | None = None
         self._voice_active = False
         self._generation = itertools.count(1)
         self._current_generation = 0
@@ -266,7 +267,10 @@ class FlowController:
         text = str((data or {}).get("text") or "")
         if text:
             self._last_reply = text
-        self._safe_call(self.ui, "ui.reply.done", timeout=30.0)
+        # flush=False: the LLM finished streaming but no audio will pace the
+        # bubble (this path only runs with TTS off) — let the WPM reveal drain
+        # at BUBBLE_REVEAL_WPM instead of slamming the full reply in at once.
+        self._safe_call(self.ui, "ui.reply.done", {"flush": False}, timeout=30.0)
         self._safe_call(self.ui, "ui.overlay.state", {"state": "idle"}, timeout=30.0)
 
     def _forward_agent_event(self, event_name: str):
@@ -300,6 +304,7 @@ class FlowController:
         t0 = time.monotonic()
         self._reload_supervisor_config_if_changed()
         caller = self._caller(caller_idx)
+        self._log_caller_runtime(caller_idx, caller)
         self._new_generation()
         # Silence any in-progress speech, but don't block the picker waiting for
         # it — audio.stop just flips a flag in the audio worker.
@@ -308,10 +313,9 @@ class FlowController:
         t_ctx = time.monotonic()
         screenshot_b64 = None
         screenshot_tool_b64 = None
-        screenshot_mode = caller.get("context_screenshot")
-        if screenshot_mode == "auto":
+        if caller.get("context_screenshot") == "auto":
             screenshot_b64 = self._capture_fullscreen_b64()
-        elif screenshot_mode == "model":
+        elif self._screenshot_tool_allowed(caller):
             screenshot_tool_b64 = self._capture_model_tool_b64()
         t_shot = time.monotonic()
         active_app = context.get("active_app") if isinstance(context.get("active_app"), dict) else {}
@@ -330,9 +334,14 @@ class FlowController:
         )
         with self._lock:
             self._pending = pending
-        # Show the picker FIRST. It must never wait on cosmetic UI state, so the
-        # doll "listening" animation is fired afterwards without blocking.
-        self.ui.call("ui.show_intent", {"caller_idx": caller_idx}, timeout=30.0)
+        # Show the picker first and do not wait for the UI worker's ack. Some
+        # document apps can make the UI process slow to respond; the hotkey path
+        # should not sit orange before the picker appears.
+        self._fire(
+            self.ui,
+            "ui.show_intent",
+            {"caller_idx": caller_idx, "target_hwnd": target_id},
+        )
         t_show = time.monotonic()
         self._fire(self.ui, "ui.overlay.state", {"state": "listening"})
         log.info(
@@ -424,11 +433,19 @@ class FlowController:
             return
         self._voice_active = True
         self._new_generation()
+        caller = self._voice_caller()
         self._safe_call(self.audio, "audio.stop", timeout=5.0)
-        self._voice_context = self._context_snapshot(self._caller(0))
+        # include_browser=False keeps a slow page fetch off the record-start
+        # path; _brain_query_params fetches it lazily at query time instead.
+        self._voice_context = self._context_snapshot(caller, include_browser=False)
         self.audio.call("audio.record.start", timeout=20.0)
         self._safe_call(self.ui, "ui.overlay.state", {"state": "listening"}, timeout=30.0)
         self._safe_call(self.ui, "ui.reply.listening", timeout=30.0)
+        # Capture AFTER recording starts so the screenshot overlaps the speech
+        # instead of delaying the record start.
+        self._voice_screenshot_b64 = None
+        if caller.get("context_screenshot") == "auto":
+            self._voice_screenshot_b64 = self._capture_fullscreen_b64()
 
     def voice_stop(self) -> None:
         if not self._voice_active:
@@ -439,7 +456,13 @@ class FlowController:
         if not text:
             self._set_idle()
             return
-        pending = PendingInvocation(caller_idx=0, caller=self._caller(0), context=self._voice_context)
+        pending = PendingInvocation(
+            caller_idx=0,
+            caller=self._voice_caller(),
+            context=self._voice_context,
+            screenshot_b64=self._voice_screenshot_b64,
+        )
+        self._voice_screenshot_b64 = None
         self._query(text, pending)
 
     def reload_settings(self) -> None:
@@ -980,6 +1003,15 @@ class FlowController:
             return dict(rows[caller_idx])
         return {}
 
+    def _voice_caller(self) -> dict[str, Any]:
+        """Context/tool config for push-to-talk; falls back to caller 1's row."""
+        import config
+
+        voice = getattr(config, "VOICE_CALLER", None)
+        if isinstance(voice, dict) and voice:
+            return dict(voice)
+        return self._caller(0)
+
     @staticmethod
     def _current_config_mtime() -> float | None:
         try:
@@ -1005,23 +1037,96 @@ class FlowController:
 
         return getattr(config, name, default)
 
+    def _log_caller_runtime(self, caller_idx: int, caller: dict[str, Any]) -> None:
+        try:
+            import config
+
+            log.info(
+                "caller %d config label=%r hotkey=%r ambient=%s docs=%s browser=%s memory=%s "
+                "screenshot=%r clipboard=%s paste_back=%s cwd=%r config_file=%r env_file=%r",
+                caller_idx,
+                caller.get("label"),
+                caller.get("hotkey"),
+                caller.get("context_ambient"),
+                self._context_mode(caller, "documents"),
+                self._context_mode(caller, "browser"),
+                self._context_mode(caller, "memory"),
+                caller.get("context_screenshot"),
+                caller.get("context_clipboard"),
+                caller.get("paste_back"),
+                str(Path.cwd()),
+                str(getattr(config, "__file__", "") or ""),
+                str(getattr(config, "_ENV_FILE", "") or ""),
+            )
+        except Exception:
+            log.exception("caller runtime logging failed")
+
     def _context_snapshot(self, caller: dict[str, Any], *, include_browser: bool = True) -> dict[str, Any]:
         # The browser-page fetch is a ~2-3s network read (requests.get). Keep it
         # OFF the hotkey -> picker path (include_browser=False) and fetch it lazily
-        # at query time instead, where it overlaps the LLM round-trip. The page
-        # fetch is by URL (HTTP), so it doesn't need the browser to stay foreground.
-        return self.native.call(
+        # at query time instead, where it overlaps the LLM round-trip. The URL and
+        # window handle ARE captured now, while the browser is still foreground —
+        # by query time the picker has stolen focus and re-detection would fail.
+        browser_auto = self._context_mode(caller, "browser") == "auto"
+        snapshot = self.native.call(
             "native.context.snapshot",
             {
                 "include_clipboard": bool(caller.get("context_clipboard", False)),
                 "include_selection": True,
-                "include_browser_content": include_browser and self._context_mode(caller, "browser") == "auto",
+                "include_browser_content": include_browser and browser_auto,
+                "include_browser_url": browser_auto,
                 # Paste-back callers capture the focused text element so the rewrite
                 # can be written back in place (AX) without refocusing the app.
                 "capture_focus": bool(caller.get("paste_back")),
             },
             timeout=30.0,
         ) or {}
+        active_app = snapshot.get("active_app") if isinstance(snapshot.get("active_app"), dict) else {}
+        debug = snapshot.get("debug") if isinstance(snapshot.get("debug"), dict) else {}
+        runtime_debug = debug.get("runtime") if isinstance(debug.get("runtime"), dict) else {}
+        window_debug = debug.get("window") if isinstance(debug.get("window"), dict) else {}
+        browser_window = debug.get("browser_window") if isinstance(debug.get("browser_window"), dict) else {}
+        log.info(
+            "context snapshot active=%r hwnd=%s browser_url=%s browser_hwnd=%s browser_chars=%d",
+            active_app.get("name"),
+            active_app.get("window_id") or active_app.get("pid") or 0,
+            "y" if snapshot.get("browser_url") else "n",
+            snapshot.get("browser_hwnd") or 0,
+            len(str(snapshot.get("browser_content") or "")),
+        )
+        log.info(
+            "context runtime cwd=%r repo=%r exe=%r config_file=%r env_file=%r",
+            runtime_debug.get("cwd"),
+            runtime_debug.get("repo_root"),
+            runtime_debug.get("executable"),
+            runtime_debug.get("config_file"),
+            runtime_debug.get("env_file"),
+        )
+        log.info(
+            "context foreground raw_hwnd=%s raw_pid=%s raw_process=%r raw_title=%r "
+            "corrected=%s chosen_hwnd=%s chosen_pid=%s chosen_process=%r chosen_title=%r",
+            window_debug.get("raw_hwnd"),
+            window_debug.get("raw_pid"),
+            window_debug.get("raw_process"),
+            window_debug.get("raw_title"),
+            window_debug.get("corrected"),
+            window_debug.get("chosen_hwnd"),
+            window_debug.get("chosen_pid"),
+            window_debug.get("chosen_process"),
+            window_debug.get("chosen_title"),
+        )
+        if browser_window:
+            log.info(
+                "context browser window hwnd=%s pid=%s process=%r title=%r url=%r",
+                browser_window.get("hwnd"),
+                browser_window.get("pid"),
+                browser_window.get("process_name"),
+                browser_window.get("title"),
+                browser_window.get("url"),
+            )
+        if snapshot.get("browser_error"):
+            log.warning("context browser error: %s", snapshot.get("browser_error"))
+        return snapshot
 
     def _fetch_browser_snapshot(self) -> dict[str, Any]:
         """Fetch just the active browser tab's URL + page content — the deferred,
@@ -1043,12 +1148,40 @@ class FlowController:
         buffered_items, drop_items = self._consume_context_extras()
         screenshot_b64 = pending.screenshot_b64
         screenshot_tool_b64: str | None = pending.screenshot_tool_b64
-        allow_screenshot_tool = caller.get("context_screenshot") == "model"
+        allow_screenshot_tool = self._screenshot_tool_allowed(caller)
         if allow_screenshot_tool and screenshot_tool_b64 is None:
             screenshot_tool_b64 = self._capture_model_tool_b64()
         allowed_tools = self._allowed_model_tools(caller)
+        pinned_tools = self._pinned_model_tools(caller)
         frontload_tools = self._frontloaded_model_tools(caller)
         memory_mode = self._context_mode(caller, "memory")
+        include_active_document = self._context_mode(caller, "documents") == "auto"
+        active_document_text = ""
+        if include_active_document:
+            active_app = context.get("active_app") if isinstance(context.get("active_app"), dict) else {}
+            debug = context.get("debug") if isinstance(context.get("debug"), dict) else {}
+            window_debug = debug.get("window") if isinstance(debug.get("window"), dict) else {}
+            active_window = {
+                "title": active_app.get("name") or window_debug.get("chosen_title") or window_debug.get("raw_title") or "",
+                "process_name": window_debug.get("chosen_process") or window_debug.get("raw_process") or "",
+                "pid": active_app.get("pid") or window_debug.get("chosen_pid") or window_debug.get("raw_pid") or 0,
+                "window_id": active_app.get("window_id") or window_debug.get("chosen_hwnd") or window_debug.get("raw_hwnd") or 0,
+            }
+            result = self._safe_call(
+                self.brain,
+                "brain.context.active_document",
+                {"active_window": active_window},
+                timeout=15.0,
+            ) or {}
+            if isinstance(result, dict):
+                active_document_text = str(result.get("text") or "")
+            doc_debug = result.get("debug") if isinstance(result, dict) else None
+            log.info(
+                "active document context chars=%d debug=%r error=%r",
+                len(active_document_text),
+                doc_debug,
+                result.get("error") if isinstance(result, dict) else None,
+            )
         if caller.get("context_ambient", True):
             active_app = context.get("active_app")
             if isinstance(active_app, dict) and active_app.get("name"):
@@ -1058,14 +1191,44 @@ class FlowController:
         if self._context_mode(caller, "browser") == "auto":
             browser_bits: list[str] = []
             browser_url = str(context.get("browser_url") or "").strip()
+            browser_hwnd = int(context.get("browser_hwnd") or 0)
             browser_content = str(context.get("browser_content") or "").strip()
-            if not browser_url and not browser_content:
-                # Deferred from begin_caller to keep it off the picker path. The
-                # overlay is closed by now, so the browser is foreground again and
-                # the page fetch (HTTP by URL) runs here, under the LLM latency.
+            if (browser_url or browser_hwnd) and not browser_content:
+                # URL + window handle were captured at hotkey time while the
+                # browser was foreground; read the page now (deferred off the
+                # picker path). The window read is by handle, so it still works
+                # with the picker/overlay holding focus.
+                result = self._safe_call(
+                    self.native,
+                    "native.context.browser_content",
+                    {
+                        "url": browser_url,
+                        "hwnd": browser_hwnd,
+                    },
+                    timeout=30.0,
+                ) or {}
+                browser_content = str(result.get("content") or "").strip()
+                log.info(
+                    "browser context by captured hwnd url=%r hwnd=%s chars=%d error=%r",
+                    browser_url,
+                    browser_hwnd,
+                    len(browser_content),
+                    result.get("error") if isinstance(result, dict) else None,
+                )
+            elif not browser_url and not browser_content:
+                # No URL captured at hotkey time (e.g. older snapshot shape).
+                # Last resort: re-detect the foreground browser now. Prone to the
+                # focus race, but better than nothing.
                 fetched = self._fetch_browser_snapshot()
                 browser_url = str(fetched.get("browser_url") or "").strip()
                 browser_content = str(fetched.get("browser_content") or "").strip()
+                log.info(
+                    "browser context fallback snapshot url=%s hwnd=%s chars=%d error=%r",
+                    "y" if browser_url else "n",
+                    fetched.get("browser_hwnd") or 0,
+                    len(browser_content),
+                    fetched.get("browser_error"),
+                )
             if browser_url:
                 browser_bits.append(f"URL: {browser_url}")
             if browser_content:
@@ -1094,6 +1257,7 @@ class FlowController:
             drop_items=drop_items,
             clipboard_text=str(context.get("clipboard_text") or "") if caller.get("context_clipboard") else "",
             ambient_text="\n\n".join(ambient_parts),
+            active_document_text=active_document_text,
         )
         return {
             "intent_prompt": prompt,
@@ -1103,10 +1267,12 @@ class FlowController:
             "memory_enabled": memory_mode == "auto",
             "use_tools": bool(allowed_tools),
             "allowed_tools": allowed_tools,
+            "pinned_tools": pinned_tools,
             "frontload_tools": frontload_tools,
             "allow_screenshot_tool": allow_screenshot_tool,
             "screenshot_tool_b64": screenshot_tool_b64,
-            "include_active_document": self._context_mode(caller, "documents") == "auto",
+            "include_active_document": include_active_document and not active_document_text,
+            "active_document_text": active_document_text,
             "_ui_context_summary": summary,
         }
 
@@ -1137,13 +1303,92 @@ class FlowController:
             allowed.extend(["git_status", "git_diff", "github_repo", "github_issue"])
         if self._context_mode(caller, "memory") == "model":
             allowed.append("memory_search")
+        overrides = self._tool_overrides(caller)
+        for name, mode in overrides.items():
+            if mode != "off" and name not in allowed:
+                allowed.append(name)
+        # Per-tool "off" beats whatever a context dropdown granted. A plain
+        # get_context override covers both of its dotted source entries.
+        removed = {name for name, mode in overrides.items() if mode == "off"}
+        if removed:
+            allowed = [
+                name
+                for name in allowed
+                if name not in removed
+                and not (name.startswith("get_context.") and "get_context" in removed)
+            ]
         return allowed
+
+    def _pinned_model_tools(self, caller: dict[str, Any]) -> list[str]:
+        """Tools always offered to the model, bypassing prompt keyword filters.
+
+        Context dropdowns in "model" mode mean "offer the tool schema and let
+        the model decide whether to call it." The allow-list uses dotted source
+        grants like ``get_context.browser``, but the actual schema is named
+        ``get_context``, so pin the schema name here.
+        """
+        pinned: list[str] = []
+        if self._context_mode(caller, "documents") == "model":
+            pinned.append("get_context")
+        if self._context_mode(caller, "browser") == "model":
+            pinned.extend(["web_search", "get_context"])
+        if self._context_mode(caller, "github") == "model":
+            pinned.extend(["git_status", "git_diff", "github_repo", "github_issue"])
+        if self._context_mode(caller, "memory") == "model":
+            pinned.append("memory_search")
+        overrides = self._tool_overrides(caller)
+        pinned.extend(name for name, mode in overrides.items() if mode == "on")
+        removed = {name for name, mode in overrides.items() if mode == "off"}
+        allowed = set(self._allowed_model_tools(caller))
+        result: list[str] = []
+        for name in pinned:
+            if name == "get_context":
+                if not ({"get_context", "get_context.browser", "get_context.documents"} & allowed):
+                    continue
+            elif name not in allowed:
+                continue
+            if name in removed:
+                continue
+            if name == "get_context" and (
+                "get_context" in removed
+                or (
+                    "get_context.browser" in removed
+                    and "get_context.documents" in removed
+                )
+            ):
+                continue
+            if name not in result:
+                result.append(name)
+        return result
+
+    def _screenshot_tool_allowed(self, caller: dict[str, Any]) -> bool:
+        """Whether capture_screen is exposed: the Screenshot dropdown's "model"
+        mode, overridable per-tool from the Allowed Tools list (auto-capture
+        stays dropdown-governed)."""
+        override = self._tool_overrides(caller).get("capture_screen")
+        if override == "off":
+            return False
+        if override in {"on", "model"}:
+            return True
+        return caller.get("context_screenshot") == "model"
+
+    @staticmethod
+    def _tool_overrides(caller: dict[str, Any]) -> dict[str, str]:
+        overrides = caller.get("tools")
+        if not isinstance(overrides, dict):
+            return {}
+        return {
+            str(name): str(mode).strip().lower()
+            for name, mode in overrides.items()
+            if str(mode).strip().lower() in {"on", "model", "off"}
+        }
 
     def _frontloaded_model_tools(self, caller: dict[str, Any]) -> list[str]:
         frontload: list[str] = []
         if self._context_mode(caller, "github") == "auto":
             frontload.extend(["git_status", "git_diff"])
-        return frontload
+        overrides = self._tool_overrides(caller)
+        return [name for name in frontload if overrides.get(name) != "off"]
 
     def _consume_context_extras(self) -> tuple[list[str], list[dict[str, Any]]]:
         buffered = list(self._context_buffer)
@@ -1201,6 +1446,7 @@ class FlowController:
         drop_items: list[dict[str, Any]],
         clipboard_text: str,
         ambient_text: str,
+        active_document_text: str,
     ) -> list[dict[str, str]]:
         items: list[dict[str, str]] = []
         if screenshot_b64:
@@ -1218,14 +1464,30 @@ class FlowController:
             items.append({"label": self._short(buffered, 24), "type": "text"})
         if clipboard_text:
             items.append({"label": f"Clipboard - {self._short(clipboard_text, 14)}", "type": "text"})
-        if ambient_text:
+        if active_document_text:
+            items.append({"label": "Active document", "type": "file"})
+        if "[Browser/Web]" in (ambient_text or ""):
+            items.append({"label": "Browser/Web", "type": "file"})
+        ambient_without_browser = (ambient_text or "").replace("[Browser/Web]", "").strip()
+        if ambient_without_browser:
             items.append({"label": "Window context", "type": "file"})
         return items[:8]
 
     def _capture_fullscreen_b64(self) -> str | None:
+        started = time.monotonic()
         result = self.native.call("native.capture.fullscreen", timeout=30.0)
         path = result.get("path") if isinstance(result, dict) else ""
-        return self._file_b64(path) if path else None
+        image_b64 = self._file_b64(path) if path else None
+        log.info(
+            "auto screenshot capture ok=%s path=%r size=%s b64_chars=%d error=%r after %.2fs",
+            result.get("ok") if isinstance(result, dict) else None,
+            path,
+            result.get("size") if isinstance(result, dict) else None,
+            len(image_b64 or ""),
+            result.get("error") if isinstance(result, dict) else None,
+            time.monotonic() - started,
+        )
+        return image_b64
 
     def _capture_model_tool_b64(self) -> str:
         started = time.monotonic()
@@ -1237,8 +1499,11 @@ class FlowController:
         path = result.get("path") if isinstance(result, dict) else ""
         image_b64 = self._file_b64(path) or ""
         log.info(
-            "model screenshot pre-capture %s after %.2fs",
+            "model screenshot pre-capture %s path=%r size=%s error=%r after %.2fs",
             "succeeded" if image_b64 else "returned empty",
+            path,
+            result.get("size") if isinstance(result, dict) else None,
+            result.get("error") if isinstance(result, dict) else None,
             time.monotonic() - started,
         )
         return image_b64

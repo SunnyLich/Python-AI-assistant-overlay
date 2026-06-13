@@ -86,11 +86,13 @@ def test_query_forwards_tool_policy(record_ctx, monkeypatch):
         allowed_tools,
         allow_screenshot_tool,
         screenshot_tool_b64,
+        pinned_tools=None,
     ):
         captured["use_tools"] = use_tools
         captured["allowed_tools"] = allowed_tools
         captured["allow_screenshot_tool"] = allow_screenshot_tool
         captured["screenshot_tool_b64"] = screenshot_tool_b64
+        captured["pinned_tools"] = pinned_tools
         yield "ok"
 
     monkeypatch.setattr(handlers, "_stream_query_reply", fake_stream)
@@ -101,6 +103,7 @@ def test_query_forwards_tool_policy(record_ctx, monkeypatch):
         memory_context="(none)",
         use_tools=True,
         allowed_tools=["get_context.documents"],
+        pinned_tools=["my_tool"],
         allow_screenshot_tool=True,
         screenshot_tool_b64="screen-data",
     )
@@ -112,13 +115,18 @@ def test_query_forwards_tool_policy(record_ctx, monkeypatch):
         "allowed_tools": ["get_context.documents"],
         "allow_screenshot_tool": True,
         "screenshot_tool_b64": "screen-data",
+        "pinned_tools": ["my_tool"],
     }
 
 
 def test_query_includes_active_document_when_requested(record_ctx, monkeypatch):
     from core.llm_clients import client as llm_client
 
-    monkeypatch.setattr(llm_client, "read_active_document_for_context", lambda: "ACTIVE DOC TEXT")
+    monkeypatch.setattr(
+        llm_client,
+        "read_active_document_for_context_with_debug",
+        lambda: ("ACTIVE DOC TEXT", {"paths": ["active.docx"]}),
+    )
 
     events, ctx = record_ctx()
     result = handlers.HANDLERS["brain.query"](
@@ -184,13 +192,16 @@ def test_query_runs_shared_plugin_before_and_after_hooks(record_ctx, monkeypatch
     assert "".join(_chunks(events)) == result["text"]
 
 
-def test_query_skips_active_document_when_screenshot_attached(record_ctx, monkeypatch):
+def test_query_reads_active_document_alongside_screenshot(record_ctx, monkeypatch):
+    # A screenshot must not silently disable the documents setting: the image
+    # shows pixels while the document text carries the actual content.
     from core.llm_clients import client as llm_client
 
-    def fail_read():
-        raise AssertionError("active document should not be read for screenshot query")
-
-    monkeypatch.setattr(llm_client, "read_active_document_for_context", fail_read)
+    monkeypatch.setattr(
+        llm_client,
+        "read_active_document_for_context_with_debug",
+        lambda: ("ACTIVE DOC TEXT", {"paths": ["active.docx"]}),
+    )
 
     events, ctx = record_ctx()
     result = handlers.HANDLERS["brain.query"](
@@ -201,18 +212,22 @@ def test_query_skips_active_document_when_screenshot_attached(record_ctx, monkey
         include_active_document=True,
     )
 
-    assert "ACTIVE DOC" not in result["text"]
+    assert "[Active document]\nACTIVE DOC TEXT" in result["text"]
     assert "".join(_chunks(events)) == result["text"]
 
 
 def test_active_document_context_handler_filters_error_strings(monkeypatch):
     from core.llm_clients import client as llm_client
 
-    monkeypatch.setattr(llm_client, "read_active_document_for_context", lambda: "Failed to read document")
+    monkeypatch.setattr(
+        llm_client,
+        "read_active_document_for_context_with_debug",
+        lambda: ("Failed to read document", {"paths": ["bad.docx"]}),
+    )
 
     result = handlers.HANDLERS["brain.context.active_document"]()
 
-    assert result == {"text": ""}
+    assert result == {"text": "", "debug": {"paths": ["bad.docx"]}}
 
 
 def test_query_precancelled_yields_empty(record_ctx):

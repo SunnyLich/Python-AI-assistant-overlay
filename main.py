@@ -338,6 +338,199 @@ class App(QObject):
             return "model"
         return "off"
 
+    @staticmethod
+    def _window_pid_win(hwnd: int) -> int:
+        if not _IS_WIN or not hwnd:
+            return 0
+        try:
+            import ctypes
+
+            pid = ctypes.c_ulong()
+            ctypes.windll.user32.GetWindowThreadProcessId(int(hwnd), ctypes.byref(pid))
+            return int(pid.value or 0)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _window_title_win(hwnd: int) -> str:
+        if not _IS_WIN or not hwnd:
+            return ""
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            length = user32.GetWindowTextLengthW(int(hwnd))
+            if length <= 0:
+                return ""
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(int(hwnd), buf, length + 1)
+            return str(buf.value or "")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _is_external_context_window_win(hwnd: int) -> bool:
+        if not _IS_WIN or not hwnd:
+            return False
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            hwnd = int(hwnd)
+            if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd):
+                return False
+            if App._window_pid_win(hwnd) == os.getpid():
+                return False
+            return bool(App._window_title_win(hwnd).strip())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _find_external_context_window_win(start_hwnd: int) -> int:
+        if not _IS_WIN:
+            return 0
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            gw_hwndnext = 2
+            hwnd = user32.GetWindow(int(start_hwnd or 0), gw_hwndnext) if start_hwnd else 0
+            if not hwnd:
+                hwnd = user32.GetTopWindow(0)
+            seen: set[int] = set()
+            while hwnd and len(seen) < 200:
+                hwnd_i = int(hwnd)
+                if hwnd_i in seen:
+                    break
+                seen.add(hwnd_i)
+                if App._is_external_context_window_win(hwnd_i):
+                    return hwnd_i
+                hwnd = user32.GetWindow(hwnd_i, gw_hwndnext)
+        except Exception:
+            return 0
+        return 0
+
+    def _context_target_hwnd(self, foreground_hwnd: int) -> int:
+        """Use the real app behind Wisp if Wisp already owns foreground focus."""
+        if not _IS_WIN or not foreground_hwnd:
+            return foreground_hwnd
+        foreground_pid = self._window_pid_win(foreground_hwnd)
+        if foreground_pid and foreground_pid != os.getpid():
+            return foreground_hwnd
+        replacement = self._find_external_context_window_win(foreground_hwnd)
+        if replacement:
+            log.info(
+                "context target corrected raw_hwnd=%s raw_title=%r -> hwnd=%s pid=%s title=%r",
+                foreground_hwnd,
+                self._window_title_win(foreground_hwnd),
+                replacement,
+                self._window_pid_win(replacement),
+                self._window_title_win(replacement),
+            )
+            return replacement
+        return foreground_hwnd
+
+    @staticmethod
+    def _append_context_block(ambient_context: str, extra: str) -> str:
+        extra = (extra or "").strip()
+        if not extra:
+            return ambient_context
+        return f"{ambient_context}\n\n---\n{extra}".strip() if ambient_context else extra
+
+    @staticmethod
+    def _tool_overrides(caller: dict) -> dict[str, str]:
+        overrides = caller.get("tools")
+        if not isinstance(overrides, dict):
+            return {}
+        return {
+            str(name): str(mode).strip().lower()
+            for name, mode in overrides.items()
+            if str(mode).strip().lower() in {"on", "model", "off"}
+        }
+
+    def _allowed_model_tools(self, caller: dict) -> list[str]:
+        allowed: list[str] = []
+        if self._context_mode(caller, "documents") == "model":
+            allowed.append("get_context.documents")
+        if self._context_mode(caller, "browser") == "model":
+            allowed.extend(["web_search", "get_context.browser"])
+        if self._context_mode(caller, "github") == "model":
+            allowed.extend(["git_status", "git_diff", "github_repo", "github_issue"])
+        if self._context_mode(caller, "memory") == "model":
+            allowed.append("memory_search")
+        overrides = self._tool_overrides(caller)
+        for name, mode in overrides.items():
+            if mode != "off" and name not in allowed:
+                allowed.append(name)
+        removed = {name for name, mode in overrides.items() if mode == "off"}
+        if removed:
+            allowed = [
+                name
+                for name in allowed
+                if name not in removed
+                and not (name.startswith("get_context.") and "get_context" in removed)
+            ]
+        return allowed
+
+    def _pinned_model_tools(self, caller: dict) -> list[str]:
+        pinned: list[str] = []
+        if self._context_mode(caller, "documents") == "model":
+            pinned.append("get_context")
+        if self._context_mode(caller, "browser") == "model":
+            pinned.extend(["web_search", "get_context"])
+        if self._context_mode(caller, "github") == "model":
+            pinned.extend(["git_status", "git_diff", "github_repo", "github_issue"])
+        if self._context_mode(caller, "memory") == "model":
+            pinned.append("memory_search")
+        overrides = self._tool_overrides(caller)
+        pinned.extend(name for name, mode in overrides.items() if mode == "on")
+        removed = {name for name, mode in overrides.items() if mode == "off"}
+        allowed = set(self._allowed_model_tools(caller))
+        result: list[str] = []
+        for name in pinned:
+            if name == "get_context":
+                if not ({"get_context", "get_context.browser", "get_context.documents"} & allowed):
+                    continue
+            elif name not in allowed:
+                continue
+            if name in removed:
+                continue
+            if name == "get_context" and (
+                "get_context" in removed
+                or (
+                    "get_context.browser" in removed
+                    and "get_context.documents" in removed
+                )
+            ):
+                continue
+            if name not in result:
+                result.append(name)
+        return result
+
+    def _screenshot_tool_allowed(self, caller: dict) -> bool:
+        override = self._tool_overrides(caller).get("capture_screen")
+        if override == "off":
+            return False
+        if override in {"on", "model"}:
+            return True
+        return caller.get("context_screenshot") == "model"
+
+    @staticmethod
+    def _browser_context_text(snapshot) -> str:
+        active_window = getattr(snapshot, "active_window", None)
+        url = str(getattr(active_window, "url", "") or "").strip()
+        hwnd = int(getattr(active_window, "hwnd", 0) or 0)
+        content = str(getattr(snapshot, "browser_content", "") or "").strip()
+        if not content and (url or hwnd):
+            content = context_fetcher.fetch_browser_content_for_window(url, hwnd)
+        log.info("browser context url=%r hwnd=%s chars=%d", url, hwnd, len(content or ""))
+        bits: list[str] = []
+        if url:
+            bits.append(f"URL: {url}")
+        if content:
+            bits.append(content)
+        return "[Browser/Web]\n" + "\n\n".join(bits) if bits else ""
+
     def _finish_idle(self, gen_id: int) -> None:
         """Return to idle only if this generation is still the active one."""
         if self._generations.is_current(gen_id):
@@ -521,8 +714,23 @@ class App(QObject):
 
         # Save the foreground window ID BEFORE stealing focus so the picker can open
         # on the same monitor and paste-back callers can restore focus correctly.
-        fg_hwnd = get_foreground_window()
+        raw_fg_hwnd = get_foreground_window()
+        fg_hwnd = self._context_target_hwnd(raw_fg_hwnd)
         target_hwnd = fg_hwnd if paste_back else 0
+        try:
+            from core.platform_utils import get_window_pid, get_window_title
+            log.info(
+                "context hotkey target raw_hwnd=%s hwnd=%s pid=%s title=%r modes: docs=%s browser=%s screenshot=%s",
+                raw_fg_hwnd,
+                fg_hwnd,
+                get_window_pid(fg_hwnd),
+                get_window_title(fg_hwnd),
+                self._context_mode(caller, "documents"),
+                self._context_mode(caller, "browser"),
+                caller.get("context_screenshot"),
+            )
+        except Exception:
+            log.exception("context hotkey target logging failed")
 
         if config.ICON_AUTO_HIDE:
             self._signals.show_icon.emit()
@@ -544,7 +752,17 @@ class App(QObject):
         # Emit the picker only after all capture work is complete.
         def _fetch_and_show():
             try:
-                self._pending_context = context_fetcher.fetch_and_save()
+                self._pending_context = context_fetcher.fetch_and_save(active_hwnd=fg_hwnd)
+                win = self._pending_context.active_window
+                log.info(
+                    "context snapshot hwnd=%s pid=%s process=%r title=%r url=%r browser_chars=%d",
+                    win.hwnd,
+                    win.pid,
+                    win.process_name,
+                    win.title,
+                    win.url,
+                    len(self._pending_context.browser_content or ""),
+                )
                 screenshot_b64 = None
                 if caller.get("context_screenshot") == "auto" and not selected:
                     img = capture.get_screen_snippet()
@@ -787,18 +1005,17 @@ class App(QObject):
         caller = caller or {}
 
         # Kick off the active-document read up front so it overlaps the remaining
-        # capture/clipboard I/O instead of serialising after it. Speculative: it
-        # only feeds the prompt when no screenshot is present (build_context gates
-        # it), so a vision query that appears later simply discards the result.
-        pre_screenshot = capture_data[1] if capture_data else None
+        # capture/clipboard I/O instead of serialising after it. A screenshot is
+        # visual context only; it must not disable the user's Open docs setting.
         active_doc: dict[str, str] = {}
         active_doc_thread: threading.Thread | None = None
-        if caller.get("context_documents", True) and not pre_screenshot:
+        if self._context_mode(caller, "documents") == "auto":
             def _read_active_doc():
                 try:
                     txt = llm.read_active_document_for_context()
                     if txt and not txt.startswith(("Could not", "File type", "Failed to")):
                         active_doc["text"] = txt
+                    log.info("active document context chars=%d", len(active_doc.get("text", "")))
                 except Exception:
                     log.exception("active-document read failed")
             active_doc_thread = threading.Thread(target=_read_active_doc, daemon=True)
@@ -822,6 +1039,11 @@ class App(QObject):
             if snap and caller.get("context_ambient", True)
             else ""
         )
+        if snap and self._context_mode(caller, "browser") == "auto":
+            ambient_text = self._append_context_block(
+                ambient_text,
+                self._browser_context_text(snap),
+            )
 
         with self._context_buffer_lock:
             buffered_items = self._context_buffer.copy()
@@ -936,21 +1158,9 @@ class App(QObject):
 
         def llm_producer():
             nonlocal full_text, reply_text
-            use_tools = not screenshot_b64 and caller.get("context_tools", True)
-            allowed_tools = None
-            if memory_mode == "model":
-                use_tools = True
-                allowed_tools = [
-                    "web_search",
-                    "get_context",
-                    "get_context.browser",
-                    "get_context.documents",
-                    "git_status",
-                    "git_diff",
-                    "github_repo",
-                    "github_issue",
-                    "memory_search",
-                ]
+            allowed_tools = self._allowed_model_tools(caller)
+            pinned_tools = self._pinned_model_tools(caller)
+            use_tools = bool(allowed_tools)
             try:
                 for chunk in llm.stream_response(
                     user_message,
@@ -959,9 +1169,10 @@ class App(QObject):
                     memory_context=memory_context,
                     use_tools=use_tools,
                     allowed_tools=allowed_tools,
+                    pinned_tools=pinned_tools,
                     allow_screenshot_tool=(
                         not screenshot_b64
-                        and caller.get("context_screenshot") == "model"
+                        and self._screenshot_tool_allowed(caller)
                     ),
                 ):
                     full_text += chunk
@@ -1135,7 +1346,10 @@ class App(QObject):
             items.append((f"Clipboard · {short(clipboard_text)}", "text"))
         if active_document_text:
             items.append(("Active document", "file"))
-        if ambient_text:
+        if "[Browser/Web]" in (ambient_text or ""):
+            items.append(("Browser/Web", "file"))
+        ambient_without_browser = (ambient_text or "").replace("[Browser/Web]", "").strip()
+        if ambient_without_browser:
             items.append(("Window context", "file"))
         return items[:8]
 

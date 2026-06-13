@@ -71,17 +71,19 @@ class BuildContextTests(unittest.TestCase):
         out = _build(selected="sel", active_document_text="ACTIVE")
         self.assertEqual(out.ambient_ctx, "sel\n\n---\n[Active document]\nACTIVE")
 
-    def test_active_document_skipped_when_screenshot_present(self):
+    def test_active_document_kept_when_screenshot_present(self):
+        # A screenshot shows pixels, not document text — enabling documents must
+        # still inject them even on vision queries.
         out = _build(screenshot_b64="SHOT", active_document_text="ACTIVE")
-        self.assertEqual(out.ambient_ctx, "")
+        self.assertEqual(out.ambient_ctx, "[Active document]\nACTIVE")
 
-    def test_active_document_skipped_when_dropped_image_promotes_to_screenshot(self):
+    def test_active_document_kept_when_dropped_image_promotes_to_screenshot(self):
         out = _build(
             drop_items=[("shot.png", "BASE64", "image")],
             active_document_text="ACTIVE",
         )
         self.assertEqual(out.screenshot_b64, "BASE64")
-        self.assertEqual(out.ambient_ctx, "")
+        self.assertEqual(out.ambient_ctx, "[Active document]\nACTIVE")
 
     def test_full_precedence_order(self):
         out = _build(

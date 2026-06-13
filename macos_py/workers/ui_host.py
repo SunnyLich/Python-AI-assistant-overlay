@@ -738,7 +738,7 @@ class QtProtocolHost:
         if method == "ui.reply.chunk":
             return self._reply_chunk(**params)
         if method == "ui.reply.done":
-            return self._reply_done()
+            return self._reply_done(**params)
         if method == "ui.context.clear":
             return self._context_clear()
         if method == "ui.context.add_item":
@@ -864,12 +864,16 @@ class QtProtocolHost:
         return {"shown": True}
 
     def _show_intent(self, caller_idx: int = 0, target_hwnd: int = 0) -> dict[str, Any]:
+        t0 = time.monotonic()
         from ui.intent_overlay import IntentOverlay
+        t_import = time.monotonic()
 
         if self._intent is not None:
             self._intent.close()
             self._intent = None
+        t_closed = time.monotonic()
         self._intent = IntentOverlay(caller_idx=caller_idx, target_hwnd=target_hwnd)
+        t_built = time.monotonic()
         self._intent.intent_chosen.connect(
             lambda intent, custom: self.emit(
                 "ui.intent.chosen",
@@ -881,6 +885,13 @@ class QtProtocolHost:
         self._intent.show()
         self._intent.raise_()
         self._intent.activateWindow()
+        print(
+            "[ui.show_intent] "
+            f"caller={caller_idx} target_hwnd={target_hwnd} "
+            f"import={t_import - t0:.3f}s close={t_closed - t_import:.3f}s "
+            f"build={t_built - t_closed:.3f}s show={time.monotonic() - t_built:.3f}s",
+            flush=True,
+        )
         return {"shown": True, "caller_idx": caller_idx}
 
     def _show_snip(self) -> dict[str, Any]:
@@ -971,9 +982,16 @@ class QtProtocolHost:
         bubble.append_chunk(text, is_thought=is_thought)
         return {"appended": len(text or "")}
 
-    def _reply_done(self) -> dict[str, Any]:
+    def _reply_done(self, flush: bool = True) -> dict[str, Any]:
+        """Finish the reply bubble.
+
+        flush=True reveals everything immediately (TTS playback ended, errors).
+        flush=False lets a running WPM reveal drain at the configured speed —
+        used when TTS is off, so BUBBLE_REVEAL_WPM is honored instead of the
+        whole reply slamming in the moment the LLM finishes streaming.
+        """
         bubble = self._ensure_bubble()
-        bubble.finish(flush_remaining=True)
+        bubble.finish(flush_remaining=bool(flush))
         return {"done": True}
 
     @staticmethod

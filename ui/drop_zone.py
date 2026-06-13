@@ -565,24 +565,25 @@ class ContextPanel(QWidget):
     # ------------------------------------------------------------------
 
     def paintEvent(self, _event) -> None:  # noqa: N802
+        if self._badges or not self._drag_active:
+            return
+
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Translucent dashed border (always drawn as the drop-zone indicator)
+        # Translucent dashed border while the user is actively dragging context.
         dash_pen = QPen(QColor(120, 120, 200, 65), 1.5, Qt.PenStyle.DashLine)
         dash_pen.setDashPattern([4, 4])
         p.setPen(dash_pen)
         p.setBrush(QBrush(QColor(18, 18, 45, 22)))
         p.drawRoundedRect(1, 1, self.width() - 2, self.height() - 2, 10, 10)
 
-        if not self._badges:
-            # Drop-here hint when empty
-            p.setFont(QFont("Segoe UI", 8))
-            p.setPen(QColor(150, 150, 220, 85))
-            p.drawText(
-                self.rect(),
-                Qt.AlignmentFlag.AlignCenter,
-                "↓ Drop here",
-            )
+        p.setFont(QFont("Segoe UI", 8))
+        p.setPen(QColor(150, 150, 220, 85))
+        p.drawText(
+            self.rect(),
+            Qt.AlignmentFlag.AlignCenter,
+            "↓ Drop here",
+        )
 
         p.end()

@@ -35,6 +35,36 @@ def env_screenshot_mode(name: str, default: str = "off") -> str:
     return normalize_screenshot_mode(os.getenv(name), default)
 
 
+# Per-caller tool override modes:
+#   "on"    — tool is always offered to the model for this caller
+#   "model" — offered subject to the per-prompt keyword filter (Tools tab)
+#   "off"   — never offered, even when a context dropdown would expose it
+# Tools absent from the mapping follow their default (context dropdown for
+# context tools, off for installed/plugin tools).
+TOOL_OVERRIDE_MODES = ("on", "model", "off")
+
+
+def parse_tool_modes(value: str | None) -> dict[str, str]:
+    """Parse a tool override list like "web_search:on,my_tool:model"."""
+    modes: dict[str, str] = {}
+    for entry in (value or "").split(","):
+        name, _, mode = entry.strip().partition(":")
+        name = name.strip()
+        mode = mode.strip().lower()
+        if name and mode in TOOL_OVERRIDE_MODES:
+            modes[name] = mode
+    return modes
+
+
+def format_tool_modes(modes: dict[str, str]) -> str:
+    """Inverse of parse_tool_modes; drops entries that are not real overrides."""
+    return ",".join(
+        f"{name}:{str(mode).strip().lower()}"
+        for name, mode in sorted(modes.items())
+        if str(mode).strip().lower() in TOOL_OVERRIDE_MODES
+    )
+
+
 def env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
     if value is None:

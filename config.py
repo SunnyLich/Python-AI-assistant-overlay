@@ -4,7 +4,9 @@ config.py — Central configuration loaded from .env
 import os
 from dotenv import load_dotenv
 from core import secret_store
-from core.system.env_utils import env_bool, env_float, env_int, env_screenshot_mode
+from core.system.env_utils import (
+    env_bool, env_float, env_int, env_screenshot_mode, parse_tool_modes,
+)
 from core.system.paths import FILLER_AUDIO_DIR as DEFAULT_FILLER_AUDIO_DIR
 from core.system.paths import USER_FILLER_AUDIO_DIR as DEFAULT_USER_FILLER_AUDIO_DIR
 from core.system.paths import REPO_ROOT, MODEL_TOOLS_DIR
@@ -75,6 +77,58 @@ def _context_mode(value: str | None, default: str = "off") -> str:
     return mode if mode in {"off", "auto", "model"} else default
 
 
+# The static tool sentence older builds baked into the default system prompt
+# (and therefore into saved .env prompts). Stripped on load — see
+# SYSTEM_PROMPT_UTILITY in _load_config().
+_LEGACY_TOOL_PROMPT_SENTENCE = (
+    "You have access to a web_search tool and a get_context tool. "
+    "Use web_search for current information and use get_context with a URL "
+    "when the user asks about a specific page. Never print or simulate tool "
+    "calls in the reply."
+)
+
+
+# Voice (push-to-talk) context defaults mirror the General caller so existing
+# behavior — voice used to borrow caller 1's config — is unchanged by default.
+_VOICE_DEFAULTS: dict = {
+    "label": "Voice",
+    "paste_back": False,
+    "context_ambient": True,
+    "context_clipboard": False,
+    "context_documents_mode": "auto",
+    "context_browser_mode": "off",
+    "context_github_mode": "off",
+    "context_memory_mode": "auto",
+    "context_screenshot": "off",   # "off" | "auto" | "model"
+}
+
+
+def _load_voice_caller() -> dict:
+    """Read VOICE_CONTEXT_* env vars into a caller-shaped row for push-to-talk."""
+    d = _VOICE_DEFAULTS
+    documents_mode = _context_mode(
+        os.getenv("VOICE_CONTEXT_DOCUMENTS_MODE"), str(d["context_documents_mode"])
+    )
+    browser_mode = _context_mode(os.getenv("VOICE_CONTEXT_BROWSER_MODE"), str(d["context_browser_mode"]))
+    github_mode = _context_mode(os.getenv("VOICE_CONTEXT_GITHUB_MODE"), str(d["context_github_mode"]))
+    memory_mode = _context_mode(os.getenv("VOICE_CONTEXT_MEMORY_MODE"), str(d["context_memory_mode"]))
+    return {
+        "hotkey": os.getenv("HOTKEY_VOICE", "f9"),
+        "label": d["label"],
+        "paste_back": False,
+        "context_ambient": env_bool("VOICE_CONTEXT_AMBIENT", bool(d["context_ambient"])),
+        "context_clipboard": env_bool("VOICE_CONTEXT_CLIPBOARD", bool(d["context_clipboard"])),
+        "context_documents": documents_mode == "auto",
+        "context_tools": any(m == "model" for m in (documents_mode, browser_mode, github_mode, memory_mode)),
+        "context_documents_mode": documents_mode,
+        "context_browser_mode": browser_mode,
+        "context_github_mode": github_mode,
+        "context_memory_mode": memory_mode,
+        "context_screenshot": env_screenshot_mode("VOICE_CONTEXT_SCREENSHOT", str(d["context_screenshot"])),
+        "tools": parse_tool_modes(os.getenv("VOICE_TOOLS")),
+    }
+
+
 def _load_caller_rows() -> list[dict]:
     """Read CALLER_COUNT + CALLER_N_* env vars, fall back to _CALLER_DEFAULTS."""
     count = env_int("CALLER_COUNT", len(_CALLER_DEFAULTS))
@@ -129,6 +183,7 @@ def _load_caller_rows() -> list[dict]:
             "context_memory_mode": memory_mode,
             "context_screenshot": env_screenshot_mode(f"CALLER_{n}_CONTEXT_SCREENSHOT", default.get("context_screenshot", "off")),
             "context_clipboard": env_bool(f"CALLER_{n}_CONTEXT_CLIPBOARD", bool(default.get("context_clipboard", False))),
+            "tools":      parse_tool_modes(os.getenv(f"CALLER_{n}_TOOLS")),
             "intents":    intents,
         })
     return rows
@@ -151,7 +206,7 @@ def _load_config() -> None:
     global HOTKEY_ADD_CONTEXT, HOTKEY_CLEAR_CONTEXT, HOTKEY_SNIP, HOTKEY_VOICE
     global SNIP_CONTEXT_AMBIENT, SNIP_CONTEXT_DOCUMENTS, SNIP_CONTEXT_TOOLS
     global STT_MODEL, STT_COMPUTE_TYPE, STT_LANGUAGE
-    global CALLER_ROWS
+    global CALLER_ROWS, VOICE_CALLER
     global CONTEXT_BROWSER_MAX_CHARS, CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS, CONTEXT_TOOL_DOCUMENT_MAX_CHARS
     global TOOL_PLUGIN_DIR, TOOL_GIT_ROOT
     global BUBBLE_WIDTH, BUBBLE_LINES, BUBBLE_COLOR, BUBBLE_TEXT_COLOR, BUBBLE_READ_WORD_COLOR
@@ -240,6 +295,14 @@ def _load_config() -> None:
     else:
         CALLER_ROWS = new_rows
 
+    # --- Voice (push-to-talk) caller ---
+    new_voice = _load_voice_caller()
+    if "VOICE_CALLER" in globals():
+        VOICE_CALLER.clear()
+        VOICE_CALLER.update(new_voice)
+    else:
+        VOICE_CALLER = new_voice
+
     # --- Context budgets ---
     CONTEXT_BROWSER_MAX_CHARS          = env_int("CONTEXT_BROWSER_MAX_CHARS",          4000)
     CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS = env_int("CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS", 8000)
@@ -274,18 +337,22 @@ def _load_config() -> None:
     MEMORY_STM_TOKEN_BUDGET         = env_int("MEMORY_STM_TOKEN_BUDGET", 4000)
 
     # --- System prompt ---
+    # NOTE: do not claim tool access here. Tools are only sometimes offered
+    # (per-caller modes), so the tool note is appended at request time by
+    # core.llm_clients.client when tools are actually attached.
     SYSTEM_PROMPT_UTILITY = os.getenv(
         "SYSTEM_PROMPT_UTILITY",
         "You are a concise desktop assistant. "
         "Answer in 1-3 short sentences. Be direct and plain. No markdown. "
         "If a [Memory] section appears in this prompt, it contains facts about the user "
         "from previous sessions — consider using them to personalize your answers without announcing "
-        "that you are doing so. "
-        "You have access to a web_search tool and a get_context tool. "
-        "Use web_search for current information and use get_context with a URL "
-        "when the user asks about a specific page. Never print or simulate tool "
-        "calls in the reply."
+        "that you are doing so."
     )
+    # Migration: older saved prompts contain the static tool claim; strip it so
+    # the model is no longer promised tools on queries that attach none.
+    SYSTEM_PROMPT_UTILITY = SYSTEM_PROMPT_UTILITY.replace(
+        _LEGACY_TOOL_PROMPT_SENTENCE, ""
+    ).strip()
 
 
 _load_config()

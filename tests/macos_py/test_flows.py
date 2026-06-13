@@ -87,6 +87,21 @@ def caller_config(rows: list[dict[str, Any]]):
         config.TTS_PROVIDER = old_tts
 
 
+@contextmanager
+def voice_config(row: dict[str, Any]):
+    old_row = dict(getattr(config, "VOICE_CALLER", {}))
+    old_tts = getattr(config, "TTS_PROVIDER", "none")
+    config.VOICE_CALLER.clear()
+    config.VOICE_CALLER.update(row)
+    config.TTS_PROVIDER = "none"
+    try:
+        yield
+    finally:
+        config.VOICE_CALLER.clear()
+        config.VOICE_CALLER.update(old_row)
+        config.TTS_PROVIDER = old_tts
+
+
 def make_flow(
     *,
     native: FakeWorker | None = None,
@@ -304,6 +319,7 @@ def test_context_modes_map_to_auto_documents_and_allowed_tools():
     assert query["include_active_document"] is False
     assert query["use_tools"] is True
     assert query["allowed_tools"] == ["get_context.documents", "git_status", "git_diff", "github_repo", "github_issue"]
+    assert query["pinned_tools"] == ["get_context", "git_status", "git_diff", "github_repo", "github_issue"]
     assert query["frontload_tools"] == []
 
 
@@ -333,6 +349,210 @@ def test_context_modes_map_on_browser_and_git_to_frontloaded_context():
     assert "[Browser/Web]" in query["ambient_text"]
     assert "https://example.test/page" in query["ambient_text"]
     assert "Example page text" in query["ambient_text"]
+
+
+def test_browser_url_captured_at_hotkey_time_fetches_content_by_handle():
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "off",
+            "context_browser_mode": "auto",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+
+    def snapshot_handler(params: dict[str, Any]) -> dict[str, Any]:
+        result = {
+            "selected_text": "",
+            "clipboard_text": "",
+            "active_app": {"name": "Browser", "pid": 42, "bundle_id": "com.browser"},
+        }
+        # Mirrors the native worker: URL + window handle are grabbed at hotkey
+        # time while the browser is still foreground; the page text is not.
+        if params.get("include_browser_url"):
+            result["browser_url"] = "https://example.test/page"
+            result["browser_hwnd"] = 777
+        return result
+
+    native = FakeWorker(
+        {
+            "native.context.snapshot": snapshot_handler,
+            "native.context.browser_content": lambda params: {
+                "url": params.get("url"),
+                "content": f"Window text via hwnd {params.get('hwnd')}",
+            },
+        }
+    )
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("ok")})
+    with caller_config(rows):
+        _flow, native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "What is this page?"})
+
+    fetch = native.last_call("native.context.browser_content")["params"]
+    assert fetch == {"url": "https://example.test/page", "hwnd": 777}
+    # No focus-race re-detection: the snapshot ran exactly once, at hotkey time.
+    assert len(native.calls_for("native.context.snapshot")) == 1
+    ambient = brain.last_call("brain.query")["params"]["ambient_text"]
+    assert "https://example.test/page" in ambient
+    assert "Window text via hwnd 777" in ambient
+
+
+def test_browser_hwnd_without_url_fetches_content_by_handle():
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "off",
+            "context_browser_mode": "auto",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+
+    native = FakeWorker(
+        {
+            "native.context.snapshot": lambda params: {
+                "selected_text": "",
+                "clipboard_text": "",
+                "active_app": {"name": "Calc", "pid": 42, "window_id": 111, "bundle_id": ""},
+                "browser_url": "",
+                "browser_hwnd": 777 if params.get("include_browser_url") else 0,
+            },
+            "native.context.browser_content": lambda params: {
+                "url": params.get("url"),
+                "content": f"Rendered browser text {params.get('hwnd')}",
+            },
+        }
+    )
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("ok")})
+    with caller_config(rows):
+        _flow, native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "What is the page?"})
+
+    assert native.last_call("native.context.browser_content")["params"] == {"url": "", "hwnd": 777}
+    assert "Rendered browser text 777" in brain.last_call("brain.query")["params"]["ambient_text"]
+
+
+def test_active_document_auto_fetches_before_query_and_summary():
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "auto",
+            "context_browser_mode": "off",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="")})
+    brain = FakeWorker(
+        handlers={"brain.context.active_document": lambda _params: {"text": "DOC TEXT"}},
+        stream_handlers={"brain.query": query_stream("ok")},
+    )
+    with caller_config(rows):
+        _flow, _native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "Use open docs"})
+
+    query = brain.last_call("brain.query")["params"]
+    assert query["active_document_text"] == "DOC TEXT"
+    assert query["include_active_document"] is False
+    summary = ui.last_call("ui.context.summary")["params"]["items"]
+    assert {"label": "Active document", "type": "file"} in summary
+
+
+def test_active_document_request_includes_hotkey_time_window():
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "auto",
+            "context_browser_mode": "off",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+    native = FakeWorker(
+        {
+            "native.context.snapshot": lambda _params: {
+                "selected_text": "",
+                "clipboard_text": "",
+                "active_app": {
+                    "name": "Untitled 1 \u2014 LibreOffice Calc",
+                    "pid": 202,
+                    "window_id": 222,
+                    "bundle_id": "",
+                },
+                "debug": {
+                    "window": {
+                        "chosen_process": "soffice.bin",
+                        "chosen_title": "Untitled 1 \u2014 LibreOffice Calc",
+                        "chosen_pid": 202,
+                        "chosen_hwnd": 222,
+                    }
+                },
+            }
+        }
+    )
+    brain = FakeWorker(
+        handlers={"brain.context.active_document": lambda _params: {"text": "CALC CELLS"}},
+        stream_handlers={"brain.query": query_stream("ok")},
+    )
+    with caller_config(rows):
+        _flow, _native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "Read the sheet"})
+
+    params = brain.last_call("brain.context.active_document")["params"]
+    assert params["active_window"] == {
+        "title": "Untitled 1 \u2014 LibreOffice Calc",
+        "process_name": "soffice.bin",
+        "pid": 202,
+        "window_id": 222,
+    }
+    assert brain.last_call("brain.query")["params"]["active_document_text"] == "CALC CELLS"
+
+
+def test_no_tts_reply_done_lets_wpm_reveal_drain():
+    # With TTS off, reply.done must NOT flush the bubble: the WPM reveal keeps
+    # pacing the text (flush=False), instead of the full reply slamming in the
+    # moment the LLM finishes streaming.
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents": False,
+            "context_documents_mode": "off",
+            "context_browser_mode": "off",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_tools": False,
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="")})
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("a fairly long reply")})
+    with caller_config(rows):
+        _flow, native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        native.emit("native.hotkey", {"kind": "caller", "index": 0})
+        ui.emit("ui.intent.chosen", {"custom": "tell me"})
+
+    done_calls = ui.calls_for("ui.reply.done")
+    assert done_calls
+    assert all(call["params"] == {"flush": False} for call in done_calls)
 
 
 def test_model_screenshot_mode_precaptures_through_native_worker():
@@ -651,6 +871,140 @@ def test_voice_flow_records_transcribes_and_queries():
     assert audio.calls_for("audio.record.start")
     assert audio.calls_for("audio.record.stop_transcribe")
     assert brain.last_call("brain.query")["params"]["intent_prompt"] == "voice prompt"
+
+
+def test_voice_flow_uses_voice_caller_config():
+    voice_row = {
+        "label": "Voice",
+        "paste_back": False,
+        "context_ambient": True,
+        "context_clipboard": False,
+        "context_documents_mode": "off",
+        "context_browser_mode": "model",
+        "context_github_mode": "off",
+        "context_memory_mode": "off",
+        "context_screenshot": "off",
+        "tools": {"alpha": "on", "beta": "model"},
+    }
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="")})
+    audio = FakeWorker({"audio.record.stop_transcribe": lambda _params: {"text": "voice prompt"}})
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("voice reply")})
+    with voice_config(voice_row):
+        _flow, native, _ui, brain, audio = make_flow(native=native, audio=audio, brain=brain)
+        native.emit("native.hotkey", {"kind": "voice_start"})
+        native.emit("native.hotkey", {"kind": "voice_stop"})
+
+    query = brain.last_call("brain.query")["params"]
+    assert query["use_tools"] is True
+    assert set(query["allowed_tools"]) == {"web_search", "get_context.browser", "alpha", "beta"}
+    assert query["pinned_tools"] == ["web_search", "get_context", "alpha"]
+    assert query["memory_enabled"] is False
+    # The record-start path must not wait on the slow browser page fetch.
+    snapshot = native.calls_for("native.context.snapshot")[0]["params"]
+    assert snapshot["include_browser_content"] is False
+
+
+def test_voice_screenshot_auto_captures_at_voice_start(tmp_path):
+    image_bytes = b"voice-shot"
+    image_path = tmp_path / "voice.png"
+    image_path.write_bytes(image_bytes)
+    voice_row = {
+        "label": "Voice",
+        "paste_back": False,
+        "context_ambient": True,
+        "context_clipboard": False,
+        "context_documents_mode": "off",
+        "context_browser_mode": "off",
+        "context_github_mode": "off",
+        "context_memory_mode": "off",
+        "context_screenshot": "auto",
+        "tools": {},
+    }
+    native = FakeWorker(
+        {
+            "native.context.snapshot": context_handler(selected=""),
+            "native.capture.fullscreen": lambda _params: {"path": str(image_path)},
+        }
+    )
+    audio = FakeWorker({"audio.record.stop_transcribe": lambda _params: {"text": "what is on screen"}})
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("screen reply")})
+    with voice_config(voice_row):
+        _flow, native, _ui, brain, audio = make_flow(native=native, audio=audio, brain=brain)
+        native.emit("native.hotkey", {"kind": "voice_start"})
+        native.emit("native.hotkey", {"kind": "voice_stop"})
+
+    assert native.calls_for("native.capture.fullscreen")
+    query = brain.last_call("brain.query")["params"]
+    assert query["screenshot_b64"] == base64.b64encode(image_bytes).decode("ascii")
+
+
+def test_caller_tool_overrides_reach_brain_query():
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents": False,
+            "context_documents_mode": "off",
+            "context_browser_mode": "off",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_tools": False,
+            "context_screenshot": "off",
+            "context_clipboard": False,
+            "tools": {"my_tool": "on", "other_tool": "model"},
+        }
+    ]
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="picked")})
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("tool reply")})
+    with caller_config(rows):
+        _flow, native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        native.emit("native.hotkey", {"kind": "caller", "index": 0})
+        ui.emit("ui.intent.chosen", {"custom": "run it"})
+
+    query = brain.last_call("brain.query")["params"]
+    assert set(query["allowed_tools"]) == {"my_tool", "other_tool"}
+    assert query["pinned_tools"] == ["my_tool"]
+    assert query["use_tools"] is True
+
+
+def test_off_tool_override_beats_context_dropdown():
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents": False,
+            "context_documents_mode": "model",
+            "context_browser_mode": "model",
+            "context_github_mode": "auto",
+            "context_memory_mode": "off",
+            "context_tools": True,
+            "context_screenshot": "model",
+            "context_clipboard": False,
+            # web_search and get_context forced off despite browser/docs
+            # granting them; git_status forced off drops it from the
+            # frontload list; capture_screen off kills the screenshot tool.
+            "tools": {
+                "web_search": "off",
+                "get_context": "off",
+                "git_status": "off",
+                "capture_screen": "off",
+            },
+        }
+    ]
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="picked")})
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("reply")})
+    with caller_config(rows):
+        _flow, native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        native.emit("native.hotkey", {"kind": "caller", "index": 0})
+        ui.emit("ui.intent.chosen", {"custom": "go"})
+
+    query = brain.last_call("brain.query")["params"]
+    assert query["allowed_tools"] == []
+    assert query["use_tools"] is False
+    assert query["frontload_tools"] == ["git_diff"]
+    assert query["allow_screenshot_tool"] is False
+    # capture_screen off also means no pre-captured screenshot for the tool.
+    assert not native.calls_for("native.capture.fullscreen")
 
 
 def test_chat_request_streams_through_brain_chat():

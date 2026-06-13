@@ -1063,6 +1063,7 @@ def brain_query(
     memory_enabled: bool = True,
     use_tools: bool = False,
     allowed_tools: list[str] | None = None,
+    pinned_tools: list[str] | None = None,
     frontload_tools: list[str] | None = None,
     allow_screenshot_tool: bool = False,
     screenshot_tool_b64: str | None = None,
@@ -1086,7 +1087,10 @@ def brain_query(
             _log(f"memory retrieval skipped: {type(exc).__name__}: {exc}")
 
     active_document = active_document_text
-    if include_active_document and not active_document and not screenshot_b64:
+    # Read open documents whenever the caller asked for them ("On"), including
+    # alongside a screenshot — a screenshot shows pixels, not document text, so
+    # it must not silently disable the documents setting.
+    if include_active_document and not active_document:
         active_document = brain_context_active_document().get("text", "")
 
     built = build_context(
@@ -1109,6 +1113,7 @@ def brain_query(
         allowed_tools,
         allow_screenshot_tool,
         screenshot_tool_b64,
+        pinned_tools=pinned_tools,
     ):
         if ctx.cancelled:
             break
@@ -1174,15 +1179,15 @@ def _notify_plugin_after_response(text: str) -> None:
 
 
 @handler("brain.context.active_document")
-def brain_context_active_document() -> dict[str, Any]:
+def brain_context_active_document(active_window: dict[str, Any] | None = None) -> dict[str, Any]:
     """Return active/open document text through the shared context reader."""
     try:
-        from core.llm_clients.client import read_active_document_for_context
+        from core.llm_clients.client import read_active_document_for_context_with_debug
 
-        text = read_active_document_for_context()
+        text, debug = read_active_document_for_context_with_debug(active_window=active_window)
         if text.startswith(("Could not", "File type", "Failed to")):
             text = ""
-        return {"text": text}
+        return {"text": text, "debug": debug}
     except Exception as exc:  # noqa: BLE001 - context should not block answering
         _log(f"active document read failed: {type(exc).__name__}: {exc}")
         return {"text": "", "error": str(exc)}
@@ -1195,6 +1200,7 @@ def _stream_query_reply(
     allowed_tools: list[str] | None,
     allow_screenshot_tool: bool,
     screenshot_tool_b64: str | None = None,
+    pinned_tools: list[str] | None = None,
 ) -> Iterator[str]:
     """Token stream for ``brain.query``: real provider, or deterministic offline.
 
@@ -1222,6 +1228,7 @@ def _stream_query_reply(
         memory_context=memory_context,
         use_tools=use_tools,
         allowed_tools=allowed_tools,
+        pinned_tools=pinned_tools,
         allow_screenshot_tool=allow_screenshot_tool,
         screenshot_tool_b64=screenshot_tool_b64,
     )

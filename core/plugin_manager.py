@@ -55,6 +55,14 @@ log = logging.getLogger("wisp.plugins")
 _ENV_PATH = REPO_ROOT / ".env"
 
 
+def _terminal(event: str) -> None:
+    """Emit a plain plugin line to the launch terminal when one is attached."""
+    try:
+        print(f"[plugin] {event}", file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
 # ------------------------------------------------------------------
 # Env-key conventions for per-mod enabled state and settings
 # ------------------------------------------------------------------
@@ -149,8 +157,10 @@ class PluginManager:
             )
             self._mods.append(_LoadedMod(name=name, module=module, enabled=enabled))
             log.info("[mods] Loaded mod %r (enabled=%s).", name, enabled)
+            _terminal(f"loaded {name} enabled={enabled}")
         except Exception:
             log.error("[mods] Failed to load mod %r:\n%s", name, traceback.format_exc())
+            _terminal(f"failed to load {name}")
 
     # ------------------------------------------------------------------
     # Lifecycle hooks
@@ -161,6 +171,7 @@ class PluginManager:
         for mod in self._mods:
             if not mod.enabled:
                 continue
+            _terminal(f"startup {mod.name}")
             _call(mod, "on_startup", app_context)
             _register_mod_tools(mod, app_context.model_tool_registry)
 
@@ -244,6 +255,7 @@ class PluginManager:
             except Exception:
                 log.error("[mods] toggling tools for %r failed:\n%s", name, traceback.format_exc())
         log.info("[mods] %r %s.", name, "enabled" if enabled else "disabled")
+        _terminal(f"{name} {'enabled' if enabled else 'disabled'}")
         return enabled
 
     # ------------------------------------------------------------------
@@ -323,6 +335,7 @@ def _register_mod_tools(mod: _LoadedMod, tool_registry: Any) -> None:
             )
             tool_registry.register_builtin(spec)
             log.info("[mods] Registered model tool %r from mod %r.", name, mod.name)
+            _terminal(f"registered tool {name} from {mod.name}")
     except Exception:
         log.error("[mods] %r.get_tools raised:\n%s", mod.name, traceback.format_exc())
 

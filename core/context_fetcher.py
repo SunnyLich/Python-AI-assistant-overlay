@@ -401,12 +401,26 @@ def _fetch_active_window() -> WindowInfo:
 
 def _fetch_active_window_win() -> WindowInfo:
     import ctypes
-    import ctypes.wintypes
-    info = WindowInfo()
     try:
         user32 = ctypes.windll.user32
         hwnd = user32.GetForegroundWindow()
         if not hwnd:
+            return WindowInfo()
+        return _fetch_window_info_win(int(hwnd))
+    except Exception:
+        return WindowInfo()
+
+def _fetch_window_info_win(hwnd: int) -> WindowInfo:
+    """Build WindowInfo for a specific Windows HWND without requiring focus."""
+    import ctypes
+    import ctypes.wintypes
+
+    info = WindowInfo()
+    if not hwnd:
+        return info
+    try:
+        user32 = ctypes.windll.user32
+        if not user32.IsWindow(hwnd):
             return info
         info.hwnd = int(hwnd)
 
@@ -436,6 +450,63 @@ def _fetch_active_window_win() -> WindowInfo:
         pass
 
     return info
+
+
+def get_browser_window_for_context(preferred_hwnd: int = 0) -> WindowInfo:
+    """Return the preferred/first visible browser window for Browser/Web context.
+
+    Browser/Web set to "On" should mean "include browser context" even when the
+    foreground target is a document. Prefer the hotkey-time foreground window
+    when it is a browser, otherwise scan visible browser windows.
+    """
+    if _IS_WIN:
+        if preferred_hwnd:
+            preferred = _fetch_window_info_win(int(preferred_hwnd))
+            if (preferred.process_name or "").lower() in _BROWSER_PROCS:
+                return preferred
+        return _find_visible_browser_window_win()
+
+    active = _fetch_active_window()
+    if (active.process_name or "").lower() in _BROWSER_PROCS:
+        return active
+    return WindowInfo()
+
+
+def _find_visible_browser_window_win() -> WindowInfo:
+    if not _IS_WIN:
+        return WindowInfo()
+    import ctypes
+    import ctypes.wintypes
+
+    user32 = ctypes.windll.user32
+    results: list[WindowInfo] = []
+
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+
+    def _callback(hwnd, _lparam):
+        try:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length <= 0:
+                return True
+            win = _fetch_window_info_win(int(hwnd))
+            if (win.process_name or "").lower() in _BROWSER_PROCS:
+                results.append(win)
+                if win.url:
+                    return False
+        except Exception:
+            pass
+        return True
+
+    try:
+        user32.EnumWindows(WNDENUMPROC(_callback), 0)
+    except Exception:
+        return WindowInfo()
+    if not results:
+        return WindowInfo()
+    with_url = [win for win in results if win.url]
+    return with_url[0] if with_url else results[0]
 
 
 def _fetch_active_window_linux() -> WindowInfo:
@@ -537,6 +608,69 @@ def _get_browser_text_uia(hwnd: int, max_chars: int) -> str | None:
         tp = raw.QueryInterface(uiac.IUIAutomationTextPattern)
         text = tp.DocumentRange.GetText(max_chars if max_chars and max_chars > 0 else -1)
         return (text or "").strip() or None
+    except Exception:
+        return None
+
+
+def _get_window_text_uia(hwnd: int, max_chars: int) -> str | None:
+    """Read text from a document/editor window by handle on Windows.
+
+    Some apps, notably modern Notepad, do not reliably expose their backing file
+    path to the process open-file list. UIA can still expose the visible editor
+    content through Document or Edit controls, which is enough for context.
+    """
+    if not _IS_WIN or not hwnd:
+        return None
+    try:
+        import comtypes.gen.UIAutomationClient as uiac  # type: ignore
+
+        uia = _get_uia()
+        if uia is None:
+            return None
+        root = uia.ElementFromHandle(hwnd)
+        if root is None:
+            return None
+
+        parts: list[str] = []
+        seen: set[str] = set()
+        for control_type in (50030, 50004):  # Document, Edit
+            condition = uia.CreatePropertyCondition(
+                30003,  # UIA_ControlTypePropertyId
+                control_type,
+            )
+            elements = root.FindAll(uiac.TreeScope_Descendants, condition)
+            for idx in range(getattr(elements, "Length", 0) or 0):
+                el = elements.GetElement(idx)
+                text = ""
+                try:
+                    raw = el.GetCurrentPattern(_UIA_TextPatternId)
+                    if raw is not None:
+                        tp = raw.QueryInterface(uiac.IUIAutomationTextPattern)
+                        text = tp.DocumentRange.GetText(max_chars if max_chars and max_chars > 0 else -1)
+                except Exception:
+                    text = ""
+                if not text:
+                    try:
+                        raw = el.GetCurrentPattern(_UIA_ValuePatternId)
+                        if raw is not None:
+                            vp = raw.QueryInterface(uiac.IUIAutomationValuePattern)
+                            text = vp.CurrentValue or ""
+                    except Exception:
+                        text = ""
+                text = re.sub(r"\r\n?", "\n", text or "").strip()
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                parts.append(text)
+                if sum(len(part) for part in parts) >= max_chars:
+                    break
+            if parts:
+                break
+        combined = "\n\n".join(parts).strip()
+        if not combined:
+            return None
+        combined = combined[:max_chars] if max_chars and max_chars > 0 else combined
+        return _redact(combined)
     except Exception:
         return None
 
@@ -895,6 +1029,7 @@ def fetch_and_save(
     capture_screen: bool = False,
     fetch_browser_content: bool = False,  # opt-in; now driven by LLM tools instead
     online_query: str | None = None,
+    active_hwnd: int | None = None,
 ) -> ContextSnapshot:
     """
     Collect all context sources, persist to the temp JSON file, and return
@@ -907,6 +1042,9 @@ def fetch_and_save(
                               when a supported browser is in the foreground).
         online_query:         If provided, run a DuckDuckGo search and include
                               up to 5 results in the snapshot.
+        active_hwnd:          Windows-only foreground window handle captured at
+                              hotkey time. Avoids re-detecting the overlay after
+                              focus has moved.
     """
     global _context_window
 
@@ -914,7 +1052,11 @@ def fetch_and_save(
     if _fs_observer is None:
         start_fs_watcher()
 
-    active_win = _fetch_active_window()
+    active_win = (
+        _fetch_window_info_win(int(active_hwnd))
+        if _IS_WIN and active_hwnd
+        else _fetch_active_window()
+    )
     _context_window = active_win  # cache so get_active_document_path() can use it after focus changes
 
     browser_content = ""
@@ -952,6 +1094,20 @@ def fetch_browser_content_for_tool(url: str) -> str:
     Returns "" on failure or if the URL is private/non-HTTP.
     """
     return _fetch_browser_content(url)
+
+
+def fetch_browser_content_for_window(url: str = "", hwnd: int = 0) -> str:
+    """
+    Read browser page text from a previously captured browser window handle,
+    falling back to an HTTP fetch of *url*. This is the query-time half of the
+    hotkey-time snapshot: the browser no longer needs to be foreground.
+    """
+    if not (url or hwnd):
+        return ""
+    try:
+        return _browser_content(WindowInfo(url=url, hwnd=int(hwnd)))
+    except Exception:
+        return ""
 
 
 # Apps that open documents whose content Claude might want to read.
@@ -1028,6 +1184,38 @@ _DOC_APP_TITLE_SUFFIXES: list[str] = [
     " \u2013 DataGrip",
     " \u2013 Android Studio",
 ]
+
+_DOC_APP_PROCESS_NAMES: set[str] = {
+    # Microsoft Office / viewers
+    "winword.exe", "winword",
+    "excel.exe", "excel",
+    "powerpnt.exe", "powerpnt",
+    "mspub.exe", "mspub",
+    "visio.exe", "visio",
+    "wordpad.exe", "wordpad",
+    # LibreOffice / OpenOffice
+    "soffice.exe", "soffice.bin", "soffice",
+    "swriter.exe", "swriter",
+    "scalc.exe", "scalc",
+    "simpress.exe", "simpress",
+    "sdraw.exe", "sdraw",
+    # PDF readers
+    "acrobat.exe", "acrord32.exe", "acrocef.exe",
+    "foxitpdfreader.exe", "foxitreader.exe",
+    "pdfxedit.exe", "pdfxview.exe", "pxceditor.exe",
+    "sumatrapdf.exe", "sumatrapdf",
+    # Plain-text / markdown editors
+    "notepad.exe", "notepad",
+    "notepad++.exe", "notepad++",
+    "sublime_text.exe", "sublime_text",
+    "typora.exe", "typora",
+    "zettlr.exe", "zettlr",
+    "marktext.exe", "marktext",
+    "gvim.exe", "gvim",
+    "emacs.exe", "emacs",
+}
+
+_DOC_TITLE_SEPARATORS: tuple[str, ...] = (" - ", " \u2013 ", " \u2014 ")
 
 def _config_dir() -> str:
     """Return the per-user config base directory for app data.
@@ -1334,10 +1522,21 @@ def _extract_doc_name_from_window(win: WindowInfo) -> str:
 
     proc_lower = (win.process_name or "").lower()
 
+    def _leading_title_piece() -> str:
+        for sep in _DOC_TITLE_SEPARATORS:
+            if sep in title:
+                return title.rsplit(sep, 1)[0].strip()
+        return title
+
     if proc_lower in ("obsidian.exe", "obsidian"):
         return re.sub(
             r"\s*-\s*Obsidian\s+v[\d.]+.*$", "", title, flags=re.IGNORECASE
         ).strip()
+
+    if proc_lower in ("notepad.exe", "notepad"):
+        # Notepad localizes the app name in the title bar, so process name is a
+        # more reliable signal than the visible suffix.
+        return _leading_title_piece()
 
     if proc_lower in _VSCODE_LIKE_STORAGE:
         for marker in _VSCODE_TITLE_MARKERS:
@@ -1348,6 +1547,11 @@ def _extract_doc_name_from_window(win: WindowInfo) -> str:
     for suffix in _DOC_APP_TITLE_SUFFIXES:
         if title.endswith(suffix):
             return title[: -len(suffix)].strip()
+
+    if proc_lower in _DOC_APP_PROCESS_NAMES:
+        # Localized Office/PDF/editor windows may not end in our English suffixes.
+        # Keep them eligible for open-file matching and UIA fallback.
+        return _leading_title_piece()
 
     return ""
 
@@ -1372,8 +1576,10 @@ def _resolve_doc_path(win: WindowInfo) -> str:
         if proc_lower in ("obsidian.exe", "obsidian"):
             return _obsidian_find_note(doc_name)
 
-        # Strip bracketed modifiers like "[Compatibility Mode]"
+        # Strip bracketed modifiers like "[Compatibility Mode]" and common
+        # unsaved/modified markers that editors prefix to the visible filename.
         doc_name = re.sub(r"\s*\[.*?\]\s*$", "", doc_name).strip()
+        doc_name = doc_name.lstrip("\u25cf\u2022*").strip()
         if not doc_name:
             return ""
 
@@ -1416,6 +1622,10 @@ def _resolve_doc_path(win: WindowInfo) -> str:
             mac_path = _mac_match_open_file(win.pid, doc_name)
             if mac_path:
                 return mac_path
+        elif _IS_WIN and win.pid:
+            win_path = _win_match_open_file(win.pid, doc_name)
+            if win_path:
+                return win_path
 
         # If it looks like an absolute path already, trust it.
         if os.path.isfile(doc_name):
@@ -1437,7 +1647,7 @@ def _resolve_doc_path(win: WindowInfo) -> str:
     return ""
 
 
-def get_active_document_path() -> str:
+def get_active_document_path(active_window: WindowInfo | None = None) -> str:
     """
     Try to find the full filesystem path of the document open in the
     foreground application window.  Returns "" if not detectable.
@@ -1445,7 +1655,12 @@ def get_active_document_path() -> str:
     Uses the window captured at hotkey time so the overlay's own window
     does not shadow the user's document after focus transfer.
     """
-    win = _context_window if _context_window is not None else _fetch_active_window()
+    if active_window is not None:
+        win = active_window
+    elif _context_window is not None:
+        win = _context_window
+    else:
+        win = _fetch_active_window()
     return _resolve_doc_path(win)
 
 
@@ -1489,7 +1704,7 @@ def _enumerate_open_doc_windows_win() -> list[WindowInfo]:
             proc_name = psutil.Process(pid.value).name()
         except Exception:
             pass
-        win = WindowInfo(title=title, process_name=proc_name, pid=pid.value)
+        win = WindowInfo(title=title, process_name=proc_name, pid=pid.value, hwnd=int(hwnd))
         if _extract_doc_name_from_window(win):
             results.append(win)
         return True
@@ -1590,8 +1805,27 @@ def _mac_open_files_for_pid(pid: int) -> list[str]:
     return paths
 
 
-def _mac_match_open_file(pid: int, doc_name: str) -> str:
-    candidates = _mac_open_files_for_pid(pid)
+def _win_open_files_for_pid(pid: int) -> list[str]:
+    if not _IS_WIN or pid <= 0:
+        return []
+    try:
+        import psutil  # type: ignore
+
+        proc = psutil.Process(pid)
+        paths: list[str] = []
+        seen: set[str] = set()
+        for item in proc.open_files() or []:
+            path = os.path.normpath(str(getattr(item, "path", "") or ""))
+            if not path or path in seen or not os.path.isfile(path):
+                continue
+            seen.add(path)
+            paths.append(path)
+        return paths
+    except Exception:
+        return []
+
+
+def _match_open_file_paths(candidates: list[str], doc_name: str) -> str:
     if not candidates:
         return ""
     target = os.path.basename((doc_name or "").strip()).lower()
@@ -1617,14 +1851,25 @@ def _mac_match_open_file(pid: int, doc_name: str) -> str:
     return ""
 
 
-def get_all_open_document_paths(max_docs: int = 5) -> list[str]:
+def _mac_match_open_file(pid: int, doc_name: str) -> str:
+    return _match_open_file_paths(_mac_open_files_for_pid(pid), doc_name)
+
+
+def _win_match_open_file(pid: int, doc_name: str) -> str:
+    return _match_open_file_paths(_win_open_files_for_pid(pid), doc_name)
+
+
+def get_all_open_document_paths(
+    max_docs: int = 5,
+    active_window: WindowInfo | None = None,
+) -> list[str]:
     """
     Resolve filesystem paths for ALL open doc-app windows, focused or not.
     Returns a deduplicated list of up to *max_docs* paths, with the window
     that had focus at hotkey time listed first (if resolvable).
     """
     # Put the hotkey-time window first so it has priority.
-    primary = get_active_document_path()
+    primary = get_active_document_path(active_window=active_window)
     seen: set[str] = set()
     paths: list[str] = []
     if primary:
@@ -1642,6 +1887,50 @@ def get_all_open_document_paths(max_docs: int = 5) -> list[str]:
     return paths
 
 
+def get_all_open_document_window_texts(
+    max_docs: int = 5,
+    max_chars_per_doc: int | None = None,
+    active_window: WindowInfo | None = None,
+) -> list[tuple[str, str]]:
+    """Read visible text directly from open document/editor windows.
+
+    This is a Windows fallback for cases where a document app exposes text via
+    UI Automation but does not expose a reliable filesystem path. Returns
+    ``(label, text)`` pairs. Empty/unreadable windows are skipped.
+    """
+    if not _IS_WIN:
+        return []
+    if max_chars_per_doc is None:
+        max_chars_per_doc = config.CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS
+
+    windows: list[WindowInfo] = []
+    seen_windows: set[int] = set()
+
+    primary = active_window or _context_window
+    if primary is not None and primary.hwnd and _extract_doc_name_from_window(primary):
+        windows.append(primary)
+        seen_windows.add(int(primary.hwnd))
+
+    for win in _enumerate_open_doc_windows():
+        if len(windows) >= max_docs:
+            break
+        if not win.hwnd or int(win.hwnd) in seen_windows:
+            continue
+        windows.append(win)
+        seen_windows.add(int(win.hwnd))
+
+    results: list[tuple[str, str]] = []
+    for win in windows:
+        if len(results) >= max_docs:
+            break
+        label = _extract_doc_name_from_window(win) or win.title or "Open document"
+        label = re.sub(r"\s*\[.*?\]\s*$", "", label).strip().lstrip("\u25cf\u2022*").strip()
+        text = _get_window_text_uia(win.hwnd, max_chars_per_doc) or ""
+        if text:
+            results.append((label or "Open document", text))
+    return results
+
+
 def format_context_for_prompt(snapshot: ContextSnapshot) -> str:
     """
     Format a ContextSnapshot as a compact plain-text block suitable for
@@ -1655,6 +1944,8 @@ def format_context_for_prompt(snapshot: ContextSnapshot) -> str:
         lines.append(f"- Active window: {win_str}")
     if w.url:
         lines.append(f"- Browser URL: {w.url}")
+    if snapshot.browser_content:
+        lines.append("[Browser/Web]\n" + snapshot.browser_content)
 
     cb = snapshot.clipboard
     if cb.fmt == "text" and cb.text:

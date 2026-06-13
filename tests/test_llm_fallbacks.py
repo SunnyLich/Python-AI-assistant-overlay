@@ -78,6 +78,82 @@ class LlmFallbackTests(unittest.TestCase):
                 )
             )
 
+    def test_vision_route_preserves_ambient_and_memory_context(self):
+        captured = {}
+
+        def fake_stream_openai(
+            user_message,
+            image_base64,
+            model,
+            client,
+            ambient_context="",
+            memory_context="",
+            **_kwargs,
+        ):
+            captured["user_message"] = user_message
+            captured["image_base64"] = image_base64
+            captured["ambient_context"] = ambient_context
+            captured["memory_context"] = memory_context
+            yield "ok"
+
+        with patch.object(llm, "_check_route_config"), \
+             patch.object(llm, "_normalize_model_for_provider", lambda _provider, model: model), \
+             patch.object(llm, "_dynamic_openai_client", return_value=object()), \
+             patch.object(llm, "_stream_openai_compat", side_effect=fake_stream_openai):
+            chunks = list(
+                llm._stream_single_response_route(
+                    "openai",
+                    "gpt-4o",
+                    "What is this?",
+                    "image-b64",
+                    "[Active document]\nDocument text",
+                    "[Session context]\nMemory text",
+                    False,
+                    "VISION_LLM",
+                )
+            )
+
+        self.assertEqual(chunks, ["ok"])
+        self.assertEqual(captured["image_base64"], "image-b64")
+        self.assertIn("Document text", captured["ambient_context"])
+        self.assertIn("Memory text", captured["memory_context"])
+
+    def test_codex_vision_input_text_includes_context(self):
+        captured = {}
+
+        def fake_response_stream(_client, kwargs, **_meta):
+            captured["kwargs"] = kwargs
+            yield "ok"
+
+        with patch.object(llm, "_response_stream_text", side_effect=fake_response_stream):
+            chunks = list(
+                llm._stream_codex_vision(
+                    "What is this?",
+                    "image-b64",
+                    "gpt-5",
+                    object(),
+                    "[Browser/Web]\nPage text",
+                    "[Session context]\nMemory text",
+                )
+            )
+
+        self.assertEqual(chunks, ["ok"])
+        content = captured["kwargs"]["input"][0]["content"]
+        input_text = content[0]["text"]
+        self.assertIn("Page text", input_text)
+        self.assertIn("Memory text", input_text)
+        self.assertEqual(content[1]["type"], "input_image")
+
+    def test_active_document_falls_back_to_window_text_when_no_path(self):
+        with patch("core.context_fetcher.get_all_open_document_paths", return_value=[]), \
+             patch(
+                 "core.context_fetcher.get_all_open_document_window_texts",
+                 return_value=[("Notes.txt", "hello from notepad")],
+             ):
+            text = llm.read_active_document_for_context()
+
+        self.assertEqual(text, "[Notes.txt]\nhello from notepad")
+
     def test_stream_with_fallbacks_cools_down_transient_503_and_summarizes_failures(self):
         class TransientError(RuntimeError):
             status_code = 503

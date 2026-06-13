@@ -16,7 +16,7 @@ top-level window gets the new chrome for free.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QObject, QEvent, QTimer
+from PySide6.QtCore import Qt, QObject, QEvent
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy,
@@ -102,6 +102,10 @@ class _TitleBar(QWidget):
         self._window = window
         self._theming = False
         self.setObjectName("wispTitleBar")
+        # A plain QWidget subclass ignores its stylesheet `background` unless it
+        # is told to paint a styled background — without this the bar shows the
+        # palette/parent colour and our theming has no visible effect.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(_TITLE_BAR_HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
@@ -137,26 +141,9 @@ class _TitleBar(QWidget):
             return
         self._theming = True
         try:
-            import os
-            import sys
             from ui.shared.theme import is_dark_mode, theme_colors
             c = theme_colors(is_dark_mode())
-            # TEMP probe: FORCE the custom bar bright green (env propagation through
-            # the launcher/supervisor was unreliable). If the top bar turns green
-            # it's ours (a stylesheet issue); if a dark bar remains it's the native
-            # window-manager decoration. Revert immediately after diagnosing.
-            _ = os.environ  # (env probe removed; forcing unconditionally)
-            c = {**c, "bg": "#00ff00", "border": "#ff00ff", "text": "#000000"}
             self.setStyleSheet(_title_bar_qss(c))
-            frameless = bool(
-                self._window.windowFlags() & Qt.WindowType.FramelessWindowHint
-            )
-            print(  # TEMP
-                f"[diag] titlebar render: title={self._window.windowTitle()!r} "
-                f"bg={c['bg']} frameless={frameless} visible={self.isVisible()} "
-                f"height={self.height()} flags={hex(int(self._window.windowFlags()))}",
-                file=sys.stderr, flush=True,
-            )
             glyph = QColor(c["text"])
             for b in (self._min_btn, self._max_btn, self._close_btn):
                 b.set_glyph_color(glyph)
@@ -266,26 +253,6 @@ class _WindowChrome(QObject):
 
         self._make_grips()
         self._reposition_grips()
-        QTimer.singleShot(700, self._diag_post_show)  # TEMP
-
-    def _diag_post_show(self) -> None:  # TEMP
-        import sys
-        w = self._window
-        fg = w.frameGeometry()
-        g = w.geometry()
-        deco_h = g.y() - fg.y()  # >0 means the WM added a title bar above us
-        deco_w = (fg.width() - g.width())
-        tb = self._title_bar
-        print(
-            f"[diag] post_show: title={w.windowTitle()!r} "
-            f"frameGeo={fg.width()}x{fg.height()}@{fg.x()},{fg.y()} "
-            f"clientGeo={g.width()}x{g.height()}@{g.x()},{g.y()} "
-            f"wm_deco_top={deco_h} wm_deco_width={deco_w} "
-            f"titlebar_visible={tb.isVisible() if tb else None} "
-            f"titlebar_geo={tb.geometry().x()},{tb.geometry().y()},{tb.width()}x{tb.height()} "
-            f"win_layout_count={w.layout().count() if w.layout() else None}",
-            file=sys.stderr, flush=True,
-        )
 
     def _make_grips(self) -> None:
         w = self._window

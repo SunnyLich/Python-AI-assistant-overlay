@@ -49,25 +49,6 @@ def is_dark_mode() -> bool:
         return False
 
 
-def diag(tag: str) -> None:
-    """TEMP diagnostic: print theme state to stderr with a [diag] prefix.
-
-    The supervisor forwards [diag] lines to the terminal at INFO, so these are
-    visible live while debugging the title-bar/content theme mismatch.
-    """
-    import sys
-    app = QApplication.instance()
-    try:
-        scheme = repr(app.styleHints().colorScheme()) if app is not None else "no-app"
-    except Exception as exc:  # noqa: BLE001
-        scheme = f"err:{exc}"
-    print(
-        f"[diag] theme.{tag}: THEME_MODE={getattr(config, 'THEME_MODE', '?')!r} "
-        f"colorScheme={scheme} is_dark_mode={is_dark_mode()}",
-        file=sys.stderr, flush=True,
-    )
-
-
 def _hex(c: QColor) -> str:
     return f"#{c.red():02x}{c.green():02x}{c.blue():02x}"
 
@@ -281,7 +262,6 @@ def apply_app_theme(app: QApplication | None = None) -> None:
     if app is None:
         return
 
-    diag("apply_app_theme")  # TEMP
     _apply_color_scheme_hint(app)
 
     c = theme_colors()

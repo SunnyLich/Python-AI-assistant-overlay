@@ -46,5 +46,5 @@ print(json.dumps({"content": f"You asked for: {query}"}))
 
 - Tools are only invoked when the caller has `use_tools = true` in its config.
 - Restart the app (or re-save Settings) after adding tools so the registry refreshes.
-- You can also override the tools directory via `.env`: `TOOL_PLUGIN_DIR=path/to/dir`
-- For in-process tools that need access to app internals, use a **mod** in `plugins/` instead.
+- You can also override the legacy tools directory via `.env`: `TOOL_PLUGIN_DIR=path/to/dir`
+- For tools that need app hooks, settings, tray actions, or addon-managed state, use an **addon** in `addons/` instead.

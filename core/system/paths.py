@@ -76,5 +76,6 @@ MEMORY_DIR        = REPO_ROOT / "memory"
 AGENT_RUNS_DIR    = MEMORY_DIR / "agent_runs"
 TOOLS_INSTALLED_DIR = REPO_ROOT / "tools" / "installed"
 MODEL_TOOLS_DIR     = REPO_ROOT / "model_tools"
-PLUGINS_DIR         = REPO_ROOT / "plugins"
+ADDONS_DIR          = REPO_ROOT / "addons"
+PLUGINS_DIR         = ADDONS_DIR  # compatibility name for older plugin-manager callers
 TOOL_KEYWORDS_FILE  = REPO_ROOT / "tool_keywords.json"

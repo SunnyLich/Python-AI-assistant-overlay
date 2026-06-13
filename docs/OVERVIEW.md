@@ -31,7 +31,8 @@ OS work, audio, and brain/model work into isolated worker processes.
   domains and shared widget helpers.
 - Root-level modules such as `core.llm`, `core.agent_runner`, `ui.settings`, and
   `ui.agent_task_mockup` are compatibility aliases for older imports.
-- `tools/installed/` is the local script-tool plugin directory discovered by
+- `addons/` contains process-hosted addons discovered by `core.addon_manager`.
+- `tools/installed/` is the legacy local script-tool directory discovered by
   `core.tool_registry`.
 - `tests/` covers parser helpers, config/settings behavior, model route
   fallback logic, tool discovery, secret storage, TTS config, macOS worker
@@ -39,14 +40,17 @@ OS work, audio, and brain/model work into isolated worker processes.
 - `macos_py/` contains the pure-Python supervisor, worker processes, and the
   headless brain package used by the app.
 
-## Plugin Contract
+## Addon Contract
 
-Plugins belong in the shared Python plugin/runtime layer: Python packages under
-`plugins/<name>/__init__.py` and local script tools under `tools/installed/`.
-Both Windows and macOS discover the same plugin metadata, hooks, tray actions,
-and model-callable tools from that shared layer. Plugin-specific business logic,
-provider calls, hooks, tools, and future custom plugin behavior stay in Python
-so a plugin does not need separate Windows and macOS implementations.
+Addons belong in the shared Python runtime layer: Python packages under
+`addons/<id>/` with an `addon.toml` manifest. Each enabled addon runs in its own
+Python host process and communicates with Wisp over JSON IPC. Both Windows and
+macOS discover the same addon metadata, hooks, tray actions, settings, and
+model-callable tools from that shared layer.
+
+The old `core.plugin_manager` import path remains as a compatibility facade for
+callers and older addon code, but new work should use addon naming and
+`core.addon_manager`.
 
 ## Runtime Flow
 

@@ -1,0 +1,13 @@
+[addon]
+id = "healthcheck"
+name = "Healthcheck"
+version = "1.0.0"
+description = "Diagnostic addon that logs hook calls and contributes a ping tool."
+entry = "__init__.py"
+api_version = "1"
+
+[permissions]
+query = "read"
+response = "read"
+tools = true
+ui = ["tray", "settings"]

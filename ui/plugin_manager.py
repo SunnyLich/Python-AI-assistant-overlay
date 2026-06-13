@@ -1,9 +1,4 @@
-"""
-ui/plugin_manager.py -- Plugin Manager dialog.
-
-Shows all loaded mods, their status, and any tray actions they expose.
-Opened from the tray menu via "Plugin Manager...".
-"""
+"""Addon Manager dialog."""
 from __future__ import annotations
 
 import os
@@ -25,7 +20,7 @@ _TRUE = {"1", "true", "yes", "on"}
 class PluginManagerDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Plugin Manager")
+        self.setWindowTitle("Addon Manager")
         self.setModal(False)
         enable_standard_window_controls(self)
         self._build_ui()
@@ -36,20 +31,19 @@ class PluginManagerDialog(QDialog):
         root.setContentsMargins(20, 20, 20, 20)
         root.setSpacing(12)
 
-        # Header
-        title = QLabel("Mods")
+        title = QLabel("Addons")
         title.setStyleSheet("font-size: 15pt; font-weight: 700;")
         root.addWidget(title)
 
         subtitle = QLabel(
-            "Mods are Python packages in the <code>plugins/</code> folder. "
-            "They extend the app with lifecycle hooks, tray actions, and model tools."
+            "Addons are Python packages in the <code>addons/</code> folder. "
+            "Each addon runs in its own host process."
         )
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("font-size: 9pt; opacity: 0.7;")
         root.addWidget(subtitle)
 
-        # Scrollable mod list
+        # Scrollable addon list
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -61,19 +55,19 @@ class PluginManagerDialog(QDialog):
         try:
             from core.plugin_manager import get_manager
             self._manager = get_manager()
-            mods = self._manager._mods  # access internal list for display
+            plugins = self._manager.summaries() if hasattr(self._manager, "summaries") else []
         except RuntimeError:
             self._manager = None
-            mods = []
+            plugins = []
 
-        if not mods:
-            empty = QLabel("No mods loaded. Drop a folder with __init__.py into plugins/.")
+        if not plugins:
+            empty = QLabel("No addons loaded. Drop a folder with addon.toml into addons/.")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             empty.setStyleSheet("opacity: 0.5; font-size: 10pt;")
             inner_layout.addWidget(empty)
         else:
-            for mod in mods:
-                inner_layout.addWidget(self._mod_card(mod))
+            for plugin in plugins:
+                inner_layout.addWidget(self._mod_card(plugin))
 
         inner_layout.addStretch()
         scroll.setWidget(inner)
@@ -83,7 +77,7 @@ class PluginManagerDialog(QDialog):
         footer = QHBoxLayout()
         footer.setSpacing(8)
 
-        open_btn = QPushButton("Open plugins folder")
+        open_btn = QPushButton("Open addons folder")
         open_btn.clicked.connect(self._open_plugins_folder)
         footer.addWidget(open_btn)
         footer.addStretch()
@@ -93,7 +87,7 @@ class PluginManagerDialog(QDialog):
         footer.addWidget(close_btn)
         root.addLayout(footer)
 
-    def _mod_card(self, mod) -> QFrame:
+    def _mod_card(self, plugin: dict) -> QFrame:
         card = QFrame()
         card.setObjectName("modCard")
         card.setStyleSheet("""
@@ -107,60 +101,63 @@ class PluginManagerDialog(QDialog):
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(6)
 
-        # Mod name row, with an enable toggle on the right
         name_row = QHBoxLayout()
-        name_lbl = QLabel(mod.name)
+        name = str(plugin.get("name") or plugin.get("id") or "Addon")
+        addon_id = str(plugin.get("id") or name)
+        name_lbl = QLabel(name)
         name_lbl.setStyleSheet("font-size: 11pt; font-weight: 600;")
         name_row.addWidget(name_lbl)
         name_row.addStretch()
 
         enable = QCheckBox("Enabled")
-        enable.setChecked(bool(getattr(mod, "enabled", True)))
+        enable.setChecked(bool(plugin.get("enabled", True)))
         name_row.addWidget(enable)
         layout.addLayout(name_row)
 
-        # Module file path as subtitle
-        mod_file = getattr(mod.module, "__file__", None)
-        if mod_file:
-            path_lbl = QLabel(str(Path(mod_file).parent))
+        description = str(plugin.get("description") or "")
+        if description:
+            desc_lbl = QLabel(description)
+            desc_lbl.setWordWrap(True)
+            desc_lbl.setStyleSheet("font-size: 8pt; opacity: 0.65;")
+            layout.addWidget(desc_lbl)
+
+        path = str(plugin.get("path") or "")
+        if path:
+            path_lbl = QLabel(path)
             path_lbl.setStyleSheet("font-size: 8pt; opacity: 0.45;")
             layout.addWidget(path_lbl)
 
-        # Hooks summary
-        hook_names = [
-            h for h in ("on_startup", "on_shutdown", "before_query",
-                         "after_response", "get_tools", "get_tray_actions",
-                         "get_settings", "get_system_prompt_section")
-            if hasattr(mod.module, h)
-        ]
+        hook_names = [str(h) for h in (plugin.get("hooks") or [])]
         if hook_names:
             hooks_lbl = QLabel("Hooks: " + ", ".join(hook_names))
             hooks_lbl.setStyleSheet("font-size: 8pt; opacity: 0.55;")
             layout.addWidget(hooks_lbl)
 
-        # Model tools contributed
-        try:
-            fn = getattr(mod.module, "get_tools", None)
-            tools = fn() if fn else []
-        except Exception:
-            tools = []
+        tools = [str(t) for t in (plugin.get("tools") or [])]
         if tools:
-            tool_names = [t.get("name", "?") for t in tools if isinstance(t, dict)]
-            tools_lbl = QLabel("Model tools: " + ", ".join(tool_names))
+            tools_lbl = QLabel("Model tools: " + ", ".join(tools))
             tools_lbl.setStyleSheet("font-size: 8pt; opacity: 0.55;")
             layout.addWidget(tools_lbl)
 
-        # Per-mod settings (replaces the old tray-action buttons)
-        settings = []
-        if self._manager is not None:
-            settings = self._manager.get_settings(mod.name)
-        settings_box = self._settings_box(mod.name, settings)
+        permissions = plugin.get("permissions") or {}
+        if permissions:
+            perms_lbl = QLabel("Permissions: " + ", ".join(sorted(str(k) for k in permissions.keys())))
+            perms_lbl.setStyleSheet("font-size: 8pt; opacity: 0.55;")
+            layout.addWidget(perms_lbl)
+
+        settings_box = self._settings_box(addon_id, plugin.get("settings") or [])
         if settings_box is not None:
             settings_box.setEnabled(enable.isChecked())
             layout.addWidget(settings_box)
 
-        # Toggle enable; grey out settings when disabled
-        def _on_toggle(checked: bool, _name=mod.name, _box=settings_box):
+        error = str(plugin.get("error") or "")
+        if error:
+            err_lbl = QLabel(error.splitlines()[-1] if "\n" in error else error)
+            err_lbl.setWordWrap(True)
+            err_lbl.setStyleSheet("font-size: 8pt; color: #b00020;")
+            layout.addWidget(err_lbl)
+
+        def _on_toggle(checked: bool, _name=addon_id, _box=settings_box):
             if self._manager is not None:
                 self._manager.set_enabled(_name, checked)
             if _box is not None:
@@ -219,8 +216,8 @@ class PluginManagerDialog(QDialog):
 
     @staticmethod
     def _open_plugins_folder():
-        from core.system.paths import PLUGINS_DIR
-        path = str(PLUGINS_DIR)
+        from core.system.paths import ADDONS_DIR
+        path = str(ADDONS_DIR)
         if sys.platform == "win32":
             os.startfile(path)
         elif sys.platform == "darwin":

@@ -46,7 +46,7 @@ class OverlaySignals(QObject):
     show_last_chat         = Signal()        # tray "Last chat" clicked
     chat_new_conversation  = Signal()        # a voice query created a new conversation
     show_memory_viewer     = Signal()        # tray "Memory-¦" clicked
-    show_plugin_manager    = Signal()        # tray "Plugin Manager" clicked
+    show_plugin_manager    = Signal()        # tray "Addon Manager" clicked
     show_agent_task        = Signal()        # tray "Start agent task" clicked
     show_agent_history     = Signal()        # tray "Agent task history" clicked
     context_items_dropped  = Signal(object)  # list[(name, content, type)] from drag-drop
@@ -239,7 +239,7 @@ class IconOverlay(QMainWindow):
         menu.addAction(self._icon_toggle_action)
         menu.addSeparator()
         menu.addAction(memory_action)
-        plugin_manager_action = QAction("Plugin Manager", self)
+        plugin_manager_action = QAction("Addon Manager", self)
         if os.environ.get("WISP_MACOS_PY_UI_HOST") == "1":
             plugin_manager_action.triggered.connect(self.signals.show_plugin_manager.emit)
         else:

@@ -194,8 +194,8 @@ class App(QObject):
     def __init__(self):
         super().__init__()  # QObject base — before any attribute assignment or signal wiring
 
-        from core.system.paths import PLUGINS_DIR
-        self._plugin_manager = _plugin_manager_mod.init(PLUGINS_DIR)
+        from core.system.paths import ADDONS_DIR
+        self._plugin_manager = _plugin_manager_mod.init(ADDONS_DIR)
 
         configure_windows_app_identity()
         self._qt = QApplication(sys.argv)

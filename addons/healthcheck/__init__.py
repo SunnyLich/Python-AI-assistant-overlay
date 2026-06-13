@@ -1,14 +1,4 @@
-"""
-healthcheck — a tiny Wisp mod that proves the plugin system is wired up.
-
-Every hook appends a timestamped line to ``healthcheck.log`` next to this file
-(and also prints to stderr, which the brain worker captures to
-``wisp-brain.stderr.log``), and it contributes one model tool the LLM can call.
-
-This is a diagnostic / smoke-test mod — safe to delete.
-
-SECURITY: Mods run in-process with full Python access. Only install mods you trust.
-"""
+"""Diagnostic addon that proves the addon host system is wired up."""
 from __future__ import annotations
 
 import datetime
@@ -31,7 +21,7 @@ def _log(event: str) -> None:
             f.write(line)
     except Exception:
         pass
-    print(f"[plugin:healthcheck] {_prefix()} {event}", file=sys.stderr, flush=True)
+    print(f"[addon:healthcheck] {_prefix()} {event}", file=sys.stderr, flush=True)
 
 
 def get_settings() -> list[dict]:
@@ -41,21 +31,21 @@ def get_settings() -> list[dict]:
             "label": "Log prefix",
             "type": "text",
             "default": "[healthcheck]",
-            "help": "Text prefixed to every line this mod writes to stderr.",
+            "help": "Text prefixed to every line this addon writes to stderr.",
         },
         {
-            "key": "echo_emoji",
-            "label": "Echo emoji in pong",
-            "type": "bool",
-            "default": "false",
-            "help": "Append a checkmark to healthcheck_ping replies.",
+            "key": "echo_suffix",
+            "label": "Echo suffix",
+            "type": "text",
+            "default": "",
+            "help": "Text appended to healthcheck_ping replies.",
         },
     ]
 
 
 def on_startup(app_context) -> None:
     provider = getattr(app_context.config, "LLM_PROVIDER", "?")
-    _log(f"on_startup fired — LLM_PROVIDER={provider}, signals={app_context.signals!r}")
+    _log(f"on_startup fired; LLM_PROVIDER={provider}, data_dir={app_context.data_dir}")
 
 
 def on_shutdown() -> None:
@@ -63,12 +53,12 @@ def on_shutdown() -> None:
 
 
 def before_query(prompt: str, context: str) -> tuple[str, str]:
-    _log(f"before_query fired — prompt={prompt[:60]!r}")
+    _log(f"before_query fired; prompt={prompt[:60]!r}")
     return prompt, context
 
 
 def after_response(text: str) -> None:
-    _log(f"after_response fired — {len(text)} chars")
+    _log(f"after_response fired; {len(text)} chars")
 
 
 def get_tray_actions() -> list[dict]:
@@ -76,7 +66,6 @@ def get_tray_actions() -> list[dict]:
 
 
 def _on_tray_click() -> None:
-    # Runs headless in the brain worker — logging/side effects only, no UI.
     _log("tray action clicked")
 
 
@@ -84,10 +73,7 @@ def get_tools() -> list[dict]:
     return [
         {
             "name": "healthcheck_ping",
-            "description": (
-                "Diagnostic tool from the healthcheck mod. Returns 'pong' and "
-                "logs the call. Use it to confirm plugin tools are callable."
-            ),
+            "description": "Diagnostic tool from the healthcheck addon. Returns pong and logs the call.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -102,8 +88,6 @@ def get_tools() -> list[dict]:
 
 def _ping_executor(inputs: dict) -> str:
     note = str((inputs or {}).get("note", "")).strip()
-    _log(f"healthcheck_ping executed — note={note!r}")
-    reply = f"pong{(' — ' + note) if note else ''}"
-    if str(plugin_setting("healthcheck", "echo_emoji", "false")).strip().lower() in ("1", "true", "yes", "on"):
-        reply += " ✓"
-    return reply
+    suffix = str(plugin_setting("healthcheck", "echo_suffix", "")).strip()
+    _log(f"healthcheck_ping executed; note={note!r}")
+    return "pong" + (f" - {note}" if note else "") + (f" {suffix}" if suffix else "")

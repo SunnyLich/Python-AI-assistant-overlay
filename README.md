@@ -57,6 +57,7 @@ Click the icon at any time to open a full chat window for deeper conversations w
 - **Rewrite & paste** — `Ctrl+Shift+Q` rewrites selected text (fix grammar, simplify, change tone) and pastes the result back in place in one motion
 - **Remembers you** — a local vector database stores facts across sessions; the most relevant ones surface automatically on every query
 - **Bring your own model** — Groq, Anthropic, OpenAI, Google, DeepSeek, OpenRouter, Mistral, Ollama, GitHub Copilot, and more
+- **Addons** — extend Wisp with query hooks, tray actions, settings, and model-callable tools; each addon runs in its own process
 - **Feels instant** — filler audio plays in milliseconds to mask the LLM round-trip; the real answer usually arrives before the filler finishes
 - **Stays out of the way** — icon auto-hides when idle, pops up on hotkey, disappears after the answer fades out
 
@@ -247,6 +248,21 @@ On every query, the top-k most relevant facts are pulled by semantic similarity 
 ## Agent framework
 
 `core/agent/` is an experimental background task runner for bigger jobs — think multi-step automations rather than quick lookups. Each task runs in a sandboxed workspace, logs every step auditably, and asks for approval before mutating files. Still early; not yet wired into the main UI.
+
+---
+
+## Addons
+
+Addons live under `addons/<id>/` and declare an `addon.toml` manifest. They can
+observe or modify query context, observe responses, contribute tray actions,
+expose settings, and register model-callable tools.
+
+Each enabled addon runs in its own Python host process. A crashing or stuck
+addon is isolated from the brain worker and from other addons; Wisp talks to it
+over a small JSON IPC protocol.
+
+Start with [addons/README.md](addons/README.md) and the reference
+`addons/healthcheck` addon.
 
 ---
 

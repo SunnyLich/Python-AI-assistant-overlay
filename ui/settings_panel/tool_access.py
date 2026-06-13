@@ -139,7 +139,7 @@ class ToolAccessDialog(QDialog):
 
         layout.addWidget(_separator())
 
-        # ── Installed + plugin tools (default: off) ───────────────────────
+        # ── Installed + addon tools (default: off) ───────────────────────
         extra_hdr = QLabel("INSTALLED + PLUGIN TOOLS")
         extra_hdr.setObjectName("sectionHeader")
         layout.addWidget(extra_hdr)
@@ -148,7 +148,7 @@ class ToolAccessDialog(QDialog):
         if not extra:
             empty = QLabel(
                 "<small>No extra tools found. Install script tools under the "
-                "tool plugin folder, or enable plugins that add tools.</small>"
+                "legacy tool folder, or enable addons that add tools.</small>"
             )
             empty.setWordWrap(True)
             layout.addWidget(empty)
@@ -211,7 +211,7 @@ class ToolAccessDialog(QDialog):
         """Per-tool modes that deviate from each tool's default.
 
         Context tools left matching their dropdown-derived state store nothing
-        (they keep following the dropdown); installed/plugin tools left Off
+        (they keep following the dropdown); installed/addon tools left Off
         store nothing. Everything else round-trips via format_tool_modes().
         """
         result: dict[str, str] = {}

@@ -1279,7 +1279,7 @@ class SettingsDialog(QDialog):
         limits_layout.addRow("Browser fetch chars", self._fields["CONTEXT_BROWSER_MAX_CHARS"])
         limits_layout.addRow("Auto document chars", self._fields["CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS"])
         limits_layout.addRow("Tool document chars", self._fields["CONTEXT_TOOL_DOCUMENT_MAX_CHARS"])
-        limits_layout.addRow("Tool plugin folder", self._fields["TOOL_PLUGIN_DIR"])
+        limits_layout.addRow("Legacy tool folder", self._fields["TOOL_PLUGIN_DIR"])
         caller_cv.addWidget(limits_fw)
 
         self._callers_container = QWidget()
@@ -1322,7 +1322,7 @@ class SettingsDialog(QDialog):
         voice_hdr_h.addWidget(voice_lbl)
         voice_hdr_h.addStretch()
         voice_tools_btn = QPushButton("Allowed tools…")
-        voice_tools_btn.setToolTip("Choose which installed/plugin tools voice queries may use")
+        voice_tools_btn.setToolTip("Choose which installed/addon tools voice queries may use")
         voice_hdr_h.addWidget(voice_tools_btn)
         voice_cv.addWidget(voice_hdr)
 
@@ -1545,7 +1545,7 @@ class SettingsDialog(QDialog):
 
         hdr_h.addStretch()
         tools_btn = QPushButton("Allowed tools…")
-        tools_btn.setToolTip("Choose which installed/plugin tools this hotkey may use")
+        tools_btn.setToolTip("Choose which installed/addon tools this hotkey may use")
         hdr_h.addWidget(tools_btn)
         del_caller_btn = QPushButton("X Remove")
         hdr_h.addWidget(del_caller_btn)
@@ -3340,5 +3340,4 @@ def open_settings(parent=None, on_apply=None):
     _settings_dialog.show()
     _settings_dialog.raise_()
     _settings_dialog.activateWindow()
-
 

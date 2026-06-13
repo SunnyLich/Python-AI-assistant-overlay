@@ -1213,7 +1213,7 @@ class QtProtocolHost:
             self._plugins_dialog = None
 
         dialog = QDialog()
-        dialog.setWindowTitle("Plugin Manager")
+        dialog.setWindowTitle("Addon Manager")
         dialog.setModal(False)
         root = QVBoxLayout(dialog)
         root.setContentsMargins(20, 20, 20, 20)
@@ -1247,7 +1247,7 @@ class QtProtocolHost:
 
         footer = QHBoxLayout()
         if plugins_dir:
-            open_btn = QPushButton("Open plugins folder")
+            open_btn = QPushButton("Open addons folder")
             open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(plugins_dir)))
             footer.addWidget(open_btn)
         footer.addStretch()

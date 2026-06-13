@@ -510,10 +510,10 @@ def brain_settings_reset_credentials() -> dict[str, Any]:
 
 @handler("brain.plugins.list")
 def brain_plugins_list() -> dict[str, Any]:
-    """Return loaded/discoverable plugins for the Python macOS plugin manager."""
-    from core.system.paths import PLUGINS_DIR
+    """Return loaded/discoverable addons for the Python macOS addon manager."""
+    from core.system.paths import ADDONS_DIR
 
-    plugins_dir = Path(PLUGINS_DIR)
+    plugins_dir = Path(ADDONS_DIR)
     return {
         "plugins_dir": str(plugins_dir),
         "plugins": _plugin_summaries(plugins_dir),
@@ -522,7 +522,7 @@ def brain_plugins_list() -> dict[str, Any]:
 
 @handler("brain.plugins.run_action")
 def brain_plugins_run_action(plugin_name: str = "", label: str = "") -> dict[str, Any]:
-    """Run a loaded plugin tray action by plugin name and label."""
+    """Run a loaded addon tray action by addon name/id and label."""
     plugin_name = plugin_name.strip()
     label = label.strip()
     if not plugin_name:
@@ -530,53 +530,38 @@ def brain_plugins_run_action(plugin_name: str = "", label: str = "") -> dict[str
     if not label:
         raise ValueError("label is required")
 
-    from core.system.paths import PLUGINS_DIR
+    from core.system.paths import ADDONS_DIR
 
-    manager = _loaded_plugin_manager(Path(PLUGINS_DIR))
-    for mod in getattr(manager, "_mods", []):
-        if str(getattr(mod, "name", "")) != plugin_name:
-            continue
-        module = getattr(mod, "module", None)
-        actions_fn = getattr(module, "get_tray_actions", None)
-        actions = actions_fn() if callable(actions_fn) else []
-        for item in actions if isinstance(actions, list) else []:
-            if not isinstance(item, dict) or str(item.get("label", "")) != label:
-                continue
-            callback = item.get("callback")
-            if not callable(callback):
-                raise ValueError(f"Plugin action is not callable: {plugin_name} / {label}")
-            callback()
-            return {"ok": True, "message": f"Ran plugin action: {plugin_name} / {label}"}
-        raise ValueError(f"Plugin action not found: {plugin_name} / {label}")
-
-    raise ValueError(f"Plugin not loaded: {plugin_name}")
+    manager = _loaded_plugin_manager(Path(ADDONS_DIR))
+    manager.run_tray_action(plugin_name, label)
+    return {"ok": True, "message": f"Ran addon action: {plugin_name} / {label}"}
 
 
 @handler("brain.plugins.set_enabled")
 def brain_plugins_set_enabled(plugin_name: str = "", enabled: bool = True) -> dict[str, Any]:
-    """Enable or disable a loaded plugin; persists to .env and applies live."""
+    """Enable or disable a loaded addon; persists to addons.json and applies live."""
     plugin_name = plugin_name.strip()
     if not plugin_name:
         raise ValueError("plugin_name is required")
-    from core.system.paths import PLUGINS_DIR
+    from core.system.paths import ADDONS_DIR
 
-    manager = _loaded_plugin_manager(Path(PLUGINS_DIR))
+    manager = _loaded_plugin_manager(Path(ADDONS_DIR))
     state = manager.set_enabled(plugin_name, bool(enabled))
     return {"ok": True, "name": plugin_name, "enabled": bool(state)}
 
 
 @handler("brain.plugins.set_setting")
 def brain_plugins_set_setting(plugin_name: str = "", key: str = "", value: Any = "") -> dict[str, Any]:
-    """Persist a single plugin setting value to .env."""
+    """Persist a single addon setting value to addons.json."""
     plugin_name = plugin_name.strip()
     key = str(key).strip()
     if not plugin_name:
         raise ValueError("plugin_name is required")
     if not key:
         raise ValueError("key is required")
-    from core.system.paths import PLUGINS_DIR
+    from core.system.paths import ADDONS_DIR
 
-    manager = _loaded_plugin_manager(Path(PLUGINS_DIR))
+    manager = _loaded_plugin_manager(Path(ADDONS_DIR))
     manager.set_setting(plugin_name, key, value)
     return {"ok": True, "name": plugin_name, "key": key}
 
@@ -584,6 +569,8 @@ def brain_plugins_set_setting(plugin_name: str = "", key: str = "", value: Any =
 def _plugin_summaries(plugins_dir: Path) -> list[dict[str, Any]]:
     try:
         manager = _loaded_plugin_manager(plugins_dir)
+        if hasattr(manager, "summaries"):
+            return manager.summaries()
         mods = getattr(manager, "_mods", [])
         return [_loaded_plugin_payload(mod, manager) for mod in mods]
     except Exception:
@@ -618,14 +605,14 @@ def run_plugin_startup() -> None:
     _plugin_startup_done = True
     try:
         import config
-        from core.system.paths import PLUGINS_DIR
+        from core.system.paths import ADDONS_DIR
         from core.llm_clients.client import get_tool_registry
 
         plugin_manager = importlib.import_module("core.plugin_manager")
         try:
             manager = plugin_manager.get_manager()
         except Exception:
-            manager = plugin_manager.init(Path(PLUGINS_DIR))
+            manager = plugin_manager.init(Path(ADDONS_DIR))
         manager.on_startup(
             plugin_manager.AppContext(
                 signals=None,
@@ -682,10 +669,12 @@ def _discover_plugin_payloads(plugins_dir: Path) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
     for child in sorted(p for p in plugins_dir.iterdir() if p.is_dir()):
         init_path = child / "__init__.py"
-        if not init_path.exists():
+        manifest_path = child / "addon.toml"
+        if not init_path.exists() and not manifest_path.exists():
             continue
-        hooks = _declared_hook_names(init_path)
+        hooks = _declared_hook_names(init_path) if init_path.exists() else []
         payloads.append({
+            "id": child.name,
             "name": child.name,
             "path": str(child),
             "status": "discovered",
@@ -694,6 +683,8 @@ def _discover_plugin_payloads(plugins_dir: Path) -> list[dict[str, Any]]:
             "tray_actions": [],
             "tools": [],
             "settings": [],
+            "permissions": {},
+            "description": "",
             "error": "",
         })
     return payloads
@@ -1148,12 +1139,12 @@ def _apply_frontloaded_tools(built: Any, frontload_tools: list[str] | None) -> A
 
 def _apply_plugin_before_query(built: Any) -> Any:
     try:
-        from core.system.paths import PLUGINS_DIR
+        from core.system.paths import ADDONS_DIR
 
         # Ensure on_startup ran and plugin get_tools are registered before the
         # LLM gathers tools for this query.
         run_plugin_startup()
-        user_message, ambient_ctx = _loaded_plugin_manager(Path(PLUGINS_DIR)).before_query(
+        user_message, ambient_ctx = _loaded_plugin_manager(Path(ADDONS_DIR)).before_query(
             getattr(built, "user_message", ""),
             getattr(built, "ambient_ctx", ""),
         )
@@ -1171,9 +1162,9 @@ def _notify_plugin_after_response(text: str) -> None:
     if not text:
         return
     try:
-        from core.system.paths import PLUGINS_DIR
+        from core.system.paths import ADDONS_DIR
 
-        _loaded_plugin_manager(Path(PLUGINS_DIR)).after_response(text)
+        _loaded_plugin_manager(Path(ADDONS_DIR)).after_response(text)
     except Exception as exc:  # noqa: BLE001 - plugin hooks should not block answering
         _log(f"plugin after_response skipped: {type(exc).__name__}: {exc}")
 

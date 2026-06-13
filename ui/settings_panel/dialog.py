@@ -285,7 +285,8 @@ class SettingsDialog(QDialog):
     """
 
     def _apply_dialog_theme(self):
-        from ui.shared.theme import is_dark_mode
+        from ui.shared.theme import diag, is_dark_mode
+        diag("settings_content")  # TEMP
         self.setStyleSheet(self._dialog_style(is_dark_mode()))
 
     def _build_ui(self):

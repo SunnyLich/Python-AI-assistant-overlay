@@ -137,7 +137,8 @@ class _TitleBar(QWidget):
             return
         self._theming = True
         try:
-            from ui.shared.theme import is_dark_mode, theme_colors
+            from ui.shared.theme import diag, is_dark_mode, theme_colors
+            diag(f"titlebar({self._window.windowTitle()!r})")  # TEMP
             c = theme_colors(is_dark_mode())
             self.setStyleSheet(_title_bar_qss(c))
             glyph = QColor(c["text"])

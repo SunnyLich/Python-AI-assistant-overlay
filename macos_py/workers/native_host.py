@@ -575,6 +575,7 @@ def context_snapshot(
         "clipboard_text": "",
         "browser_url": "",
         "browser_hwnd": 0,
+        "browser_app": "",
         "browser_content": "",
         "focus_token": 0,
         "captured_at": time.time(),
@@ -617,6 +618,32 @@ def context_snapshot(
         except Exception as exc:  # noqa: BLE001 - browser context should not block answering
             snapshot["browser_error"] = f"{type(exc).__name__}: {exc}"
         br_dt = time.monotonic() - _s
+    elif include_browser_url and IS_MAC:
+        # macOS: the browser is the frontmost app at hotkey time. Grab its active
+        # tab URL now (cheap AppleScript) and remember which browser it was; the
+        # page TEXT is read later via native.context.browser_content using
+        # browser_app, since osascript reads the named app's front window without
+        # needing focus (there is no read-by-handle on macOS).
+        _s = time.monotonic()
+        try:
+            from core.context_fetcher import _BROWSER_PROCS_MAC, _mac_browser_url
+
+            app_name = str(active.get("name") or "")
+            if app_name.lower() in _BROWSER_PROCS_MAC:
+                url = _mac_browser_url(app_name)
+                snapshot["browser_app"] = app_name
+                if url:
+                    snapshot["browser_url"] = url
+                snapshot["debug"]["browser_window"] = {
+                    "title": "",
+                    "process_name": app_name,
+                    "pid": int(active.get("pid") or 0),
+                    "hwnd": 0,
+                    "url": url,
+                }
+        except Exception as exc:  # noqa: BLE001 - browser context should not block the picker
+            snapshot["browser_error"] = f"{type(exc).__name__}: {exc}"
+        br_dt = time.monotonic() - _s
     elif include_browser_url and not IS_MAC:
         # Cheap URL + window-handle grab while the browser is still foreground
         # (hotkey time). The page text itself is fetched later via
@@ -652,17 +679,18 @@ def context_snapshot(
     return snapshot
 
 
-def context_browser_content(url: str = "", hwnd: int = 0) -> dict[str, Any]:
+def context_browser_content(url: str = "", hwnd: int = 0, app: str = "") -> dict[str, Any]:
     """Read the page text for a browser window captured at hotkey time.
 
-    Reads the rendered window by handle first (works even when the browser is
-    no longer foreground — UIA does not need focus), then falls back to an
-    HTTP fetch of the URL. Returns {"url", "content"}.
+    On Windows this reads the rendered window by handle (UIA does not need
+    focus), then falls back to an HTTP fetch of the URL. On macOS it asks the
+    named browser app (*app*) for its active tab text via AppleScript, which
+    works even though the overlay now holds focus. Returns {"url", "content"}.
     """
     try:
         from core.context_fetcher import WindowInfo, _browser_content
 
-        win = WindowInfo(url=str(url or ""), hwnd=int(hwnd or 0))
+        win = WindowInfo(url=str(url or ""), hwnd=int(hwnd or 0), process_name=str(app or ""))
         content = _browser_content(win)
         return {"url": win.url, "content": content or "", "hwnd": int(hwnd or 0)}
     except Exception as exc:  # noqa: BLE001 - browser context should not block answering

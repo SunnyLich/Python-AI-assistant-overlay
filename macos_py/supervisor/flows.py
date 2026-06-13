@@ -1192,11 +1192,13 @@ class FlowController:
             browser_bits: list[str] = []
             browser_url = str(context.get("browser_url") or "").strip()
             browser_hwnd = int(context.get("browser_hwnd") or 0)
+            browser_app = str(context.get("browser_app") or "").strip()
             browser_content = str(context.get("browser_content") or "").strip()
-            if (browser_url or browser_hwnd) and not browser_content:
-                # URL + window handle were captured at hotkey time while the
-                # browser was foreground; read the page now (deferred off the
-                # picker path). The window read is by handle, so it still works
+            if (browser_url or browser_hwnd or browser_app) and not browser_content:
+                # URL + window handle (Windows) or browser app name (macOS) were
+                # captured at hotkey time while the browser was foreground; read
+                # the page now (deferred off the picker path). Windows reads by
+                # handle; macOS asks the named app via AppleScript — both work
                 # with the picker/overlay holding focus.
                 result = self._safe_call(
                     self.native,
@@ -1204,6 +1206,7 @@ class FlowController:
                     {
                         "url": browser_url,
                         "hwnd": browser_hwnd,
+                        "app": browser_app,
                     },
                     timeout=30.0,
                 ) or {}

@@ -392,7 +392,91 @@ _BROWSER_PROCS_LINUX = frozenset({
     "firefox-esr", "brave", "brave-browser", "opera", "vivaldi",
 })
 
-_BROWSER_PROCS = _BROWSER_PROCS_WIN if _IS_WIN else _BROWSER_PROCS_LINUX
+# macOS reports the application's localized name (NSRunningApplication.localizedName
+# / System Events process name), e.g. "Safari", "Google Chrome", "Brave Browser".
+# These also double as the AppleScript `tell application "<name>"` targets.
+_BROWSER_PROCS_MAC = frozenset({
+    "safari", "safari technology preview",
+    "google chrome", "google chrome canary", "google chrome beta",
+    "chromium", "brave browser", "microsoft edge", "microsoft edge beta",
+    "arc", "vivaldi", "opera", "firefox",
+})
+
+# Safari-family speaks `current tab`; Chromium-family speaks `active tab` + JS.
+_MAC_SAFARI_FAMILY = frozenset({"safari", "safari technology preview"})
+_MAC_CHROME_FAMILY = frozenset({
+    "google chrome", "google chrome canary", "google chrome beta",
+    "chromium", "brave browser", "microsoft edge", "microsoft edge beta",
+    "arc", "vivaldi", "opera",
+})
+
+if _IS_WIN:
+    _BROWSER_PROCS = _BROWSER_PROCS_WIN
+elif _IS_MAC:
+    _BROWSER_PROCS = _BROWSER_PROCS_MAC
+else:
+    _BROWSER_PROCS = _BROWSER_PROCS_LINUX
+
+
+def _osascript_run(script: str, timeout: float = 4.0) -> str:
+    """Run a one-liner AppleScript and return trimmed stdout ("" on any error)."""
+    import subprocess
+    try:
+        proc = subprocess.run(
+            ["/usr/bin/osascript", "-e", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return (proc.stdout or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _mac_browser_url(app_name: str) -> str:
+    """Active-tab URL of the named macOS browser via AppleScript ("" if none)."""
+    fam = (app_name or "").strip().lower()
+    if fam in _MAC_SAFARI_FAMILY:
+        return _osascript_run(
+            f'tell application "{app_name}" to return URL of current tab of front window'
+        )
+    if fam in _MAC_CHROME_FAMILY:
+        return _osascript_run(
+            f'tell application "{app_name}" to return URL of active tab of front window'
+        )
+    return ""
+
+
+def _mac_browser_text(app_name: str, max_chars: int) -> str:
+    """Active-tab page text of the named macOS browser via AppleScript.
+
+    Safari exposes `text of current tab` directly (needs only Automation
+    permission). Chromium-family browsers require `execute ... javascript`,
+    which additionally needs "Allow JavaScript from Apple Events" enabled; when
+    that is off the call simply returns "" and the URL alone is used.
+    """
+    fam = (app_name or "").strip().lower()
+    raw = ""
+    if fam in _MAC_SAFARI_FAMILY:
+        raw = _osascript_run(
+            f'tell application "{app_name}" to return text of current tab of front window',
+            timeout=8.0,
+        )
+    elif fam in _MAC_CHROME_FAMILY:
+        raw = _osascript_run(
+            f'tell application "{app_name}" to return execute active tab of front window '
+            f'javascript "document.body.innerText"',
+            timeout=8.0,
+        )
+    if not raw:
+        return ""
+    text = re.sub(r"[ \t]+", " ", raw)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()[:max_chars]
+    return _redact(text)
 
 
 def _fetch_active_window() -> WindowInfo:
@@ -472,6 +556,8 @@ def get_browser_window_for_context(preferred_hwnd: int = 0) -> WindowInfo:
 
     active = _fetch_active_window()
     if (active.process_name or "").lower() in _BROWSER_PROCS:
+        if _IS_MAC and not active.url:
+            active.url = _mac_browser_url(active.process_name)
         return active
     return WindowInfo()
 
@@ -734,6 +820,16 @@ def _browser_content(active_win: WindowInfo, max_chars: int | None = None) -> st
     back to an HTTP fetch of the URL, and cache the result per-URL briefly."""
     if max_chars is None:
         max_chars = config.CONTEXT_BROWSER_MAX_CHARS
+
+    if _IS_MAC:
+        # No read-by-handle on macOS — ask the named browser app for its active
+        # tab text directly (works even when the overlay holds focus, since
+        # AppleScript targets the app's own front window).
+        app = (active_win.process_name or "").strip()
+        if app.lower() in _BROWSER_PROCS_MAC:
+            return _mac_browser_text(app, max_chars)
+        return ""
+
     url = active_win.url or ""
 
     now = time.time()

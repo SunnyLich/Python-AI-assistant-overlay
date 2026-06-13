@@ -394,7 +394,7 @@ def test_browser_url_captured_at_hotkey_time_fetches_content_by_handle():
         ui.emit("ui.intent.chosen", {"custom": "What is this page?"})
 
     fetch = native.last_call("native.context.browser_content")["params"]
-    assert fetch == {"url": "https://example.test/page", "hwnd": 777}
+    assert fetch == {"url": "https://example.test/page", "hwnd": 777, "app": ""}
     # No focus-race re-detection: the snapshot ran exactly once, at hotkey time.
     assert len(native.calls_for("native.context.snapshot")) == 1
     ambient = brain.last_call("brain.query")["params"]["ambient_text"]
@@ -437,8 +437,62 @@ def test_browser_hwnd_without_url_fetches_content_by_handle():
         _flow.begin_caller(0)
         ui.emit("ui.intent.chosen", {"custom": "What is the page?"})
 
-    assert native.last_call("native.context.browser_content")["params"] == {"url": "", "hwnd": 777}
+    assert native.last_call("native.context.browser_content")["params"] == {"url": "", "hwnd": 777, "app": ""}
     assert "Rendered browser text 777" in brain.last_call("brain.query")["params"]["ambient_text"]
+
+
+def test_browser_app_captured_at_hotkey_time_fetches_text_via_applescript():
+    """macOS path: the browser app name + URL are grabbed at hotkey time, then
+    the page text is read by app (AppleScript) — no read-by-handle on macOS."""
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "off",
+            "context_browser_mode": "auto",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+
+    def snapshot_handler(params: dict[str, Any]) -> dict[str, Any]:
+        result = {
+            "platform": "darwin",
+            "selected_text": "",
+            "clipboard_text": "",
+            "active_app": {"name": "Safari", "pid": 42, "bundle_id": "com.apple.Safari"},
+        }
+        # Mirrors the macOS worker: URL + browser app are grabbed at hotkey time;
+        # the page text is deferred (no window handle on macOS).
+        if params.get("include_browser_url"):
+            result["browser_url"] = "https://example.test/page"
+            result["browser_app"] = "Safari"
+        return result
+
+    native = FakeWorker(
+        {
+            "native.context.snapshot": snapshot_handler,
+            "native.context.browser_content": lambda params: {
+                "url": params.get("url"),
+                "content": f"Page text via {params.get('app')}",
+            },
+        }
+    )
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("ok")})
+    with caller_config(rows):
+        _flow, native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "What is this page?"})
+
+    fetch = native.last_call("native.context.browser_content")["params"]
+    assert fetch == {"url": "https://example.test/page", "hwnd": 0, "app": "Safari"}
+    # No focus-race re-detection: the snapshot ran exactly once, at hotkey time.
+    assert len(native.calls_for("native.context.snapshot")) == 1
+    ambient = brain.last_call("brain.query")["params"]["ambient_text"]
+    assert "https://example.test/page" in ambient
+    assert "Page text via Safari" in ambient
 
 
 def test_active_document_auto_fetches_before_query_and_summary():

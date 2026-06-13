@@ -1,4 +1,4 @@
-﻿"""Shared Qt application theme helpers."""
+"""Shared Qt application theme helpers."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
@@ -25,114 +25,186 @@ def is_dark_mode() -> bool:
         return False
 
 
+def _hex(c: QColor) -> str:
+    return f"#{c.red():02x}{c.green():02x}{c.blue():02x}"
+
+
+def _color(value: str, fallback: str) -> QColor:
+    """Parse a user colour string, tolerating both #RRGGBB and #RRGGBBAA."""
+    s = (value or "").strip()
+    if s.startswith("#") and len(s) == 9:  # #RRGGBBAA — drop alpha for the palette
+        s = s[:7]
+    c = QColor(s)
+    return c if c.isValid() else QColor(fallback)
+
+
+def dark_theme_colors() -> dict[str, str]:
+    """Derive the full dark palette from the four user-configurable base colours.
+
+    Cards, borders, buttons and hover states are computed by lighten/darken so
+    the user only chooses background, surface, text and accent in Settings.
+    """
+    bg = _color(getattr(config, "THEME_DARK_BG", "#1c1e26"), "#1c1e26")
+    surface = _color(getattr(config, "THEME_DARK_SURFACE", "#17181d"), "#17181d")
+    text = _color(getattr(config, "THEME_DARK_TEXT", "#e8e8f0"), "#e8e8f0")
+    accent = _color(getattr(config, "THEME_DARK_ACCENT", "#8b87ff"), "#8b87ff")
+    ar, ag, ab = accent.red(), accent.green(), accent.blue()
+    return {
+        "bg": _hex(bg),
+        "surface": _hex(surface),
+        "text": _hex(text),
+        "accent": _hex(accent),
+        "card": _hex(bg.lighter(118)),
+        "border": _hex(bg.lighter(165)),
+        "button": _hex(bg.lighter(140)),
+        "button_hover": _hex(bg.lighter(160)),
+        "button_pressed": _hex(bg.darker(112)),
+        "tab": _hex(bg.lighter(118)),
+        "tab_selected": _hex(bg.lighter(150)),
+        "tooltip_bg": _hex(bg.lighter(140)),
+        "tooltip_border": _hex(bg.lighter(175)),
+        "text_dim": _hex(text.darker(165)),
+        "accent_hover": _hex(accent.lighter(120)),
+        "scroll_handle": _hex(bg.lighter(175)),
+        # Translucent accent washes for hover/pressed fills.
+        "accent_hint": f"rgba({ar},{ag},{ab},0.08)",
+        "accent_soft": f"rgba({ar},{ag},{ab},0.12)",
+        "accent_strong": f"rgba({ar},{ag},{ab},0.22)",
+    }
+
+
+def _apply_color_scheme_hint(app: QApplication) -> None:
+    """Tell Qt our preferred colour scheme so native window chrome matches.
+
+    On macOS this drives the NSWindow appearance (title bar), which otherwise
+    stays light while the styled content is dark — the mismatch that makes the
+    overridden dark theme look broken. "system" sets Unknown so the OS decides
+    (and so is_dark_mode()'s system path keeps reading the real OS scheme).
+    """
+    hints = app.styleHints()
+    if not hasattr(hints, "setColorScheme"):
+        return
+    mode = getattr(config, "THEME_MODE", "system")
+    scheme = {
+        "dark": Qt.ColorScheme.Dark,
+        "light": Qt.ColorScheme.Light,
+    }.get(mode, Qt.ColorScheme.Unknown)
+    try:
+        hints.setColorScheme(scheme)
+    except (AttributeError, TypeError):
+        pass
+
+
 def apply_app_theme(app: QApplication | None = None) -> None:
     """Apply the configured app-wide palette to top-level Qt widgets."""
     app = app or QApplication.instance()
     if app is None:
-        
         return
 
+    _apply_color_scheme_hint(app)
+
     if is_dark_mode():
+        c = dark_theme_colors()
         palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("#202127"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#f0f0f2"))
-        palette.setColor(QPalette.ColorRole.Base, QColor("#17181d"))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#24262d"))
-        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#2e3038"))
-        palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Text, QColor("#f0f0f2"))
-        palette.setColor(QPalette.ColorRole.Button, QColor("#2b2d35"))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#f0f0f2"))
+        palette.setColor(QPalette.ColorRole.Window, QColor(c["bg"]))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(c["text"]))
+        palette.setColor(QPalette.ColorRole.Base, QColor(c["surface"]))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(c["card"]))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(c["tooltip_bg"]))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(c["text"]))
+        palette.setColor(QPalette.ColorRole.Text, QColor(c["text"]))
+        palette.setColor(QPalette.ColorRole.Button, QColor(c["button"]))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(c["text"]))
         palette.setColor(QPalette.ColorRole.BrightText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Link, QColor("#8fb4ff"))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor("#4b67b0"))
+        palette.setColor(QPalette.ColorRole.Link, QColor(c["accent_hover"]))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(c["accent"]))
         palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#8d929d"))
-        palette.setColor(QPalette.ColorRole.Mid, QColor("#454854"))
-        palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor("#777b86"))
-        palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor("#777b86"))
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(c["text_dim"]))
+        palette.setColor(QPalette.ColorRole.Mid, QColor(c["border"]))
+        palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(c["text_dim"]))
+        palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(c["text_dim"]))
 
         app.setPalette(palette)
         app.setStyleSheet(
-            """
-        QWidget {
-            background-color: #202127;
-            color: #f0f0f2;
-        }
-        QToolTip {
-            color: #f6f6f7;
-            background-color: #2e3038;
-            border: 1px solid #50535f;
+            f"""
+        QWidget {{
+            background-color: {c["bg"]};
+            color: {c["text"]};
+        }}
+        QToolTip {{
+            color: {c["text"]};
+            background-color: {c["tooltip_bg"]};
+            border: 1px solid {c["tooltip_border"]};
             padding: 4px;
-        }
-        QTabWidget::pane {
-            border: 1px solid #3a3d48;
-        }
-        QTabBar::tab {
-            background: #262832;
-            color: #d8d9de;
+        }}
+        QTabWidget::pane {{
+            border: 1px solid {c["border"]};
+        }}
+        QTabBar::tab {{
+            background: {c["tab"]};
+            color: {c["text_dim"]};
             padding: 6px 12px;
-            border: 1px solid #3a3d48;
+            border: 1px solid {c["border"]};
             border-bottom: none;
-        }
-        QTabBar::tab:selected {
-            background: #323541;
-            color: #ffffff;
-        }
-        QLineEdit, QTextEdit, QPlainTextEdit, QComboBox {
-            background: #17181d;
-            color: #f0f0f2;
-            border: 1px solid #454854;
+        }}
+        QTabBar::tab:selected {{
+            background: {c["tab_selected"]};
+            color: {c["text"]};
+        }}
+        QLineEdit, QTextEdit, QPlainTextEdit, QComboBox {{
+            background: {c["surface"]};
+            color: {c["text"]};
+            border: 1px solid {c["border"]};
             border-radius: 4px;
             padding: 4px;
-            selection-background-color: #4b67b0;
-        }
-        QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
-            border-color: #6f87d8;
-        }
-        QPushButton {
-            background: #30333d;
-            color: #f0f0f2;
-            border: 1px solid #4b4f5d;
+            selection-background-color: {c["accent"]};
+        }}
+        QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus {{
+            border-color: {c["accent"]};
+        }}
+        QPushButton {{
+            background: {c["button"]};
+            color: {c["text"]};
+            border: 1px solid {c["border"]};
             border-radius: 4px;
             padding: 5px 12px;
-        }
-        QPushButton:hover {
-            background: #393d49;
-        }
-        QPushButton:pressed {
-            background: #252832;
-        }
-        QCheckBox {
-            color: #f0f0f2;
-        }
-        QGroupBox {
-            border: 1px solid #3a3d48;
+        }}
+        QPushButton:hover {{
+            background: {c["button_hover"]};
+        }}
+        QPushButton:pressed {{
+            background: {c["button_pressed"]};
+        }}
+        QCheckBox {{
+            color: {c["text"]};
+        }}
+        QGroupBox {{
+            border: 1px solid {c["border"]};
             border-radius: 4px;
             margin-top: 8px;
-        }
-        QGroupBox::title {
+        }}
+        QGroupBox::title {{
             subcontrol-origin: margin;
             left: 8px;
             padding: 0 4px;
-        }
-        QScrollArea, QFrame {
+        }}
+        QScrollArea, QFrame {{
             background: transparent;
-        }
-        QScrollBar:vertical, QScrollBar:horizontal {
-            background: #202127;
+        }}
+        QScrollBar:vertical, QScrollBar:horizontal {{
+            background: {c["bg"]};
             border: none;
-        }
-        QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
-            background: #555a66;
+        }}
+        QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
+            background: {c["scroll_handle"]};
             border-radius: 4px;
             min-height: 24px;
             min-width: 24px;
-        }
-        QScrollBar::add-line, QScrollBar::sub-line {
+        }}
+        QScrollBar::add-line, QScrollBar::sub-line {{
             width: 0px;
             height: 0px;
-        }
+        }}
         """
         )
         return

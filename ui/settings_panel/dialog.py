@@ -256,67 +256,72 @@ class SettingsDialog(QDialog):
         QLabel { color: #1c1c1e; }
     """
 
-    _DARK_STYLE = """
-        QDialog { background: #1c1e26; }
-        QTabWidget::pane { border: none; background: transparent; }
-        QTabBar { background: transparent; border: none; }
-        QTabBar::tab {
-            color: #9d9daa; padding: 7px 20px; border-radius: 8px;
+    @staticmethod
+    def _dark_style() -> str:
+        """Build the dialog's dark stylesheet from the user's dark-theme colours."""
+        from ui.shared.theme import dark_theme_colors
+        c = dark_theme_colors()
+        return f"""
+        QDialog {{ background: {c["bg"]}; }}
+        QTabWidget::pane {{ border: none; background: transparent; }}
+        QTabBar {{ background: transparent; border: none; }}
+        QTabBar::tab {{
+            color: {c["text_dim"]}; padding: 7px 20px; border-radius: 8px;
             font-size: 9pt; margin: 2px 2px; background: transparent;
-        }
-        QTabBar::tab:selected { background: #2b2d3a; color: #8b87ff; font-weight: 600; }
-        QTabBar::tab:hover:!selected { background: rgba(139,135,255,0.08); }
-        QFrame#card {
-            background: #25273a; border: 1px solid #35374d; border-radius: 12px;
-        }
-        QLabel#sectionHeader {
-            color: #6b6b7e; font-size: 8pt; font-weight: 700;
+        }}
+        QTabBar::tab:selected {{ background: {c["tab_selected"]}; color: {c["accent"]}; font-weight: 600; }}
+        QTabBar::tab:hover:!selected {{ background: {c["accent_hint"]}; }}
+        QFrame#card {{
+            background: {c["card"]}; border: 1px solid {c["border"]}; border-radius: 12px;
+        }}
+        QLabel#sectionHeader {{
+            color: {c["text_dim"]}; font-size: 8pt; font-weight: 700;
             letter-spacing: 0.5px; padding: 0px;
-        }
-        QScrollArea { background: transparent; border: none; }
-        QScrollArea > QWidget > QWidget { background: transparent; }
-        QWidget { background-color: transparent; color: #e8e8f0; }
-        QLineEdit {
-            background: #17181d; border: 1px solid #454854; border-radius: 8px;
-            padding: 5px 10px; font-size: 10pt; color: #e8e8f0; min-height: 30px;
-        }
-        QLineEdit:focus { border-color: #8b87ff; }
-        QComboBox {
-            background: #17181d; border: 1px solid #454854; border-radius: 8px;
-            padding: 5px 10px; font-size: 10pt; color: #e8e8f0; min-height: 30px;
-        }
-        QComboBox:focus { border-color: #8b87ff; }
-        QComboBox::drop-down { border: none; width: 20px; }
-        QComboBox QAbstractItemView {
-            background: #25273a; color: #e8e8f0; border: 1px solid #454854;
-        }
-        QPushButton {
-            border: 1.5px solid #8b87ff; color: #8b87ff; border-radius: 8px;
+        }}
+        QScrollArea {{ background: transparent; border: none; }}
+        QScrollArea > QWidget > QWidget {{ background: transparent; }}
+        QWidget {{ background-color: transparent; color: {c["text"]}; }}
+        QLineEdit {{
+            background: {c["surface"]}; border: 1px solid {c["border"]}; border-radius: 8px;
+            padding: 5px 10px; font-size: 10pt; color: {c["text"]}; min-height: 30px;
+        }}
+        QLineEdit:focus {{ border-color: {c["accent"]}; }}
+        QComboBox {{
+            background: {c["surface"]}; border: 1px solid {c["border"]}; border-radius: 8px;
+            padding: 5px 10px; font-size: 10pt; color: {c["text"]}; min-height: 30px;
+        }}
+        QComboBox:focus {{ border-color: {c["accent"]}; }}
+        QComboBox::drop-down {{ border: none; width: 20px; }}
+        QComboBox QAbstractItemView {{
+            background: {c["card"]}; color: {c["text"]}; border: 1px solid {c["border"]};
+        }}
+        QPushButton {{
+            border: 1.5px solid {c["accent"]}; color: {c["accent"]}; border-radius: 8px;
             padding: 5px 16px; background: transparent; font-size: 10pt;
-        }
-        QPushButton:hover { background: rgba(139,135,255,0.10); }
-        QPushButton:pressed { background: rgba(139,135,255,0.20); }
-        QPushButton:flat { border: none; color: #8b87ff; background: transparent; }
-        QPushButton:flat:hover { color: #b0acff; background: transparent; }
-        QCheckBox { color: #e8e8f0; }
-        QLabel { color: #e8e8f0; }
-        QTextEdit, QPlainTextEdit {
-            background: #17181d; border: 1px solid #454854; border-radius: 8px;
-            color: #e8e8f0;
-        }
-        QScrollBar:vertical, QScrollBar:horizontal {
-            background: #1c1e26; border: none;
-        }
-        QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
-            background: #454854; border-radius: 4px;
+        }}
+        QPushButton:hover {{ background: {c["accent_soft"]}; }}
+        QPushButton:pressed {{ background: {c["accent_strong"]}; }}
+        QPushButton:flat {{ border: none; color: {c["accent"]}; background: transparent; }}
+        QPushButton:flat:hover {{ color: {c["accent_hover"]}; background: transparent; }}
+        QCheckBox {{ color: {c["text"]}; }}
+        QLabel {{ color: {c["text"]}; }}
+        QTextEdit, QPlainTextEdit {{
+            background: {c["surface"]}; border: 1px solid {c["border"]}; border-radius: 8px;
+            color: {c["text"]};
+        }}
+        QScrollBar:vertical, QScrollBar:horizontal {{
+            background: {c["bg"]}; border: none;
+        }}
+        QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
+            background: {c["scroll_handle"]}; border-radius: 4px;
             min-height: 24px; min-width: 24px;
-        }
-        QScrollBar::add-line, QScrollBar::sub-line { width: 0px; height: 0px; }
+        }}
+        QScrollBar::add-line, QScrollBar::sub-line {{ width: 0px; height: 0px; }}
     """
 
     def _apply_dialog_theme(self):
         from ui.shared.theme import is_dark_mode
-        self.setStyleSheet(self._DARK_STYLE if is_dark_mode() else self._LIGHT_STYLE)
+        self.setStyleSheet(self._dark_style() if is_dark_mode() else self._LIGHT_STYLE)
 
     def _build_ui(self):
         self._apply_dialog_theme()
@@ -1854,6 +1859,10 @@ class SettingsDialog(QDialog):
         self._fields["BUBBLE_WIDTH"].setPlaceholderText("e.g. 340")
         self._fields["BUBBLE_LINES"] = QLineEdit()
         self._fields["BUBBLE_LINES"].setPlaceholderText("e.g. 3")
+        _dark_bg_row      = self._color_field("THEME_DARK_BG",      "e.g. #1c1e26", alpha=False)
+        _dark_surface_row = self._color_field("THEME_DARK_SURFACE", "e.g. #17181d", alpha=False)
+        _dark_text_row    = self._color_field("THEME_DARK_TEXT",    "e.g. #e8e8f0", alpha=False)
+        _dark_accent_row  = self._color_field("THEME_DARK_ACCENT",  "e.g. #8b87ff", alpha=False)
         _bubble_color_row      = self._color_field("BUBBLE_COLOR",          "e.g. #1c1c24dc")
         _bubble_text_color_row = self._color_field("BUBBLE_TEXT_COLOR",     "e.g. #e6e6e6")
         _read_word_color_row   = self._color_field("BUBBLE_READ_WORD_COLOR", "e.g. #4da3ff")
@@ -1871,7 +1880,17 @@ class SettingsDialog(QDialog):
         self._fields["TTS_HOLD_PLAYBACK_RATE"] = QLineEdit()
         self._fields["TTS_HOLD_PLAYBACK_RATE"].setPlaceholderText("e.g. 1.35")
 
+        for _key in ("THEME_DARK_BG", "THEME_DARK_SURFACE", "THEME_DARK_TEXT", "THEME_DARK_ACCENT"):
+            self._fields[_key].setToolTip(
+                "Used when Theme is Dark (or System while macOS/Windows is in dark mode).\n"
+                "Cards, borders and buttons are shaded automatically from these four colors."
+            )
+
         f.addRow("Theme", self._fields["THEME_MODE"])
+        f.addRow("Dark background", _dark_bg_row)
+        f.addRow("Dark surface", _dark_surface_row)
+        f.addRow("Dark text", _dark_text_row)
+        f.addRow("Dark accent", _dark_accent_row)
         f.addRow("", self._fields["ICON_AUTO_HIDE"])
         f.addRow("", self._fields["CHAT_AUTO_ELABORATE"])
         f.addRow("Elaborate prompt", self._fields["CHAT_ELABORATE_PROMPT"])
@@ -1920,8 +1939,12 @@ class SettingsDialog(QDialog):
                 cb.setCurrentIndex(idx)
         return cb
 
-    def _color_field(self, field_key: str, placeholder: str) -> QWidget:
-        """QLineEdit + color-swatch button that opens QColorDialog. Stores #RRGGBBAA."""
+    def _color_field(self, field_key: str, placeholder: str, *, alpha: bool = True) -> QWidget:
+        """QLineEdit + color-swatch button that opens QColorDialog.
+
+        Stores ``#RRGGBBAA`` when *alpha* is True (text-bubble colours), or plain
+        opaque ``#RRGGBB`` when False (theme colours, where alpha is meaningless).
+        """
         from PySide6.QtWidgets import QColorDialog
         from PySide6.QtGui import QColor
 
@@ -1944,7 +1967,9 @@ class SettingsDialog(QDialog):
             return c if c.isValid() else QColor()
 
         def _fmt(c: QColor) -> str:
-            return f"#{c.red():02x}{c.green():02x}{c.blue():02x}{c.alpha():02x}"
+            if alpha:
+                return f"#{c.red():02x}{c.green():02x}{c.blue():02x}{c.alpha():02x}"
+            return f"#{c.red():02x}{c.green():02x}{c.blue():02x}"
 
         def _update_swatch(text=""):
             c = _parse(edit.text())
@@ -1962,10 +1987,11 @@ class SettingsDialog(QDialog):
             c = _parse(edit.text())
             if not c.isValid():
                 c = QColor(255, 255, 255, 255)
-            chosen = QColorDialog.getColor(
-                c, self, "Pick color",
-                QColorDialog.ColorDialogOption.ShowAlphaChannel,
+            options = (
+                QColorDialog.ColorDialogOption.ShowAlphaChannel
+                if alpha else QColorDialog.ColorDialogOption(0)
             )
+            chosen = QColorDialog.getColor(c, self, "Pick color", options)
             if chosen.isValid():
                 edit.setText(_fmt(chosen))
 
@@ -2350,6 +2376,8 @@ class SettingsDialog(QDialog):
         combo = self._fields["THEME_MODE"]
         idx = combo.findData(theme_mode)  # type: ignore[attr-defined]
         combo.setCurrentIndex(idx if idx >= 0 else 0)  # type: ignore[attr-defined]
+        for _key in ("THEME_DARK_BG", "THEME_DARK_SURFACE", "THEME_DARK_TEXT", "THEME_DARK_ACCENT"):
+            _set(self._fields[_key], self._env.get(_key, getattr(cfg, _key, "")))
         self._fields["ICON_AUTO_HIDE"].setChecked(auto_hide)  # type: ignore
 
         auto_elab = self._env.get("CHAT_AUTO_ELABORATE", str(cfg.CHAT_AUTO_ELABORATE)).lower() == "true"
@@ -2680,6 +2708,7 @@ class SettingsDialog(QDialog):
             },
             "App": {
                 "THEME_MODE", "DARK_MODE", "ICON_AUTO_HIDE", "DOLL_AUTO_HIDE",
+                "THEME_DARK_BG", "THEME_DARK_SURFACE", "THEME_DARK_TEXT", "THEME_DARK_ACCENT",
                 "CHAT_AUTO_ELABORATE", "CHAT_ELABORATE_PROMPT",
                 "ICON_SIZE", "DOLL_SIZE", "ICON_BACKSTOP_MS", "DOLL_ICON_BACKSTOP_MS",
                 "BUBBLE_WIDTH", "BUBBLE_LINES", "BUBBLE_COLOR", "BUBBLE_TEXT_COLOR",
@@ -2946,6 +2975,10 @@ class SettingsDialog(QDialog):
             "MEMORY_STM_TOKEN_BUDGET":  _get(self._fields["MEMORY_STM_TOKEN_BUDGET"]),
             "CALLER_COUNT":  str(len(self._caller_blocks)),
             "THEME_MODE":       self._fields["THEME_MODE"].currentData(),  # type: ignore[attr-defined]
+            "THEME_DARK_BG":      _get(self._fields["THEME_DARK_BG"]),
+            "THEME_DARK_SURFACE": _get(self._fields["THEME_DARK_SURFACE"]),
+            "THEME_DARK_TEXT":    _get(self._fields["THEME_DARK_TEXT"]),
+            "THEME_DARK_ACCENT":  _get(self._fields["THEME_DARK_ACCENT"]),
             "ICON_AUTO_HIDE":    str(self._fields["ICON_AUTO_HIDE"].isChecked()),  # type: ignore
             "CHAT_AUTO_ELABORATE": str(self._fields["CHAT_AUTO_ELABORATE"].isChecked()),  # type: ignore
             "CHAT_ELABORATE_PROMPT": _get(self._fields["CHAT_ELABORATE_PROMPT"]),

@@ -103,6 +103,12 @@ class SettingsDialog(QDialog):
         enable_standard_window_controls(self)
         self._env = _read_env()
         self._fields: dict[str, QLineEdit | QComboBox | QCheckBox | QTextEdit] = {}
+        # Theme color templates: {"light": {bg,surface,text,accent}, "dark": {...}}.
+        # The four App-tab swatches edit whichever mode is selected in the Theme
+        # combo; switching modes swaps these without losing the other mode's edits.
+        self._theme_templates: dict[str, dict[str, str]] = {}
+        self._theme_shown_mode: str = ""
+        self._theme_syncing: bool = False
         self._api_key_rows: list[dict] = []
         self._model_section_rows: dict[str, list[dict]] = {
             "LLM": [], "VISION_LLM": [], "MEMORY_LLM": []
@@ -214,53 +220,12 @@ class SettingsDialog(QDialog):
         super().showEvent(event)
         fit_window_to_screen(self, preferred_width=620, preferred_height=620)
 
-    _LIGHT_STYLE = """
-        QDialog { background: #f2f2f7; }
-        QTabWidget::pane { border: none; background: transparent; }
-        QTabBar { background: transparent; border: none; }
-        QTabBar::tab {
-            color: #636366; padding: 7px 20px; border-radius: 8px;
-            font-size: 9pt; margin: 2px 2px; background: transparent;
-        }
-        QTabBar::tab:selected { background: white; color: #5856d6; font-weight: 600; }
-        QTabBar::tab:hover:!selected { background: rgba(88,86,214,0.07); }
-        QFrame#card {
-            background: white; border: 1px solid #e5e5ea; border-radius: 12px;
-        }
-        QLabel#sectionHeader {
-            color: #8e8e93; font-size: 8pt; font-weight: 700;
-            letter-spacing: 0.5px; padding: 0px;
-        }
-        QScrollArea { background: transparent; border: none; }
-        QScrollArea > QWidget > QWidget { background: transparent; }
-        QLineEdit {
-            background: white; border: 1px solid #d1d1d6; border-radius: 8px;
-            padding: 5px 10px; font-size: 10pt; color: #1c1c1e; min-height: 30px;
-        }
-        QLineEdit:focus { border-color: #5856d6; }
-        QComboBox {
-            background: white; border: 1px solid #d1d1d6; border-radius: 8px;
-            padding: 5px 10px; font-size: 10pt; color: #1c1c1e; min-height: 30px;
-        }
-        QComboBox:focus { border-color: #5856d6; }
-        QComboBox::drop-down { border: none; width: 20px; }
-        QPushButton {
-            border: 1.5px solid #5856d6; color: #5856d6; border-radius: 8px;
-            padding: 5px 16px; background: transparent; font-size: 10pt;
-        }
-        QPushButton:hover { background: rgba(88,86,214,0.06); }
-        QPushButton:pressed { background: rgba(88,86,214,0.12); }
-        QPushButton:flat { border: none; color: #5856d6; background: transparent; }
-        QPushButton:flat:hover { color: #3634a3; background: transparent; }
-        QCheckBox { color: #1c1c1e; }
-        QLabel { color: #1c1c1e; }
-    """
-
     @staticmethod
-    def _dark_style() -> str:
-        """Build the dialog's dark stylesheet from the user's dark-theme colours."""
-        from ui.shared.theme import dark_theme_colors
-        c = dark_theme_colors()
+    def _dialog_style(dark: bool) -> str:
+        """Build the dialog stylesheet from the active mode's template colours."""
+        from ui.shared.theme import theme_colors
+        c = theme_colors(dark)
+        # In light mode card/tab text read better a touch dimmer than text_dim.
         return f"""
         QDialog {{ background: {c["bg"]}; }}
         QTabWidget::pane {{ border: none; background: transparent; }}
@@ -321,7 +286,7 @@ class SettingsDialog(QDialog):
 
     def _apply_dialog_theme(self):
         from ui.shared.theme import is_dark_mode
-        self.setStyleSheet(self._dark_style() if is_dark_mode() else self._LIGHT_STYLE)
+        self.setStyleSheet(self._dialog_style(is_dark_mode()))
 
     def _build_ui(self):
         self._apply_dialog_theme()
@@ -1859,10 +1824,10 @@ class SettingsDialog(QDialog):
         self._fields["BUBBLE_WIDTH"].setPlaceholderText("e.g. 340")
         self._fields["BUBBLE_LINES"] = QLineEdit()
         self._fields["BUBBLE_LINES"].setPlaceholderText("e.g. 3")
-        _dark_bg_row      = self._color_field("THEME_DARK_BG",      "e.g. #1c1e26", alpha=False)
-        _dark_surface_row = self._color_field("THEME_DARK_SURFACE", "e.g. #17181d", alpha=False)
-        _dark_text_row    = self._color_field("THEME_DARK_TEXT",    "e.g. #e8e8f0", alpha=False)
-        _dark_accent_row  = self._color_field("THEME_DARK_ACCENT",  "e.g. #8b87ff", alpha=False)
+        _bg_row      = self._color_field("THEME_BG",      "e.g. #1c1e26", alpha=False)
+        _surface_row = self._color_field("THEME_SURFACE", "e.g. #17181d", alpha=False)
+        _text_row    = self._color_field("THEME_TEXT",    "e.g. #e8e8f0", alpha=False)
+        _accent_row  = self._color_field("THEME_ACCENT",  "e.g. #8b87ff", alpha=False)
         _bubble_color_row      = self._color_field("BUBBLE_COLOR",          "e.g. #1c1c24dc")
         _bubble_text_color_row = self._color_field("BUBBLE_TEXT_COLOR",     "e.g. #e6e6e6")
         _read_word_color_row   = self._color_field("BUBBLE_READ_WORD_COLOR", "e.g. #4da3ff")
@@ -1880,17 +1845,21 @@ class SettingsDialog(QDialog):
         self._fields["TTS_HOLD_PLAYBACK_RATE"] = QLineEdit()
         self._fields["TTS_HOLD_PLAYBACK_RATE"].setPlaceholderText("e.g. 1.35")
 
-        for _key in ("THEME_DARK_BG", "THEME_DARK_SURFACE", "THEME_DARK_TEXT", "THEME_DARK_ACCENT"):
+        for _key in ("THEME_BG", "THEME_SURFACE", "THEME_TEXT", "THEME_ACCENT"):
             self._fields[_key].setToolTip(
-                "Used when Theme is Dark (or System while macOS/Windows is in dark mode).\n"
-                "Cards, borders and buttons are shaded automatically from these four colors."
+                "Colors for the theme selected above. Light and Dark each keep their\n"
+                "own set — switching Theme swaps these to that mode's colors.\n"
+                "Cards, borders and buttons are shaded automatically from these four."
             )
+        # Repaint the swatches/values whenever the user switches Theme mode, so the
+        # four pickers always show the template for the currently selected mode.
+        theme_combo.currentIndexChanged.connect(self._on_theme_mode_changed)
 
         f.addRow("Theme", self._fields["THEME_MODE"])
-        f.addRow("Dark background", _dark_bg_row)
-        f.addRow("Dark surface", _dark_surface_row)
-        f.addRow("Dark text", _dark_text_row)
-        f.addRow("Dark accent", _dark_accent_row)
+        f.addRow("Background color", _bg_row)
+        f.addRow("Surface color", _surface_row)
+        f.addRow("Text color", _text_row)
+        f.addRow("Accent color", _accent_row)
         f.addRow("", self._fields["ICON_AUTO_HIDE"])
         f.addRow("", self._fields["CHAT_AUTO_ELABORATE"])
         f.addRow("Elaborate prompt", self._fields["CHAT_ELABORATE_PROMPT"])
@@ -1911,6 +1880,52 @@ class SettingsDialog(QDialog):
         outer.addStretch()
         scroll.setWidget(outer_w)
         return scroll
+
+    # ---- Theme template (light/dark color swatches) ----
+
+    _THEME_ROLES = ("bg", "surface", "text", "accent")
+    _THEME_FIELD_KEYS = {
+        "bg": "THEME_BG", "surface": "THEME_SURFACE",
+        "text": "THEME_TEXT", "accent": "THEME_ACCENT",
+    }
+
+    def _theme_edit_mode(self) -> str:
+        """Which template the four swatches edit, given the Theme selection."""
+        data = self._fields["THEME_MODE"].currentData()  # type: ignore[attr-defined]
+        if data in ("light", "dark"):
+            return data
+        from ui.shared.theme import is_dark_mode  # "system" → whatever is active now
+        return "dark" if is_dark_mode() else "light"
+
+    def _flush_visible_theme_fields(self) -> None:
+        """Copy the four swatch values back into the template they belong to."""
+        mode = self._theme_shown_mode
+        if not mode:
+            return
+        self._theme_templates[mode] = {
+            role: _get(self._fields[self._THEME_FIELD_KEYS[role]]).strip()
+            for role in self._THEME_ROLES
+        }
+
+    def _show_theme_template(self, mode: str) -> None:
+        """Load *mode*'s template into the four swatches."""
+        tpl = self._theme_templates.get(mode, {})
+        self._theme_syncing = True
+        try:
+            for role in self._THEME_ROLES:
+                _set(self._fields[self._THEME_FIELD_KEYS[role]], tpl.get(role, ""))
+        finally:
+            self._theme_syncing = False
+        self._theme_shown_mode = mode
+
+    def _on_theme_mode_changed(self) -> None:
+        if self._theme_syncing or not self._theme_templates:
+            return
+        new_mode = self._theme_edit_mode()
+        if new_mode == self._theme_shown_mode:
+            return
+        self._flush_visible_theme_fields()
+        self._show_theme_template(new_mode)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -2376,8 +2391,19 @@ class SettingsDialog(QDialog):
         combo = self._fields["THEME_MODE"]
         idx = combo.findData(theme_mode)  # type: ignore[attr-defined]
         combo.setCurrentIndex(idx if idx >= 0 else 0)  # type: ignore[attr-defined]
-        for _key in ("THEME_DARK_BG", "THEME_DARK_SURFACE", "THEME_DARK_TEXT", "THEME_DARK_ACCENT"):
-            _set(self._fields[_key], self._env.get(_key, getattr(cfg, _key, "")))
+        # Load both theme templates from env/config, then show the one for the
+        # currently selected mode in the four swatches.
+        self._theme_templates = {}
+        for mode in ("light", "dark"):
+            self._theme_templates[mode] = {
+                role: self._env.get(
+                    f"THEME_{mode.upper()}_{role.upper()}",
+                    getattr(cfg, f"THEME_{mode.upper()}_{role.upper()}", ""),
+                )
+                for role in self._THEME_ROLES
+            }
+        self._theme_shown_mode = ""
+        self._show_theme_template(self._theme_edit_mode())
         self._fields["ICON_AUTO_HIDE"].setChecked(auto_hide)  # type: ignore
 
         auto_elab = self._env.get("CHAT_AUTO_ELABORATE", str(cfg.CHAT_AUTO_ELABORATE)).lower() == "true"
@@ -2709,6 +2735,7 @@ class SettingsDialog(QDialog):
             "App": {
                 "THEME_MODE", "DARK_MODE", "ICON_AUTO_HIDE", "DOLL_AUTO_HIDE",
                 "THEME_DARK_BG", "THEME_DARK_SURFACE", "THEME_DARK_TEXT", "THEME_DARK_ACCENT",
+                "THEME_LIGHT_BG", "THEME_LIGHT_SURFACE", "THEME_LIGHT_TEXT", "THEME_LIGHT_ACCENT",
                 "CHAT_AUTO_ELABORATE", "CHAT_ELABORATE_PROMPT",
                 "ICON_SIZE", "DOLL_SIZE", "ICON_BACKSTOP_MS", "DOLL_ICON_BACKSTOP_MS",
                 "BUBBLE_WIDTH", "BUBBLE_LINES", "BUBBLE_COLOR", "BUBBLE_TEXT_COLOR",
@@ -2943,6 +2970,15 @@ class SettingsDialog(QDialog):
         vis_p, vis_m, vis_f = _section_vals("VISION_LLM")
         mem_p, mem_m, mem_f = _section_vals("MEMORY_LLM")
 
+        # Persist both theme templates (the four swatches edit only the selected
+        # mode, so fold their current values back into that template first).
+        self._flush_visible_theme_fields()
+        theme_vals = {
+            f"THEME_{mode.upper()}_{role.upper()}": self._theme_templates.get(mode, {}).get(role, "")
+            for mode in ("light", "dark")
+            for role in self._THEME_ROLES
+        }
+
         vals = {
             "LLM_PROVIDER":      llm_p,
             "LLM_MODEL":         llm_m,
@@ -2975,10 +3011,6 @@ class SettingsDialog(QDialog):
             "MEMORY_STM_TOKEN_BUDGET":  _get(self._fields["MEMORY_STM_TOKEN_BUDGET"]),
             "CALLER_COUNT":  str(len(self._caller_blocks)),
             "THEME_MODE":       self._fields["THEME_MODE"].currentData(),  # type: ignore[attr-defined]
-            "THEME_DARK_BG":      _get(self._fields["THEME_DARK_BG"]),
-            "THEME_DARK_SURFACE": _get(self._fields["THEME_DARK_SURFACE"]),
-            "THEME_DARK_TEXT":    _get(self._fields["THEME_DARK_TEXT"]),
-            "THEME_DARK_ACCENT":  _get(self._fields["THEME_DARK_ACCENT"]),
             "ICON_AUTO_HIDE":    str(self._fields["ICON_AUTO_HIDE"].isChecked()),  # type: ignore
             "CHAT_AUTO_ELABORATE": str(self._fields["CHAT_AUTO_ELABORATE"].isChecked()),  # type: ignore
             "CHAT_ELABORATE_PROMPT": _get(self._fields["CHAT_ELABORATE_PROMPT"]),
@@ -2997,6 +3029,7 @@ class SettingsDialog(QDialog):
             "TTS_HOLD_PLAYBACK_RATE": _get(self._fields["TTS_HOLD_PLAYBACK_RATE"]),
             "SYSTEM_PROMPT_UTILITY": self._fields["SYSTEM_PROMPT_UTILITY"].toPlainText(),  # type: ignore
         }
+        vals.update(theme_vals)
         vb = self._voice_block
         vals.update({
             "HOTKEY_VOICE": _get(self._fields["HOTKEY_VOICE"]),

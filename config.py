@@ -202,6 +202,7 @@ def _load_config() -> None:
     global TTS_PROVIDER, CARTESIA_VOICE_ID
     global THEME_MODE, DARK_MODE, ICON_AUTO_HIDE, CHAT_AUTO_ELABORATE, CHAT_ELABORATE_PROMPT
     global THEME_DARK_BG, THEME_DARK_SURFACE, THEME_DARK_TEXT, THEME_DARK_ACCENT
+    global THEME_LIGHT_BG, THEME_LIGHT_SURFACE, THEME_LIGHT_TEXT, THEME_LIGHT_ACCENT
     global GITHUB_DEFAULT_CLIENT_ID, GITHUB_CLIENT_ID, GITHUB_OAUTH_SCOPES
     global COPILOT_CLI_URL, COPILOT_CLI_PATH
     global HOTKEY_ADD_CONTEXT, HOTKEY_CLEAR_CONTEXT, HOTKEY_SNIP, HOTKEY_VOICE
@@ -263,13 +264,18 @@ def _load_config() -> None:
     # --- App behaviour ---
     THEME_MODE            = os.getenv("THEME_MODE", "system")  # "dark" | "light" | "system"
     DARK_MODE             = env_bool("DARK_MODE", THEME_MODE == "dark")
-    # Customizable dark-theme base colours. The whole dark palette (cards,
-    # borders, buttons, hovers) is derived from these four by lighten/darken,
-    # so the user only picks four swatches in Settings → App.
+    # Customizable theme templates. Each mode (light/dark) is a template of four
+    # base colours; switching mode swaps the template. The rest of the palette
+    # (cards, borders, buttons, hovers) is derived from these four, so the user
+    # only picks four swatches per mode in Settings → App.
     THEME_DARK_BG         = os.getenv("THEME_DARK_BG",      "#1c1e26")  # window background
     THEME_DARK_SURFACE    = os.getenv("THEME_DARK_SURFACE", "#17181d")  # inputs / sunken fields
     THEME_DARK_TEXT       = os.getenv("THEME_DARK_TEXT",    "#e8e8f0")  # primary text
     THEME_DARK_ACCENT     = os.getenv("THEME_DARK_ACCENT",  "#8b87ff")  # highlight / focus / buttons
+    THEME_LIGHT_BG        = os.getenv("THEME_LIGHT_BG",      "#f2f2f7")
+    THEME_LIGHT_SURFACE   = os.getenv("THEME_LIGHT_SURFACE", "#ffffff")
+    THEME_LIGHT_TEXT      = os.getenv("THEME_LIGHT_TEXT",    "#1c1c1e")
+    THEME_LIGHT_ACCENT    = os.getenv("THEME_LIGHT_ACCENT",  "#5856d6")
     # ICON_AUTO_HIDE (formerly DOLL_AUTO_HIDE) — old key still honored for back-compat.
     ICON_AUTO_HIDE        = env_bool("ICON_AUTO_HIDE", env_bool("DOLL_AUTO_HIDE", False))
     CHAT_AUTO_ELABORATE   = env_bool("CHAT_AUTO_ELABORATE", False)

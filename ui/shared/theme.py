@@ -1,4 +1,11 @@
-"""Shared Qt application theme helpers."""
+"""Shared Qt application theme helpers.
+
+A theme is just a *template* of four base colours — background, surface, text,
+accent. There are two templates (light and dark); switching the app between
+light and dark simply swaps which template is active. Cards, borders, buttons
+and hover states are derived from those four so the user only picks four
+swatches per mode in Settings → App.
+"""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
@@ -6,6 +13,23 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
 import config
+
+
+# Per-mode template defaults. Editable via THEME_<MODE>_<ROLE> config keys.
+_TEMPLATE_DEFAULTS = {
+    "dark": {
+        "bg": "#1c1e26",
+        "surface": "#17181d",
+        "text": "#e8e8f0",
+        "accent": "#8b87ff",
+    },
+    "light": {
+        "bg": "#f2f2f7",
+        "surface": "#ffffff",
+        "text": "#1c1c1e",
+        "accent": "#5856d6",
+    },
+}
 
 
 def is_dark_mode() -> bool:
@@ -38,34 +62,86 @@ def _color(value: str, fallback: str) -> QColor:
     return c if c.isValid() else QColor(fallback)
 
 
-def dark_theme_colors() -> dict[str, str]:
-    """Derive the full dark palette from the four user-configurable base colours.
+def _mix(a: QColor, b: QColor, t: float) -> QColor:
+    """Blend two colours: t=0 → a, t=1 → b."""
+    return QColor(
+        round(a.red() * (1 - t) + b.red() * t),
+        round(a.green() * (1 - t) + b.green() * t),
+        round(a.blue() * (1 - t) + b.blue() * t),
+    )
 
-    Cards, borders, buttons and hover states are computed by lighten/darken so
-    the user only chooses background, surface, text and accent in Settings.
+
+def template_base(dark: bool) -> dict[str, str]:
+    """The four user-chosen base colours for one mode, as hex strings."""
+    mode = "dark" if dark else "light"
+    d = _TEMPLATE_DEFAULTS[mode]
+    out: dict[str, str] = {}
+    for role, default in d.items():
+        key = f"THEME_{mode.upper()}_{role.upper()}"
+        out[role] = _hex(_color(getattr(config, key, default), default))
+    return out
+
+
+def theme_colors(dark: bool | None = None) -> dict[str, str]:
+    """Derive the full palette for the active (or requested) mode.
+
+    Cards, borders, buttons and hover states are computed from the four base
+    colours so the user only chooses background, surface, text and accent.
     """
-    bg = _color(getattr(config, "THEME_DARK_BG", "#1c1e26"), "#1c1e26")
-    surface = _color(getattr(config, "THEME_DARK_SURFACE", "#17181d"), "#17181d")
-    text = _color(getattr(config, "THEME_DARK_TEXT", "#e8e8f0"), "#e8e8f0")
-    accent = _color(getattr(config, "THEME_DARK_ACCENT", "#8b87ff"), "#8b87ff")
+    if dark is None:
+        dark = is_dark_mode()
+    base = template_base(dark)
+    bg = QColor(base["bg"])
+    surface = QColor(base["surface"])
+    text = QColor(base["text"])
+    accent = QColor(base["accent"])
     ar, ag, ab = accent.red(), accent.green(), accent.blue()
+
+    if dark:
+        card = bg.lighter(118)
+        border = bg.lighter(165)
+        button = bg.lighter(140)
+        button_hover = bg.lighter(160)
+        button_pressed = bg.darker(112)
+        tab = bg.lighter(118)
+        tab_selected = bg.lighter(150)
+        tooltip_bg = bg.lighter(140)
+        tooltip_border = bg.lighter(175)
+        scroll_handle = bg.lighter(175)
+        text_dim = text.darker(165)
+        accent_hover = accent.lighter(120)
+    else:
+        card = surface
+        border = bg.darker(112)
+        button = bg.lighter(102)
+        button_hover = _mix(surface, accent, 0.10)
+        button_pressed = _mix(surface, accent, 0.18)
+        tab = bg.lighter(101)
+        tab_selected = surface
+        tooltip_bg = surface
+        tooltip_border = bg.darker(110)
+        scroll_handle = bg.darker(118)
+        text_dim = _mix(text, bg, 0.55)
+        accent_hover = accent.darker(112)
+
     return {
-        "bg": _hex(bg),
-        "surface": _hex(surface),
-        "text": _hex(text),
-        "accent": _hex(accent),
-        "card": _hex(bg.lighter(118)),
-        "border": _hex(bg.lighter(165)),
-        "button": _hex(bg.lighter(140)),
-        "button_hover": _hex(bg.lighter(160)),
-        "button_pressed": _hex(bg.darker(112)),
-        "tab": _hex(bg.lighter(118)),
-        "tab_selected": _hex(bg.lighter(150)),
-        "tooltip_bg": _hex(bg.lighter(140)),
-        "tooltip_border": _hex(bg.lighter(175)),
-        "text_dim": _hex(text.darker(165)),
-        "accent_hover": _hex(accent.lighter(120)),
-        "scroll_handle": _hex(bg.lighter(175)),
+        "bg": base["bg"],
+        "surface": base["surface"],
+        "text": base["text"],
+        "accent": base["accent"],
+        "on_accent": "#ffffff",
+        "card": _hex(card),
+        "border": _hex(border),
+        "button": _hex(button),
+        "button_hover": _hex(button_hover),
+        "button_pressed": _hex(button_pressed),
+        "tab": _hex(tab),
+        "tab_selected": _hex(tab_selected),
+        "tooltip_bg": _hex(tooltip_bg),
+        "tooltip_border": _hex(tooltip_border),
+        "text_dim": _hex(text_dim),
+        "accent_hover": _hex(accent_hover),
+        "scroll_handle": _hex(scroll_handle),
         # Translucent accent washes for hover/pressed fills.
         "accent_hint": f"rgba({ar},{ag},{ab},0.08)",
         "accent_soft": f"rgba({ar},{ag},{ab},0.12)",
@@ -95,38 +171,8 @@ def _apply_color_scheme_hint(app: QApplication) -> None:
         pass
 
 
-def apply_app_theme(app: QApplication | None = None) -> None:
-    """Apply the configured app-wide palette to top-level Qt widgets."""
-    app = app or QApplication.instance()
-    if app is None:
-        return
-
-    _apply_color_scheme_hint(app)
-
-    if is_dark_mode():
-        c = dark_theme_colors()
-        palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(c["bg"]))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(c["text"]))
-        palette.setColor(QPalette.ColorRole.Base, QColor(c["surface"]))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(c["card"]))
-        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(c["tooltip_bg"]))
-        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(c["text"]))
-        palette.setColor(QPalette.ColorRole.Text, QColor(c["text"]))
-        palette.setColor(QPalette.ColorRole.Button, QColor(c["button"]))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor(c["text"]))
-        palette.setColor(QPalette.ColorRole.BrightText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.Link, QColor(c["accent_hover"]))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(c["accent"]))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(c["text_dim"]))
-        palette.setColor(QPalette.ColorRole.Mid, QColor(c["border"]))
-        palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(c["text_dim"]))
-        palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(c["text_dim"]))
-
-        app.setPalette(palette)
-        app.setStyleSheet(
-            f"""
+def _app_stylesheet(c: dict[str, str]) -> str:
+    return f"""
         QWidget {{
             background-color: {c["bg"]};
             color: {c["text"]};
@@ -158,6 +204,7 @@ def apply_app_theme(app: QApplication | None = None) -> None:
             border-radius: 4px;
             padding: 4px;
             selection-background-color: {c["accent"]};
+            selection-color: {c["on_accent"]};
         }}
         QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus {{
             border-color: {c["accent"]};
@@ -175,7 +222,7 @@ def apply_app_theme(app: QApplication | None = None) -> None:
         QPushButton:pressed {{
             background: {c["button_pressed"]};
         }}
-        QCheckBox {{
+        QCheckBox, QLabel, QGroupBox {{
             color: {c["text"]};
         }}
         QGroupBox {{
@@ -187,6 +234,7 @@ def apply_app_theme(app: QApplication | None = None) -> None:
             subcontrol-origin: margin;
             left: 8px;
             padding: 0 4px;
+            background-color: {c["bg"]};
         }}
         QScrollArea, QFrame {{
             background: transparent;
@@ -206,111 +254,35 @@ def apply_app_theme(app: QApplication | None = None) -> None:
             height: 0px;
         }}
         """
-        )
+
+
+def apply_app_theme(app: QApplication | None = None) -> None:
+    """Apply the active mode's template to the whole Qt application."""
+    app = app or QApplication.instance()
+    if app is None:
         return
 
+    _apply_color_scheme_hint(app)
+
+    c = theme_colors()
     palette = QPalette()
-    palette.setColor(QPalette.ColorRole.Window, QColor("#ffffff"))
-    palette.setColor(QPalette.ColorRole.WindowText, QColor("#1f2430"))
-    palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
-    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#f6f8fb"))
-    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#ffffff"))
-    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#1f2430"))
-    palette.setColor(QPalette.ColorRole.Text, QColor("#1f2430"))
-    palette.setColor(QPalette.ColorRole.Button, QColor("#f8fafc"))
-    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#1f2430"))
+    palette.setColor(QPalette.ColorRole.Window, QColor(c["bg"]))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(c["text"]))
+    palette.setColor(QPalette.ColorRole.Base, QColor(c["surface"]))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(c["card"]))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(c["tooltip_bg"]))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(c["text"]))
+    palette.setColor(QPalette.ColorRole.Text, QColor(c["text"]))
+    palette.setColor(QPalette.ColorRole.Button, QColor(c["button"]))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(c["text"]))
     palette.setColor(QPalette.ColorRole.BrightText, QColor("#ffffff"))
-    palette.setColor(QPalette.ColorRole.Link, QColor("#2457c5"))
-    palette.setColor(QPalette.ColorRole.Highlight, QColor("#2f6feb"))
-    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#667085"))
-    palette.setColor(QPalette.ColorRole.Mid, QColor("#cfd6e2"))
-    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor("#8a93a3"))
-    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor("#8a93a3"))
+    palette.setColor(QPalette.ColorRole.Link, QColor(c["accent_hover"]))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(c["accent"]))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(c["on_accent"]))
+    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(c["text_dim"]))
+    palette.setColor(QPalette.ColorRole.Mid, QColor(c["border"]))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(c["text_dim"]))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(c["text_dim"]))
 
     app.setPalette(palette)
-    app.setStyleSheet(
-        """
-        QWidget {
-            background-color: #ffffff;
-            color: #1f2430;
-        }
-        QToolTip {
-            color: #1f2430;
-            background-color: #ffffff;
-            border: 1px solid #d7dce5;
-            padding: 4px;
-        }
-        QTabWidget::pane {
-            border: 1px solid #d7dce5;
-        }
-        QTabBar::tab {
-            background: #f8fafc;
-            color: #344054;
-            padding: 6px 12px;
-            border: 1px solid #d7dce5;
-            border-bottom: none;
-        }
-        QTabBar::tab:selected {
-            background: #ffffff;
-            color: #101828;
-        }
-        QLineEdit, QTextEdit, QPlainTextEdit, QComboBox {
-            background: #ffffff;
-            color: #1f2430;
-            border: 1px solid #cfd6e2;
-            border-radius: 4px;
-            padding: 4px;
-            selection-background-color: #2f6feb;
-            selection-color: #ffffff;
-        }
-        QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
-            border-color: #2f6feb;
-        }
-        QPushButton {
-            background: #f8fafc;
-            color: #1f2430;
-            border: 1px solid #cfd6e2;
-            border-radius: 4px;
-            padding: 5px 12px;
-        }
-        QPushButton:hover {
-            background: #eef4ff;
-            border-color: #a9bde8;
-        }
-        QPushButton:pressed {
-            background: #e1ebff;
-        }
-        QCheckBox, QLabel, QGroupBox {
-            color: #1f2430;
-        }
-        QGroupBox {
-            border: 1px solid #d7dce5;
-            border-radius: 4px;
-            margin-top: 8px;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 8px;
-            padding: 0 4px;
-            background-color: #ffffff;
-        }
-        QScrollArea, QFrame {
-            background: transparent;
-        }
-        QScrollBar:vertical, QScrollBar:horizontal {
-            background: #f6f8fb;
-            border: none;
-        }
-        QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
-            background: #c7cfdd;
-            border-radius: 4px;
-            min-height: 24px;
-            min-width: 24px;
-        }
-        QScrollBar::add-line, QScrollBar::sub-line {
-            width: 0px;
-            height: 0px;
-        }
-        """
-    )
+    app.setStyleSheet(_app_stylesheet(c))

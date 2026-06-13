@@ -3,9 +3,12 @@
 Native OS title bars cannot render the app's colour palette and look different on
 every OS (GTK on Linux, NSWindow on macOS, DWM on Windows). To make the *whole*
 window follow the light/dark template, app windows are made frameless and we
-paint our own title bar + window buttons. Everything is styled with Qt
-``palette()`` roles so it re-themes automatically when ``apply_app_theme()``
-swaps the application palette.
+paint our own title bar + window buttons. The bar derives its colours straight
+from ``theme_colors(is_dark_mode())`` — the same source the window content uses —
+so the bar can never disagree with the content (relying on the app *palette*
+proved unreliable: on X11/GNOME ``colorScheme()`` resolves asynchronously, so the
+palette set at startup could be stale relative to a window opened later). It
+re-themes on palette-change events.
 
 The single entry point is :func:`install_window_chrome`; ``window_utils``'s
 ``enable_standard_window_controls`` simply forwards to it, so every existing
@@ -14,7 +17,7 @@ top-level window gets the new chrome for free.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QObject, QEvent
-from PySide6.QtGui import QColor, QPainter, QPalette, QPen
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy,
 )
@@ -26,31 +29,30 @@ _RESIZE_MARGIN = 6
 
 # Styled on the title bar itself (not the app/window stylesheet) so it is
 # isolated from each window's own stylesheet and wins via selector specificity.
-# All colours are palette roles mapped in ui.shared.theme.apply_app_theme, so a
-# theme change refreshes the chrome automatically.
-_TITLE_BAR_QSS = """
-#wispTitleBar {
-    background: palette(window);
-    border-bottom: 1px solid palette(mid);
-}
-#wispTitleText {
-    color: palette(window-text);
+# Colours are substituted explicitly from theme_colors() so the bar matches the
+# content regardless of the (possibly stale) application palette.
+def _title_bar_qss(c: dict[str, str]) -> str:
+    return f"""
+#wispTitleBar {{
+    background: {c["bg"]};
+    border-bottom: 1px solid {c["border"]};
+}}
+#wispTitleText {{
+    color: {c["text"]};
     font-size: 10pt;
     font-weight: 600;
     background: transparent;
-}
-QPushButton[winbtn] {
+}}
+QPushButton[winbtn] {{
     background: transparent;
     border: none;
     border-radius: 6px;
-    color: palette(window-text);
-    font-size: 11pt;
     margin: 0px 1px;
-}
-QPushButton[winbtn]:hover { background: rgba(127, 127, 127, 0.20); }
-QPushButton[winbtn]:pressed { background: rgba(127, 127, 127, 0.32); }
-QPushButton[winbtn="close"]:hover { background: #e81123; }
-QPushButton[winbtn="close"]:pressed { background: #c50f1f; }
+}}
+QPushButton[winbtn]:hover {{ background: rgba(127, 127, 127, 0.20); }}
+QPushButton[winbtn]:pressed {{ background: rgba(127, 127, 127, 0.32); }}
+QPushButton[winbtn="close"]:hover {{ background: #e81123; }}
+QPushButton[winbtn="close"]:pressed {{ background: #c50f1f; }}
 """
 
 
@@ -61,10 +63,15 @@ class _WinButton(QPushButton):
     def __init__(self, kind: str, parent: QWidget):
         super().__init__(parent)
         self._kind = kind
+        self._glyph_color = QColor("#000000")
         self.setProperty("winbtn", kind)
         self.setFixedSize(_BTN_W, _BTN_H)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def set_glyph_color(self, colour: QColor) -> None:
+        self._glyph_color = QColor(colour)
+        self.update()
 
     def paintEvent(self, event):  # noqa: N802
         super().paintEvent(event)  # stylesheet background / hover / pressed
@@ -73,7 +80,7 @@ class _WinButton(QPushButton):
         if self._kind == "close" and self.underMouse():
             colour = QColor("#ffffff")
         else:
-            colour = self.palette().color(QPalette.ColorRole.WindowText)
+            colour = self._glyph_color
         p.setPen(QPen(colour, 1.2))
         r = self.rect()
         cx, cy, s = r.center().x(), r.center().y(), 5
@@ -93,10 +100,10 @@ class _TitleBar(QWidget):
     def __init__(self, window: QWidget):
         super().__init__(window)
         self._window = window
+        self._theming = False
         self.setObjectName("wispTitleBar")
         self.setFixedHeight(_TITLE_BAR_HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setStyleSheet(_TITLE_BAR_QSS)
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 0, 6, 0)
@@ -117,6 +124,35 @@ class _TitleBar(QWidget):
         self._max_btn.clicked.connect(self._toggle_max)
         self._close_btn.clicked.connect(window.close)
         window.windowTitleChanged.connect(self._title.setText)
+
+        self.apply_theme()
+
+    def apply_theme(self) -> None:
+        """Recompute colours from the active light/dark template.
+
+        Uses ``theme_colors(is_dark_mode())`` directly so the bar always matches
+        the window content, even if the application palette is stale.
+        """
+        if self._theming:  # setStyleSheet re-enters via changeEvent; guard it
+            return
+        self._theming = True
+        try:
+            from ui.shared.theme import is_dark_mode, theme_colors
+            c = theme_colors(is_dark_mode())
+            self.setStyleSheet(_title_bar_qss(c))
+            glyph = QColor(c["text"])
+            for b in (self._min_btn, self._max_btn, self._close_btn):
+                b.set_glyph_color(glyph)
+        finally:
+            self._theming = False
+
+    def changeEvent(self, event):  # noqa: N802
+        # The app palette changing is our signal that the theme was swapped.
+        if event.type() in (
+            QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange
+        ):
+            self.apply_theme()
+        super().changeEvent(event)
 
     def _toggle_max(self) -> None:
         if self._window.isMaximized():

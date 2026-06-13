@@ -1318,6 +1318,12 @@ _DOC_APP_TITLE_SUFFIXES: list[str] = [
     " - Mark Text",
     " - GNU Emacs",
     " - GVIM",
+    " - KWrite",
+    " - Kate",
+    " \u2013 KWrite",
+    " \u2013 Kate",
+    " \u2014 KWrite",
+    " \u2014 Kate",
     # PDF viewers / editors
     " - Preview",
     " - Skim",
@@ -1389,6 +1395,8 @@ _DOC_APP_PROCESS_NAMES: set[str] = {
     "marktext.exe", "marktext",
     "gvim.exe", "gvim",
     "emacs.exe", "emacs",
+    "kwrite",
+    "kate",
     # macOS document apps whose titles are commonly just the document name
     "preview",
     "skim",
@@ -1808,6 +1816,10 @@ def _resolve_doc_path(win: WindowInfo) -> str:
             win_path = _win_match_open_file(win.pid, doc_name)
             if win_path:
                 return win_path
+        elif not _IS_MAC and win.pid:
+            linux_path = _linux_match_open_file(win.pid, doc_name)
+            if linux_path:
+                return linux_path
 
         # If it looks like an absolute path already, trust it.
         if os.path.isfile(doc_name):
@@ -2007,6 +2019,26 @@ def _win_open_files_for_pid(pid: int) -> list[str]:
         return []
 
 
+def _linux_open_files_for_pid(pid: int) -> list[str]:
+    if _IS_WIN or _IS_MAC or pid <= 0:
+        return []
+    try:
+        import psutil  # type: ignore
+
+        proc = psutil.Process(pid)
+        paths: list[str] = []
+        seen: set[str] = set()
+        for item in proc.open_files() or []:
+            path = os.path.normpath(str(getattr(item, "path", "") or ""))
+            if not path or path in seen or not os.path.isfile(path):
+                continue
+            seen.add(path)
+            paths.append(path)
+        return paths
+    except Exception:
+        return []
+
+
 def _match_open_file_paths(candidates: list[str], doc_name: str) -> str:
     if not candidates:
         return ""
@@ -2039,6 +2071,10 @@ def _mac_match_open_file(pid: int, doc_name: str) -> str:
 
 def _win_match_open_file(pid: int, doc_name: str) -> str:
     return _match_open_file_paths(_win_open_files_for_pid(pid), doc_name)
+
+
+def _linux_match_open_file(pid: int, doc_name: str) -> str:
+    return _match_open_file_paths(_linux_open_files_for_pid(pid), doc_name)
 
 
 def get_all_open_document_paths(

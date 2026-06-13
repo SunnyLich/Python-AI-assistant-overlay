@@ -423,10 +423,32 @@ def _active_app() -> dict[str, Any]:
                 from core.platform_utils import get_foreground_window
 
                 wid = int(get_foreground_window() or 0)
+            pid = int(get_window_pid(wid) or 0)
+            process_name = ""
+            if pid:
+                try:
+                    import psutil
+
+                    process_name = str(psutil.Process(pid).name() or "")
+                except Exception:
+                    process_name = ""
+            title = get_window_title(wid)
+            _last_context_window_debug = {
+                "raw_hwnd": wid,
+                "raw_title": title,
+                "raw_pid": pid,
+                "raw_process": process_name,
+                "corrected": False,
+                "chosen_hwnd": wid,
+                "chosen_title": title,
+                "chosen_pid": pid,
+                "chosen_process": process_name,
+            }
             return {
-                "name": get_window_title(wid),
+                "name": title,
+                "process_name": process_name,
                 "bundle_id": "",
-                "pid": int(get_window_pid(wid) or 0),
+                "pid": pid,
                 "window_id": wid,
             }
         except Exception:

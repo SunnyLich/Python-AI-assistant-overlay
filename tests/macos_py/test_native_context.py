@@ -80,3 +80,32 @@ def test_context_snapshot_reads_background_browser_when_foreground_is_document(m
     assert snapshot["browser_url"] == "https://example.test/page"
     assert snapshot["browser_hwnd"] == 777
     assert snapshot["debug"]["browser_window"]["process_name"] == "chrome.exe"
+
+
+def test_linux_active_app_includes_real_process_name(monkeypatch):
+    monkeypatch.setattr(native_host, "IS_WIN", False)
+    monkeypatch.setattr(native_host, "IS_MAC", False)
+
+    import core.platform_utils as platform_utils
+
+    monkeypatch.setattr(platform_utils, "get_foreground_window", lambda: 144703501)
+    monkeypatch.setattr(platform_utils, "get_window_title", lambda _wid: "Summary.txt \u2014 KWrite")
+    monkeypatch.setattr(platform_utils, "get_window_pid", lambda _wid: 1651464)
+
+    class FakeProcess:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def name(self):
+            return "kwrite"
+
+    import psutil
+
+    monkeypatch.setattr(psutil, "Process", FakeProcess)
+
+    active = native_host._active_app()
+
+    assert active["name"] == "Summary.txt \u2014 KWrite"
+    assert active["process_name"] == "kwrite"
+    assert active["pid"] == 1651464
+    assert native_host._last_context_window_debug["raw_process"] == "kwrite"

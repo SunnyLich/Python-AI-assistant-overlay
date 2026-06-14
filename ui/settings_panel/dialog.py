@@ -227,19 +227,33 @@ class SettingsDialog(QDialog):
         c = theme_colors(dark)
         # In light mode card/tab text read better a touch dimmer than text_dim.
         return f"""
-        QDialog {{ background: {c["bg"]}; }}
-        QTabWidget::pane {{ border: none; background: transparent; }}
-        QTabBar {{ background: transparent; border: none; }}
-        QTabBar::tab {{
+        QDialog, QWidget#wispWindowContent {{
+            background: {c["bg"]};
+        }}
+        QTabWidget#settingsTabs {{
+            background: {c["bg"]};
+        }}
+        QTabWidget#settingsTabs::pane {{
+            border: none;
+            background: {c["bg"]};
+        }}
+        QTabWidget#settingsTabs > QWidget {{
+            background: {c["bg"]};
+        }}
+        QTabWidget#settingsTabs QTabBar {{
+            background: {c["bg"]};
+            border: none;
+        }}
+        QTabWidget#settingsTabs QTabBar::tab {{
             color: {c["text_dim"]}; padding: 7px 20px; border-radius: 8px;
             border: 1px solid {c["border"]};
             font-size: 9pt; margin: 2px 2px; background: transparent;
         }}
-        QTabBar::tab:selected {{
+        QTabWidget#settingsTabs QTabBar::tab:selected {{
             background: {c["tab_selected"]}; color: {c["accent"]};
             border: 1px solid {c["accent"]}; font-weight: 600;
         }}
-        QTabBar::tab:hover:!selected {{ background: {c["accent_hint"]}; }}
+        QTabWidget#settingsTabs QTabBar::tab:hover:!selected {{ background: {c["accent_hint"]}; }}
         QFrame#card {{
             background: {c["card"]}; border: 1px solid {c["border"]}; border-radius: 12px;
         }}
@@ -247,9 +261,15 @@ class SettingsDialog(QDialog):
             color: {c["text_dim"]}; font-size: 8pt; font-weight: 700;
             letter-spacing: 0.5px; padding: 0px;
         }}
-        QScrollArea {{ background: transparent; border: none; }}
+        QScrollArea {{
+            background: {c["bg"]};
+            border: none;
+        }}
+        QScrollArea > QWidget {{
+            background: {c["bg"]};
+        }}
         QScrollArea > QWidget > QWidget {{ background: transparent; }}
-        QWidget {{ background-color: transparent; color: {c["text"]}; }}
+        QWidget {{ color: {c["text"]}; }}
         QLineEdit {{
             background: {c["surface"]}; border: 1px solid {c["border"]}; border-radius: 8px;
             padding: 5px 10px; font-size: 10pt; color: {c["text"]}; min-height: 30px;
@@ -285,6 +305,9 @@ class SettingsDialog(QDialog):
             background: {c["scroll_handle"]}; border-radius: 4px;
             min-height: 24px; min-width: 24px;
         }}
+        QScrollBar::add-page, QScrollBar::sub-page {{
+            background: {c["bg"]};
+        }}
         QScrollBar::add-line, QScrollBar::sub-line {{ width: 0px; height: 0px; }}
     """
 
@@ -298,6 +321,7 @@ class SettingsDialog(QDialog):
         root.setSpacing(12)
 
         tabs = QTabWidget()
+        tabs.setObjectName("settingsTabs")
         # Never elide tab labels to "…"; macOS sizes the bold selected tab
         # tighter than Windows, so let each tab grow to fit its full text.
         tabs.setElideMode(Qt.TextElideMode.ElideNone)
@@ -3410,4 +3434,3 @@ def open_settings(parent=None, on_apply=None):
     _settings_dialog.show()
     _settings_dialog.raise_()
     _settings_dialog.activateWindow()
-

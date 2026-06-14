@@ -82,6 +82,21 @@ def test_reset_page_key_mapping_is_scoped():
     assert SettingsDialog._reset_env_keys_for_page("Tools", env) == set()
 
 
+def test_settings_tab_strip_uses_theme_background():
+    from ui.settings_panel.dialog import SettingsDialog
+    from ui.shared.theme import theme_colors
+
+    colors = theme_colors(True)
+    style = SettingsDialog._dialog_style(True)
+
+    assert "QTabWidget#settingsTabs" in style
+    assert "QTabWidget#settingsTabs QTabBar" in style
+    assert "QWidget#wispWindowContent" in style
+    assert f"background: {colors['bg']};" in style
+    assert "QTabBar { background: transparent" not in style
+    assert "QWidget { background-color: transparent" not in style
+
+
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
 def test_settings_has_reset_page_button():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

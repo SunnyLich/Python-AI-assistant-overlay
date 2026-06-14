@@ -240,6 +240,7 @@ class _WindowChrome(QObject):
 
         content = QWidget(w)
         content.setObjectName("wispWindowContent")
+        content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         content.setLayout(old_layout)  # re-host the window's real content
 
         self._title_bar = _TitleBar(w)

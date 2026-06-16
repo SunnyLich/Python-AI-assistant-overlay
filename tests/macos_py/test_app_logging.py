@@ -1,6 +1,26 @@
 from pathlib import Path
 
+import pytest
+
 from macos_py.supervisor import app as supervisor_app
+
+
+def test_dispatch_module_mode_runs_requested_worker_module(monkeypatch):
+    calls = []
+    monkeypatch.setattr(supervisor_app.sys, "argv", ["Wisp.exe", "-m", "macos_py.workers.audio_host", "--flag"])
+    monkeypatch.setattr(supervisor_app.runpy, "run_module", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    with pytest.raises(SystemExit) as exc:
+        supervisor_app._dispatch_module_mode()
+
+    assert exc.value.code == 0
+    assert calls == [
+        (
+            ("macos_py.workers.audio_host",),
+            {"run_name": "__main__", "alter_sys": True},
+        )
+    ]
+    assert supervisor_app.sys.argv == ["macos_py.workers.audio_host", "--flag"]
 
 
 def test_prepare_run_log_dir_sets_env_and_latest_pointer(tmp_path, monkeypatch):

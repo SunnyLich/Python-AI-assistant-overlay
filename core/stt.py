@@ -32,6 +32,11 @@ SAMPLE_RATE = 16_000   # Whisper expects 16 kHz mono
 
 _model      = None
 _model_lock = threading.Lock()
+# Effective backend the loaded model actually ended up on. May differ from the
+# requested config when a `cuda`/`float16` choice silently falls back to CPU/int8
+# (see core.stt_device) — the UI reads this to show the live backend.
+_active_device:  str | None = None
+_active_compute: str | None = None
 
 _stream = None  # sounddevice.InputStream | None (in-process path only)
 _recording  = False
@@ -44,7 +49,7 @@ _chunks_lock = threading.Lock()
 # ------------------------------------------------------------------
 
 def _get_model():
-    global _model
+    global _model, _active_device, _active_compute
     with _model_lock:
         if _model is None:
             from faster_whisper import WhisperModel
@@ -55,23 +60,60 @@ def _get_model():
             _model, compute_type = build_model(
                 WhisperModel, config.STT_MODEL, device, compute_type, log=_log
             )
+            _active_device, _active_compute = device, compute_type
             print(f"[stt] Model '{config.STT_MODEL}' loaded on {device} ({compute_type}).")
     return _model
 
 
+def active_backend() -> dict | None:
+    """The backend the loaded model is actually running on, or ``None`` if it
+    hasn't loaded yet (model loads lazily on the first hold-to-talk).
+
+    Returns ``{"model", "device", "compute", "degraded"}``. ``degraded`` is True
+    when the live device/compute fell short of what config asked for — e.g. a
+    ``cuda``/``float16`` request that silently dropped to CPU/int8, which is the
+    usual reason large-v3 Cantonese quietly gets worse between runs. The macOS
+    helper runs STT out-of-process and isn't introspected here, so it returns
+    ``None`` there.
+    """
+    if macos_helper.is_enabled():
+        return None
+    with _model_lock:
+        if _model is None or _active_device is None:
+            return None
+        device, compute = _active_device, _active_compute
+    wanted_device = (config.STT_DEVICE or "auto").strip().lower()
+    wanted_compute = (config.STT_COMPUTE_TYPE or "").strip().lower()
+    degraded = (
+        (wanted_device == "cuda" and device != "cuda")
+        or (wanted_compute in ("float16", "int8_float16") and compute == "int8")
+    )
+    return {
+        "model": config.STT_MODEL,
+        "device": device,
+        "compute": compute,
+        "degraded": degraded,
+    }
+
+
 def reset_model() -> None:
     """Drop the cached Whisper model so the next transcription uses current config."""
-    global _model
+    global _model, _active_device, _active_compute
     if macos_helper.is_enabled():
         from core.macos_helper import stt_client
         stt_client.reset_model()
         return
     with _model_lock:
         _model = None
+        _active_device = None
+        _active_compute = None
 
 
-def prewarm():
-    """Load the Whisper model in a background thread to avoid cold start on first use."""
+def prewarm(on_ready=None):
+    """Load the Whisper model in a background thread to avoid cold start on first
+    use. ``on_ready`` (if given) is called with ``active_backend()`` once the
+    model is warmed, so callers can surface which device/precision it landed on.
+    It runs on the background thread — marshal back to the UI thread yourself."""
     if macos_helper.is_enabled():
         from core.macos_helper import stt_client
         stt_client.prewarm()
@@ -85,6 +127,12 @@ def prewarm():
             _get_model()
         except Exception as exc:
             print(f"[stt] prewarm skipped: {exc}")
+            return
+        if on_ready is not None:
+            try:
+                on_ready(active_backend())
+            except Exception as exc:  # noqa: BLE001 — a notify failure must not crash prewarm
+                print(f"[stt] prewarm on_ready callback failed: {exc}")
 
     threading.Thread(target=_worker, daemon=True).start()
 

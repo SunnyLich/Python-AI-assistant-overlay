@@ -8,9 +8,12 @@ import logging
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
+
+from macos_py.supervisor import tool_modes
 
 log = logging.getLogger("wisp.macos_py.flows")
 _INTERACTIVE_LLM_TIMEOUT_SECONDS = 120.0
@@ -549,8 +552,6 @@ class FlowController:
             self._dictate_target_pid = int(active_app.get("window_id") or active_app.get("pid") or 0)
         self._dictate_focus_token = int(context.get("focus_token") or 0)
         self._fire(self.audio, "audio.stop")
-        self._fire(self.ui, "ui.overlay.state", {"state": "listening"})
-        self._fire(self.ui, "ui.reply.listening")
         try:
             self.audio.call("audio.record.start", timeout=20.0)
         except Exception as exc:  # noqa: BLE001 — surface mic/worker failure in the UI
@@ -563,9 +564,6 @@ class FlowController:
         """Stop dictation, transcribe, optionally LLM-clean, and paste into the
         text field that was focused when recording started."""
         try:
-            if self._stt_warming():
-                self._fire(self.ui, "ui.reply.notice",
-                           {"text": "Warming up speech model — the first transcription is slower…"})
             try:
                 result = self.audio.call("audio.record.stop_transcribe", timeout=180.0)
             except Exception as exc:  # noqa: BLE001 — surface transcribe failure in the UI
@@ -575,7 +573,6 @@ class FlowController:
                 return
             text = str((result or {}).get("text") or "").strip()
             if not text:
-                self._fire(self.ui, "ui.reply.reset")
                 self._set_idle()
                 return
             import config
@@ -619,7 +616,6 @@ class FlowController:
         )
         paste = paste if isinstance(paste, dict) else {}
         log.info("dictation paste: target_pid=%s result=%s", self._dictate_target_pid, paste)
-        self._fire(self.ui, "ui.reply.reset")
         self._set_idle()
         if paste.get("ok"):
             return  # silent success — the pasted text is the confirmation
@@ -678,10 +674,18 @@ class FlowController:
                 done_seen = True
                 self._safe_call(self.ui, "ui.chat.done", {"request_id": request_id}, timeout=30.0)
 
+        chat_params: dict[str, Any] = {"messages": messages}
+        try:
+            hist = self._safe_call(self.ui, "ui.chat.active_history", {}, timeout=10.0)
+            if isinstance(hist, dict):
+                chat_params["memory_project"] = hist.get("project_id")
+        except Exception:
+            log.exception("failed to fetch active project for chat")
+
         try:
             result = self._brain_call_with_events(
                 "brain.chat",
-                {"messages": messages},
+                chat_params,
                 timeout=_INTERACTIVE_LLM_TIMEOUT_SECONDS,
                 on_event=on_event,
             )
@@ -1119,6 +1123,19 @@ class FlowController:
                     self._last_reply = text_done
                 if not (self._tts_enabled() and text_done):
                     self._on_reply_done(payload)
+
+        # Continue the conversation selected in the chat window: replay its prior
+        # turns so the model has full context. ui_host is the source of truth for
+        # the active conversation (empty on a fresh start -> new conversation).
+        try:
+            hist = self._safe_call(self.ui, "ui.chat.active_history", {}, timeout=10.0)
+            if isinstance(hist, dict):
+                if hist.get("history"):
+                    params["history"] = hist["history"]
+                # Scope memory (retrieval + saves) to the conversation's project.
+                params["memory_project"] = hist.get("project_id")
+        except Exception:
+            log.exception("failed to fetch active conversation history")
 
         try:
             log.info("query brain call started")
@@ -1734,46 +1751,10 @@ class FlowController:
 
     @staticmethod
     def _context_mode(caller: dict[str, Any], name: str) -> str:
-        key = f"context_{name}_mode"
-        mode = str(caller.get(key) or "").strip().lower()
-        if mode in {"off", "auto", "model"}:
-            return mode
-        if name == "documents":
-            if caller.get("context_documents", False):
-                return "auto"
-            if caller.get("context_tools", False):
-                return "model"
-        if name in {"browser", "github"} and caller.get("context_tools", False):
-            return "model"
-        if name == "memory":
-            return "auto"
-        return "off"
+        return tool_modes.context_mode(caller, name)
 
     def _allowed_model_tools(self, caller: dict[str, Any]) -> list[str]:
-        allowed: list[str] = []
-        if self._context_mode(caller, "documents") == "model":
-            allowed.append("get_context.documents")
-        if self._context_mode(caller, "browser") == "model":
-            allowed.extend(["web_search", "get_context.browser"])
-        if self._context_mode(caller, "github") == "model":
-            allowed.extend(["git_status", "git_diff", "github_repo", "github_issue"])
-        if self._context_mode(caller, "memory") == "model":
-            allowed.append("memory_search")
-        overrides = self._tool_overrides(caller)
-        for name, mode in overrides.items():
-            if mode != "off" and name not in allowed:
-                allowed.append(name)
-        # Per-tool "off" beats whatever a context dropdown granted. A plain
-        # get_context override covers both of its dotted source entries.
-        removed = {name for name, mode in overrides.items() if mode == "off"}
-        if removed:
-            allowed = [
-                name
-                for name in allowed
-                if name not in removed
-                and not (name.startswith("get_context.") and "get_context" in removed)
-            ]
-        return allowed
+        return tool_modes.allowed_model_tools(caller)
 
     def _pinned_model_tools(self, caller: dict[str, Any]) -> list[str]:
         """Tools always offered to the model, bypassing prompt keyword filters.
@@ -1783,68 +1764,20 @@ class FlowController:
         grants like ``get_context.browser``, but the actual schema is named
         ``get_context``, so pin the schema name here.
         """
-        pinned: list[str] = []
-        if self._context_mode(caller, "documents") == "model":
-            pinned.append("get_context")
-        if self._context_mode(caller, "browser") == "model":
-            pinned.extend(["web_search", "get_context"])
-        if self._context_mode(caller, "github") == "model":
-            pinned.extend(["git_status", "git_diff", "github_repo", "github_issue"])
-        if self._context_mode(caller, "memory") == "model":
-            pinned.append("memory_search")
-        overrides = self._tool_overrides(caller)
-        pinned.extend(name for name, mode in overrides.items() if mode == "on")
-        removed = {name for name, mode in overrides.items() if mode == "off"}
-        allowed = set(self._allowed_model_tools(caller))
-        result: list[str] = []
-        for name in pinned:
-            if name == "get_context":
-                if not ({"get_context", "get_context.browser", "get_context.documents"} & allowed):
-                    continue
-            elif name not in allowed:
-                continue
-            if name in removed:
-                continue
-            if name == "get_context" and (
-                "get_context" in removed
-                or (
-                    "get_context.browser" in removed
-                    and "get_context.documents" in removed
-                )
-            ):
-                continue
-            if name not in result:
-                result.append(name)
-        return result
+        return tool_modes.pinned_model_tools(caller)
 
     def _screenshot_tool_allowed(self, caller: dict[str, Any]) -> bool:
         """Whether capture_screen is exposed: the Screenshot dropdown's "model"
         mode, overridable per-tool from the Allowed Tools list (auto-capture
         stays dropdown-governed)."""
-        override = self._tool_overrides(caller).get("capture_screen")
-        if override == "off":
-            return False
-        if override in {"on", "model"}:
-            return True
-        return caller.get("context_screenshot") == "model"
+        return tool_modes.screenshot_tool_allowed(caller)
 
     @staticmethod
     def _tool_overrides(caller: dict[str, Any]) -> dict[str, str]:
-        overrides = caller.get("tools")
-        if not isinstance(overrides, dict):
-            return {}
-        return {
-            str(name): str(mode).strip().lower()
-            for name, mode in overrides.items()
-            if str(mode).strip().lower() in {"on", "model", "off"}
-        }
+        return tool_modes.tool_overrides(caller)
 
     def _frontloaded_model_tools(self, caller: dict[str, Any]) -> list[str]:
-        frontload: list[str] = []
-        if self._context_mode(caller, "github") == "auto":
-            frontload.extend(["git_status", "git_diff"])
-        overrides = self._tool_overrides(caller)
-        return [name for name in frontload if overrides.get(name) != "off"]
+        return tool_modes.frontloaded_model_tools(caller)
 
     def _consume_context_extras(self) -> tuple[list[str], list[dict[str, Any]]]:
         buffered = list(self._context_buffer)

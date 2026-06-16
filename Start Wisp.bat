@@ -14,8 +14,20 @@ if exist ".python-version" ( set /p WANT=<.python-version )
 for /f "tokens=1,2 delims=." %%a in ("!WANT!") do set "WANT_MM=%%a.%%b"
 set "VPY=.venv\Scripts\python.exe"
 
+REM Rebuild stale virtual environments created with a different Python minor.
+if exist "%VPY%" (
+  "%VPY%" -c "import sys; raise SystemExit(0 if f'{sys.version_info[0]}.{sys.version_info[1]}' == '!WANT_MM!' else 1)" >nul 2>nul
+  if errorlevel 1 (
+    echo Existing environment is not Python !WANT_MM!; rebuilding it...
+    rmdir /s /q .venv
+  )
+)
+
 REM --- 1) Already set up? Just run. ---
-if exist "%VPY%" ( "%VPY%" -c "import PySide6" >nul 2>nul && goto run )
+if exist "%VPY%" (
+  "%VPY%" -c "import PySide6" >nul 2>nul
+  if not errorlevel 1 goto run
+)
 
 echo Setting up Wisp...
 
@@ -32,7 +44,12 @@ if exist "%VPY%" (
 REM --- 3) build with a Python already installed (prefer the py launcher's WANT_MM) ---
 set "PYCMD="
 where py >nul 2>nul && ( py -!WANT_MM! --version >nul 2>nul && set "PYCMD=py -!WANT_MM!" )
-if not defined PYCMD ( where python >nul 2>nul && set "PYCMD=python" )
+if not defined PYCMD (
+  where python >nul 2>nul && (
+    python -c "import sys; raise SystemExit(0 if f'{sys.version_info[0]}.{sys.version_info[1]}' == '!WANT_MM!' else 1)" >nul 2>nul
+    if not errorlevel 1 set "PYCMD=python"
+  )
+)
 if defined PYCMD (
   echo Building environment with !PYCMD! ...
   if exist ".venv" rmdir /s /q .venv

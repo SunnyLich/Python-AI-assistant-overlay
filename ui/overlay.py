@@ -46,6 +46,7 @@ class OverlaySignals(QObject):
     show_new_chat          = Signal()        # tray "New chat" clicked
     show_last_chat         = Signal()        # tray "Last chat" clicked
     chat_new_conversation  = Signal()        # a voice query created a new conversation
+    chat_sync_conversation = Signal(int)     # a voice query appended to an existing conversation (idx)
     show_memory_viewer     = Signal()        # tray "Memory-¦" clicked
     show_plugin_manager    = Signal()        # tray "Addon Manager" clicked
     show_agent_task        = Signal()        # tray "Start agent task" clicked
@@ -56,6 +57,7 @@ class OverlaySignals(QObject):
     drop_context_cleared   = Signal()        # context panel should be cleared
     remove_dropped_item    = Signal(int)     # user clicked X on badge at this index
     bubble_speed           = Signal(bool)     # hold-to-speed state changed
+    status_notification    = Signal(str, str) # (title, message) startup/status notice (addons, STT-ready)
 
 
 class IconOverlay(QMainWindow):
@@ -118,6 +120,7 @@ class IconOverlay(QMainWindow):
         signals.show_icon.connect(self._show_icon)
         signals.hide_icon.connect(self._hide_icon)
         signals.raise_overlay.connect(self._raise_overlay)
+        signals.status_notification.connect(self._on_status_notification)
 
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
@@ -304,6 +307,23 @@ class IconOverlay(QMainWindow):
         from ui.popup import TextPopup
         popup = TextPopup(text, parent=None)
         popup.show()
+
+    def _on_status_notification(self, title: str, message: str) -> None:
+        """Show a lightweight startup/status notice (addon notifications, the
+        STT-ready/backend message). Tray balloon is the durable surface; the
+        bubble gives an immediate on-screen confirmation."""
+        if not message:
+            return
+        if hasattr(self, "_bubble"):
+            self._show_icon()
+            self._bubble.show_notice(message, timeout_ms=5000)
+        if hasattr(self, "_tray"):
+            self._tray.showMessage(
+                title or t("Wisp"),
+                message,
+                QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            )
 
     def notify_agent_approval(self, text: str, *, resolved: bool = False) -> None:
         """Raise the icon and show an agent approval notice bubble."""

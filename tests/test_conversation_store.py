@@ -59,6 +59,20 @@ def test_conversation_round_trip_and_title(tmp_path, monkeypatch):
     assert loaded[0]["id"]
 
 
+def test_pin_and_rename_round_trip(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    store.save_conversations([
+        {
+            "messages": [{"role": "user", "content": "hello"}],
+            "pinned": True,
+            "title_override": "My pinned chat",
+        },
+    ])
+    loaded = store.load_conversations()
+    assert loaded[0]["pinned"] is True
+    assert loaded[0]["title_override"] == "My pinned chat"
+
+
 def test_deleting_project_reassigns_conversations(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     proj = store.add_project("Temp")

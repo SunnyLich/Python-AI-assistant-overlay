@@ -161,6 +161,8 @@ def _clean_conversation(conv: dict) -> dict:
         "id": conv.get("id") or str(uuid.uuid4()),
         "project_id": conv.get("project_id") or GENERAL_PROJECT_ID,
         "title": conv.get("title") or _derive_title(conv),
+        "title_override": conv.get("title_override", ""),
+        "pinned": bool(conv.get("pinned")),
         "messages": conv.get("messages", []),
         "context": conv.get("context", ""),
         "created_at": conv.get("created_at") or _now_iso(),

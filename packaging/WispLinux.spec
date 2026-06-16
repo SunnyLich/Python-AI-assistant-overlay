@@ -3,7 +3,17 @@
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
-ROOT = Path(SPECPATH).resolve().parent
+
+def _repo_root() -> Path:
+    start = Path(SPECPATH).resolve()
+    candidates = [start, *start.parents]
+    for candidate in candidates:
+        if (candidate / ".python-version").exists() and (candidate / "requirements.txt").exists():
+            return candidate
+    return start
+
+
+ROOT = _repo_root()
 
 # LiteParse ships a loose pdfium shared library that its native extension
 # loads at runtime; collect the package explicitly or the frozen app panics
@@ -22,7 +32,7 @@ block_cipher = None
 
 
 a = Analysis(
-    [str(ROOT / "main.py")],
+    [str(ROOT / "macos_py" / "supervisor" / "app.py")],
     pathex=[str(ROOT)],
     binaries=LITEPARSE_BINARIES + UV_BINARIES,
     datas=[

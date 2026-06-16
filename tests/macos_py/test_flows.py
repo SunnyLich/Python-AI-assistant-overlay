@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import config
-
 from macos_py.supervisor.flows import FlowController
 
 
@@ -318,7 +317,8 @@ def test_context_modes_map_to_auto_documents_and_allowed_tools():
     query = brain.last_call("brain.query")["params"]
     assert query["include_active_document"] is False
     assert query["use_tools"] is True
-    assert query["allowed_tools"] == ["get_context.documents", "git_status", "git_diff", "github_repo", "github_issue"]
+    # memory defaults to "auto", which now also offers the memory_save write tool.
+    assert query["allowed_tools"] == ["get_context.documents", "git_status", "git_diff", "github_repo", "github_issue", "memory_save"]
     assert query["pinned_tools"] == ["get_context", "git_status", "git_diff", "github_repo", "github_issue"]
     assert query["frontload_tools"] == []
 
@@ -343,8 +343,10 @@ def test_context_modes_map_on_browser_and_git_to_frontloaded_context():
         _ui.emit("ui.intent.chosen", {"custom": "Use context"})
 
     query = brain.last_call("brain.query")["params"]
-    assert query["use_tools"] is False
-    assert query["allowed_tools"] == []
+    # memory defaults to "auto" -> memory_save offered, so tools are active even
+    # though browser/git context is frontloaded rather than offered as tools.
+    assert query["use_tools"] is True
+    assert query["allowed_tools"] == ["memory_save"]
     assert query["frontload_tools"] == ["git_status", "git_diff"]
     assert "[Browser/Web]" in query["ambient_text"]
     assert "https://example.test/page" in query["ambient_text"]
@@ -1190,6 +1192,32 @@ def test_voice_screenshot_auto_captures_at_voice_start(tmp_path):
     assert native.calls_for("native.capture.fullscreen")
     query = brain.last_call("brain.query")["params"]
     assert query["screenshot_b64"] == base64.b64encode(image_bytes).decode("ascii")
+
+
+def test_dictation_does_not_raise_overlay_or_bubble_on_normal_path():
+    native = FakeWorker(
+        {
+            "native.context.snapshot": context_handler(selected="", pid=777, focus_token=9),
+            "native.paste_text": lambda _params: {"ok": True},
+        }
+    )
+    audio = FakeWorker({"audio.record.stop_transcribe": lambda _params: {"text": "hello there"}})
+    _flow, native, ui, _brain, audio = make_flow(native=native, audio=audio)
+
+    native.emit("native.hotkey", {"kind": "dictate_start"})
+    native.emit("native.hotkey", {"kind": "dictate_stop"})
+
+    snapshot = native.calls_for("native.context.snapshot")[0]["params"]
+    paste = native.last_call("native.paste_text")["params"]
+    assert snapshot["capture_focus"] is True
+    assert paste["text"] == "hello there"
+    assert paste["target_pid"] == 777
+    assert paste["focus_token"] == 9
+    assert audio.calls_for("audio.record.start")
+    assert audio.calls_for("audio.record.stop_transcribe")
+    assert all(call["params"].get("state") == "idle" for call in ui.calls_for("ui.overlay.state"))
+    assert not ui.calls_for("ui.reply.listening")
+    assert not ui.calls_for("ui.reply.reset")
 
 
 def test_caller_tool_overrides_reach_brain_query():

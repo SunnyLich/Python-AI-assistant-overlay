@@ -6,11 +6,12 @@ OS work, audio, and brain/model work into isolated worker processes.
 
 ## Top-Level Layout
 
-- `macos_py/supervisor/` wires the application together: worker lifecycle,
+- `macos_py/supervisor/` is the primary runtime entrypoint and wires the
+  application together: worker lifecycle,
   hotkeys, context buffering, memory, intent flow, chat windows, and voice/snip
   interactions.
 - `main.py` is the legacy single-process Qt entrypoint kept temporarily while
-  the supervisor path becomes the only app runtime.
+  remaining callers migrate to the supervisor path.
 - `config.py` loads runtime configuration from `.env` and keychain-backed
   secrets.
 - `core/` contains service and integration code: LLM routing, audio, TTS/STT,
@@ -29,8 +30,8 @@ OS work, audio, and brain/model work into isolated worker processes.
   settings, intent picker, snip overlay, memory viewer, and agent task UI.
 - `ui/agent/`, `ui/settings_panel/`, and `ui/shared/` group the largest UI
   domains and shared widget helpers.
-- Root-level modules such as `core.llm`, `core.agent_runner`, `ui.settings`, and
-  `ui.agent_task_mockup` are compatibility aliases for older imports.
+- Compatibility modules and legacy entrypoints should stay thin. New runtime
+  work belongs under `macos_py/`, `core/`, or `ui/` according to ownership.
 - `addons/` contains process-hosted addons discovered by `core.addon_manager`.
 - `tools/installed/` is the legacy local script-tool directory discovered by
   `core.tool_registry`.
@@ -71,10 +72,16 @@ callers and older addon code, but new work should use addon naming and
   it over ad hoc `int(os.getenv(...))` and string-only boolean checks.
 - Keep shared contracts and pure helpers in `core/`; keep PyQt object creation,
   signal wiring, and widget layout in `ui/`.
-- The largest extraction candidates are `core/agent_runner.py`,
-  `ui/agent_task_mockup.py`, `ui/settings.py`, `core/llm.py`, and
-  `core/context_fetcher.py`. Split these only around stable boundaries such as data
-  models, provider adapters, view components, and pure parsers.
+- The largest extraction candidates are `core/llm_clients/client.py`,
+  `macos_py/supervisor/flows.py`, `ui/settings_panel/dialog.py`, and
+  `ui/agent/task_window.py`. Split these only around stable boundaries such as
+  data models, provider adapters, workflow controllers, view components, and
+  pure parsers.
+- Prefer typed settings snapshots from `config.get_settings()` for new code.
+  The module-level `config.*` names remain for compatibility with existing code
+  and tests.
+- Prefer named loggers over direct `print()` diagnostics. Worker stdout/stderr
+  is still captured, but structured logger names make runtime logs searchable.
 - Keep UI modules responsible for presentation and user interaction; move pure
   parsing, formatting, and persistence helpers into `core/` or small UI helper
   modules with tests.
@@ -86,5 +93,18 @@ callers and older addon code, but new work should use addon naming and
 Run the full test suite from the repository root:
 
 ```powershell
-pytest
+.\.venv\Scripts\python.exe -m pytest
+```
+
+On Windows, the pytest harness suppresses modal native crash dialogs from child
+processes so a failing worker cannot block the run. If you still see repeated
+`python.exe` access-violation events, check the venv version first: Wisp is
+pinned to Python `3.12.13`, and a stale Python 3.14 venv should be rebuilt with
+`.\scripts\setup_dev.ps1`.
+
+Run the current focused lint/type baseline with:
+
+```powershell
+.\.venv\Scripts\python.exe -m ruff check core\context_hotkey.py core\llm_clients\messages.py macos_py\supervisor\tool_modes.py ui\agent\combo_helpers.py ui\settings_panel\helpers.py tests\test_context_hotkey_snapshot.py
+.\.venv\Scripts\python.exe -m mypy core\settings_model.py core\llm_clients\logging_utils.py macos_py\supervisor\tool_modes.py ui\agent\combo_helpers.py --follow-imports=skip
 ```

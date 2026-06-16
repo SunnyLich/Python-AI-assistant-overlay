@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QLineEdit, QTextEdit, QComboBox, QCheckBox,
     QPushButton, QTabWidget, QWidget, QFrame, QGroupBox, QMessageBox,
-    QScrollArea, QSizePolicy, QCompleter, QToolTip,
+    QScrollArea, QSizePolicy, QCompleter,
 )
 from PySide6.QtCore import Qt, QTimer, QObject, Signal
 from PySide6.QtGui import QFont
@@ -25,7 +25,13 @@ from core.system.env_utils import (
 )
 import ui.settings_panel.env as settings_env
 from ui.settings_panel.hotkey_capture import HotkeyCaptureEdit
-from ui.settings_panel.helpers import parse_fallback_rows
+from ui.settings_panel.helpers import (
+    NoScrollCombo as _NoScrollCombo,
+    WarningHeaderLabel as _WarningHeaderLabel,
+    context_mode_combo as _context_mode_combo,
+    expanding_form_layout as _expanding_form_layout,
+    parse_fallback_rows,
+)
 from ui.i18n import LANGUAGE_OPTIONS, localize_widget_tree, t
 from ui.shared.window_utils import enable_standard_window_controls, fit_window_to_screen
 
@@ -33,61 +39,6 @@ ENV_PATH = settings_env.ENV_PATH
 _settings_log = logging.getLogger("wisp.settings")
 _settings_dialog: "SettingsDialog | None" = None
 _settings_open_pending = False
-
-
-class _NoScrollCombo(QComboBox):
-    """QComboBox that keeps passive wheel scrolling on the settings page.
-
-    A focused but closed combo should not hijack mouse-wheel scrolling from the
-    surrounding QScrollArea. Wheel selection is still available while the popup
-    list is open.
-    """
-    def wheelEvent(self, event):
-        if self.view().isVisible():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
-
-
-class _WarningHeaderLabel(QLabel):
-    """Header label that keeps warning help visible while hovered."""
-
-    def __init__(self, text: str = "") -> None:
-        super().__init__(text)
-        self.setMouseTracking(True)
-
-    def enterEvent(self, event):  # noqa: N802 - Qt override
-        tip = self.toolTip()
-        if tip:
-            QToolTip.showText(
-                self.mapToGlobal(self.rect().bottomLeft()),
-                tip,
-                self,
-                self.rect(),
-                2_147_000_000,
-            )
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):  # noqa: N802 - Qt override
-        QToolTip.hideText()
-        super().leaveEvent(event)
-
-
-def _context_mode_combo(value: str, *, allow_auto: bool = True) -> _NoScrollCombo:
-    combo = _NoScrollCombo()
-    combo.addItem("Off", "off")
-    if allow_auto:
-        combo.addItem("On", "auto")
-    combo.addItem("Let model decide", "model")
-    idx = combo.findData((value or "off").strip().lower())
-    combo.setCurrentIndex(idx if idx >= 0 else 0)
-    return combo
-
-
-def _expanding_form_layout(parent: QWidget | None = None) -> QFormLayout:
-    form = QFormLayout(parent)
-    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-    return form
 
 
 # Sentinel data value for the "Custom / enter manually…" model combo entry.
@@ -235,7 +186,7 @@ class SettingsDialog(QDialog):
         self._load_values()
         localize_widget_tree(self)
         self._schedule_open_status_refresh()
-        fit_window_to_screen(self, preferred_width=620, preferred_height=620)
+        fit_window_to_screen(self, preferred_width=760, preferred_height=720)
 
     def _save_api_keys_to_keychain(self) -> bool:
         """Persist every typed API key to the OS keychain, one at a time.
@@ -320,7 +271,8 @@ class SettingsDialog(QDialog):
 
     def showEvent(self, event):                 # noqa: N802
         super().showEvent(event)
-        fit_window_to_screen(self, preferred_width=620, preferred_height=620)
+        fit_window_to_screen(self, preferred_width=760, preferred_height=720)
+        self._refresh_stt_active_backend()
 
     def hideEvent(self, event):                 # noqa: N802
         self._cancel_async_ui_updates()
@@ -1363,9 +1315,12 @@ class SettingsDialog(QDialog):
 
         # ── SPEECH-TO-TEXT card ──────────────────────────────────────────
         stt_card, stt_cv = self._card("Speech to Text")
+        stt_note_text = (
+            "Whisper model settings for hold-to-talk transcription. "
+            "Larger models improve Mandarin/Cantonese speech accuracy but use more disk and CPU."
+        )
         stt_note = QLabel(
-            "<small>Whisper model settings for hold-to-talk transcription. "
-            "Larger models improve Mandarin/Cantonese speech accuracy but use more disk and CPU.</small>"
+            f"<small>{t(stt_note_text)}</small>"
         )
         stt_note.setWordWrap(True)
         stt_cv.addWidget(stt_note)
@@ -1421,17 +1376,40 @@ class SettingsDialog(QDialog):
         stt_f = _expanding_form_layout(stt_fw)
         stt_f.setContentsMargins(0, 0, 0, 0)
         stt_f.setSpacing(8)
-        stt_f.addRow("Whisper model", self._fields["STT_MODEL"])
-        stt_f.addRow("Device", self._fields["STT_DEVICE"])
-        stt_f.addRow("Compute type", self._fields["STT_COMPUTE_TYPE"])
-        stt_f.addRow("Speech language", self._fields["STT_LANGUAGE"])
-        stt_f.addRow("Beam size", self._fields["STT_BEAM_SIZE"])
+        stt_f.addRow(t("Whisper model"), self._fields["STT_MODEL"])
+        stt_f.addRow(t("Device"), self._fields["STT_DEVICE"])
+        stt_f.addRow(t("Compute type"), self._fields["STT_COMPUTE_TYPE"])
+        stt_f.addRow(t("Speech language"), self._fields["STT_LANGUAGE"])
+        stt_f.addRow(t("Beam size"), self._fields["STT_BEAM_SIZE"])
         stt_cv.addWidget(stt_fw)
+
+        # Backend readout. Avoid importing core.stt while building Settings:
+        # that pulls in NumPy/faster-whisper and can freeze the Qt UI thread.
+        # If STT is already loaded in this process, the label below can still
+        # show the live backend; otherwise it shows the configured request.
+        stt_status_row = QWidget()
+        ssr = QHBoxLayout(stt_status_row)
+        ssr.setContentsMargins(0, 0, 0, 0)
+        ssr.setSpacing(8)
+        self._stt_active_lbl = QLabel()
+        self._stt_active_lbl.setWordWrap(True)
+        stt_recheck = QPushButton(t("Recheck"))
+        stt_recheck.setToolTip(
+            t("Refresh the speech backend readout without loading the speech model.")
+        )
+        stt_recheck.clicked.connect(self._refresh_stt_active_backend)
+        ssr.addWidget(self._stt_active_lbl, 1)
+        ssr.addWidget(stt_recheck, 0)
+        stt_cv.addWidget(stt_status_row)
+        self._refresh_stt_active_backend()
+
         outer.addWidget(stt_card)
 
         # ── API KEYS card ─────────────────────────────────────────────────
         keys_card, keys_cv = self._card("API Keys")
-        tts_key_note = QLabel("<small>API keys are saved to the OS keychain. Leave blank to keep the stored key.</small>")
+        tts_key_note = QLabel(
+            f"<small>{t('API keys are saved to the OS keychain. Leave blank to keep the stored key.')}</small>"
+        )
         tts_key_note.setWordWrap(True)
         keys_cv.addWidget(tts_key_note)
 
@@ -1447,7 +1425,7 @@ class SettingsDialog(QDialog):
         kf.setContentsMargins(0, 0, 0, 0)
         kf.setSpacing(8)
         kf.addRow(_link_label("Cartesia API key", "https://play.cartesia.ai/keys"), self._fields["CARTESIA_API_KEY"])
-        kf.addRow("Cartesia Voice ID", self._fields["CARTESIA_VOICE_ID"])
+        kf.addRow(t("Cartesia Voice ID"), self._fields["CARTESIA_VOICE_ID"])
         kf.addRow(_sep(), _sep())
         kf.addRow(_link_label("ElevenLabs API key", "https://elevenlabs.io/app/settings/api-keys"), self._fields["ELEVENLABS_API_KEY"])
         keys_cv.addWidget(kf_w)
@@ -1476,7 +1454,9 @@ class SettingsDialog(QDialog):
 
         # ── SYSTEM PROMPT card ────────────────────────────────────────────
         prompt_card, prompt_cv = self._card("System Prompt")
-        note = QLabel("<small>This prompt is prepended to every LLM request as the system instruction.</small>")
+        note = QLabel(
+            f"<small>{t('This prompt is prepended to every LLM request as the system instruction.')}</small>"
+        )
         note.setWordWrap(True)
         prompt_cv.addWidget(note)
         util = QTextEdit()
@@ -1523,7 +1503,7 @@ class SettingsDialog(QDialog):
         caller_cv.addWidget(self._callers_container)
         self._caller_blocks: list[dict] = []
 
-        add_caller_btn = QPushButton("+ Add Caller Hotkey")
+        add_caller_btn = QPushButton(t("+ Add Caller Hotkey"))
         add_caller_btn.clicked.connect(lambda: self._add_caller_block())
         btn_wrap = QHBoxLayout()
         btn_wrap.setContentsMargins(0, 4, 0, 4)
@@ -1535,9 +1515,12 @@ class SettingsDialog(QDialog):
 
         # ── VOICE (PUSH-TO-TALK) card ─────────────────────────────────────
         voice_card, voice_cv = self._card("Voice (hold to talk)")
+        voice_note_text = (
+            "Hold the key, speak, release to transcribe and ask. "
+            "Context and tools below apply to voice queries, just like a caller hotkey."
+        )
         voice_note = QLabel(
-            "<small>Hold the key, speak, release to transcribe and ask. "
-            "Context and tools below apply to voice queries, just like a caller hotkey.</small>"
+            f"<small>{t(voice_note_text)}</small>"
         )
         voice_note.setWordWrap(True)
         voice_cv.addWidget(voice_note)
@@ -1551,11 +1534,11 @@ class SettingsDialog(QDialog):
         voice_hotkey_edit.setPlaceholderText("Hotkey...")
         self._fields["HOTKEY_VOICE"] = voice_hotkey_edit
         voice_hdr_h.addWidget(voice_hotkey_edit)
-        voice_lbl = QLabel("Hold to record voice")
+        voice_lbl = QLabel(t("Hold to record voice"))
         voice_lbl.setStyleSheet("font-style: italic; color: palette(placeholder-text);")
         voice_hdr_h.addWidget(voice_lbl)
         voice_hdr_h.addStretch()
-        voice_tools_btn = QPushButton("Allowed tools…")
+        voice_tools_btn = QPushButton(t("Allowed tools…"))
         voice_tools_btn.setToolTip("Choose which installed/addon tools voice queries may use")
         voice_hdr_h.addWidget(voice_tools_btn)
         voice_cv.addWidget(voice_hdr)
@@ -1570,9 +1553,12 @@ class SettingsDialog(QDialog):
 
         # ── DICTATION (PUSH-TO-TALK) card ─────────────────────────────────
         dictate_card, dictate_cv = self._card("Dictation (hold to type)")
+        dictate_note_text = (
+            "Hold the key, speak, release — the transcript is typed straight into "
+            "whatever text field has focus (no assistant). Leave the hotkey empty to disable."
+        )
         dictate_note = QLabel(
-            "<small>Hold the key, speak, release — the transcript is typed straight into "
-            "whatever text field has focus (no assistant). Leave the hotkey empty to disable.</small>"
+            f"<small>{t(dictate_note_text)}</small>"
         )
         dictate_note.setWordWrap(True)
         dictate_cv.addWidget(dictate_note)
@@ -1586,7 +1572,7 @@ class SettingsDialog(QDialog):
         dictate_hotkey_edit.setPlaceholderText("Hotkey...")
         self._fields["HOTKEY_DICTATE"] = dictate_hotkey_edit
         dictate_hdr_h.addWidget(dictate_hotkey_edit)
-        dictate_lbl = QLabel("Hold to dictate into focused field")
+        dictate_lbl = QLabel(t("Hold to dictate into focused field"))
         dictate_lbl.setStyleSheet("font-style: italic; color: palette(placeholder-text);")
         dictate_hdr_h.addWidget(dictate_lbl)
         dictate_hdr_h.addStretch()
@@ -1604,7 +1590,7 @@ class SettingsDialog(QDialog):
         dictate_f = _expanding_form_layout(dictate_form)
         dictate_f.setContentsMargins(0, 0, 0, 0)
         dictate_f.setSpacing(8)
-        dictate_f.addRow("Dictated text", self._fields["DICTATE_MODE"])
+        dictate_f.addRow(t("Dictated text"), self._fields["DICTATE_MODE"])
         dictate_cv.addWidget(dictate_form)
         outer_layout.addWidget(dictate_card)
 
@@ -1624,7 +1610,7 @@ class SettingsDialog(QDialog):
         self._fields["SNIP_CONTEXT_DOCUMENTS"] = QCheckBox("Open docs")
         self._fields["SNIP_CONTEXT_TOOLS"] = QCheckBox("Tools")
         snip_h.addSpacing(128)
-        snip_h.addWidget(QLabel("Snip context:"))
+        snip_h.addWidget(QLabel(t("Snip context:")))
         snip_h.addWidget(self._fields["SNIP_CONTEXT_AMBIENT"])
         snip_h.addWidget(self._fields["SNIP_CONTEXT_DOCUMENTS"])
         snip_h.addWidget(self._fields["SNIP_CONTEXT_TOOLS"])
@@ -1651,7 +1637,7 @@ class SettingsDialog(QDialog):
         key_edit.setFixedWidth(120)
         h.addWidget(key_edit)
 
-        lbl = QLabel(label_text)
+        lbl = QLabel(t(label_text))
         lbl.setStyleSheet("font-style: italic; color: palette(placeholder-text);")
         h.addWidget(lbl)
         h.addStretch()
@@ -1716,17 +1702,17 @@ class SettingsDialog(QDialog):
             "• On — capture at hotkey time and send it with the query.\n"
             "• Let model decide — expose a screenshot tool during the answer."
         )
-        context_h.addWidget(QLabel("Context:"), 0, 0)
+        context_h.addWidget(QLabel(t("Context:")), 0, 0)
         context_h.addWidget(ambient_cb, 0, 1)
-        context_h.addWidget(QLabel("Screenshot:"), 0, 2)
+        context_h.addWidget(QLabel(t("Screenshot:")), 0, 2)
         context_h.addWidget(screenshot_combo, 0, 3)
-        context_h.addWidget(QLabel("Open docs:"), 0, 4)
+        context_h.addWidget(QLabel(t("Open docs:")), 0, 4)
         context_h.addWidget(docs_combo, 0, 5)
-        context_h.addWidget(QLabel("Git/GitHub:"), 1, 0)
+        context_h.addWidget(QLabel(t("Git/GitHub:")), 1, 0)
         context_h.addWidget(github_combo, 1, 1)
-        context_h.addWidget(QLabel("Browser/Web:"), 1, 2)
+        context_h.addWidget(QLabel(t("Browser/Web:")), 1, 2)
         context_h.addWidget(browser_combo, 1, 3)
-        context_h.addWidget(QLabel("Memory:"), 1, 4)
+        context_h.addWidget(QLabel(t("Memory:")), 1, 4)
         context_h.addWidget(memory_combo, 1, 5)
         context_h.setColumnStretch(6, 1)
         controls = {
@@ -1777,6 +1763,7 @@ class SettingsDialog(QDialog):
         label: str = "",
         paste_back: bool = False,
         custom_key: str = "s",
+        custom_label: str = "",
         context_ambient: bool = True,
         context_documents: bool = True,
         context_tools: bool = False,
@@ -1819,12 +1806,6 @@ class SettingsDialog(QDialog):
         paste_cb = QCheckBox("Paste result back")
         paste_cb.setChecked(paste_back)
         hdr_h.addWidget(paste_cb)
-
-        hdr_h.addWidget(QLabel("Enter key:"))
-        custom_key_edit = QLineEdit(custom_key)
-        custom_key_edit.setFixedWidth(36)
-        custom_key_edit.setPlaceholderText("s")
-        hdr_h.addWidget(custom_key_edit)
 
         hdr_h.addStretch()
         tools_btn = QPushButton("Allowed tools…")
@@ -1873,7 +1854,6 @@ class SettingsDialog(QDialog):
             "hotkey":         hotkey_edit,
             "label":          label_edit,
             "paste_back":     paste_cb,
-            "custom_key":     custom_key_edit,
             "context_ambient": context_controls["context_ambient"],
             "context_documents": context_controls["context_documents_mode"],
             "context_documents_mode": context_controls["context_documents_mode"],
@@ -1893,6 +1873,7 @@ class SettingsDialog(QDialog):
 
         for r in (intents or []):
             self._add_caller_intent_row(blk, r.get("key", ""), r.get("label", ""), r.get("prompt", ""))
+        self._add_caller_custom_prompt_row(blk, custom_key=custom_key, custom_label=custom_label)
 
         # Add-row button
         add_row_btn = QPushButton("+ Add row")
@@ -1948,6 +1929,40 @@ class SettingsDialog(QDialog):
 
         blk["intents_layout"].addWidget(row_w)
         blk["intent_rows"].append(row_info)
+
+    def _add_caller_custom_prompt_row(
+        self,
+        blk: dict,
+        *,
+        custom_key: str = "s",
+        custom_label: str = "",
+    ) -> None:
+        """Append the fixed custom prompt row beside the configured intent rows."""
+        row_w = QWidget()
+        h = QHBoxLayout(row_w)
+        h.setContentsMargins(0, 1, 0, 1)
+        h.setSpacing(6)
+
+        key_edit = QLineEdit(custom_key)
+        key_edit.setFixedWidth(40)
+        key_edit.setPlaceholderText("s")
+        h.addWidget(key_edit)
+
+        label_edit = QLineEdit(custom_label)
+        label_edit.setFixedWidth(130)
+        label_edit.setPlaceholderText(t("Custom prompt"))
+        h.addWidget(label_edit)
+
+        prompt_edit = QLineEdit(t("Custom prompt"))
+        prompt_edit.setEnabled(False)
+        prompt_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        h.addWidget(prompt_edit)
+
+        h.addSpacing(40)
+        blk["intents_layout"].addWidget(row_w)
+        blk["custom_key"] = key_edit
+        blk["custom_label"] = label_edit
+        blk["custom_prompt"] = prompt_edit
 
     def _delete_caller_intent_row(self, blk: dict, row_info: dict) -> None:
         if row_info in blk["intent_rows"]:
@@ -2028,11 +2043,11 @@ class SettingsDialog(QDialog):
 
         card, cv = self._card("Tool Calling Keywords")
 
-        note = QLabel(
+        note = QLabel(t(
             "Tools with <b>no keywords</b> are always sent to the model.<br>"
             "Tools with keywords are only sent when the prompt contains at least one.<br>"
             "Separate multiple keywords with commas."
-        )
+        ))
         note.setWordWrap(True)
         cv.addWidget(note)
 
@@ -2062,7 +2077,7 @@ class SettingsDialog(QDialog):
                 name_v.addWidget(name_lbl)
 
                 if spec.description:
-                    desc_lbl = QLabel(spec.description)
+                    desc_lbl = QLabel(t(spec.description))
                     desc_lbl.setWordWrap(True)
                     desc_lbl.setStyleSheet("color: #6b6b7e; font-size: 9pt;")
                     name_v.addWidget(desc_lbl)
@@ -2076,7 +2091,7 @@ class SettingsDialog(QDialog):
                 cv.addWidget(tool_w)
 
         except Exception as exc:
-            cv.addWidget(QLabel(f"Could not load tools: {exc}"))
+            cv.addWidget(QLabel(_translate_status_message(f"Could not load tools: {exc}")))
 
         save_btn = QPushButton("Save keyword filters")
         save_btn.clicked.connect(lambda: self._save_tool_keywords(registry, TOOL_KEYWORDS_FILE))
@@ -2800,6 +2815,7 @@ class SettingsDialog(QDialog):
                 label      = self._env.get(f"CALLER_{n}_LABEL",      cr.get("label", "")),
                 paste_back = self._env.get(f"CALLER_{n}_PASTE_BACK", str(cr.get("paste_back", False))).lower() == "true",
                 custom_key = self._env.get(f"CALLER_{n}_CUSTOM_KEY", cr.get("custom_key", "s")),
+                custom_label = self._env.get(f"CALLER_{n}_CUSTOM_LABEL", cr.get("custom_label", "")),
                 context_ambient = self._env.get(f"CALLER_{n}_CONTEXT_AMBIENT", str(cr.get("context_ambient", True))).lower() == "true",
                 context_documents = documents_mode == "auto",
                 context_tools = any(mode == "model" for mode in (documents_mode, browser_mode, github_mode, memory_mode)),
@@ -3229,6 +3245,51 @@ class SettingsDialog(QDialog):
             idx = combo.findData("")  # fall back to auto-detect
         combo.setCurrentIndex(max(0, idx))
         combo.blockSignals(False)
+
+    def _refresh_stt_active_backend(self) -> None:
+        """Update the STT backend label without importing the heavy STT stack."""
+        lbl = getattr(self, "_stt_active_lbl", None)
+        if lbl is None:
+            return
+
+        import config as cfg
+
+        env = getattr(self, "_env", {})
+        model = _get(self._fields.get("STT_MODEL")) or env.get("STT_MODEL", cfg.STT_MODEL)
+        device = _get(self._fields.get("STT_DEVICE")) or env.get("STT_DEVICE", cfg.STT_DEVICE)
+        compute = _get(self._fields.get("STT_COMPUTE_TYPE")) or env.get(
+            "STT_COMPUTE_TYPE",
+            cfg.STT_COMPUTE_TYPE,
+        )
+
+        info = None
+        loaded_stt = sys.modules.get("core.stt")
+        if loaded_stt is not None:
+            try:
+                info = loaded_stt.active_backend()
+            except Exception:
+                info = None
+
+        configured_summary = f"{model} · {device} / {compute}"
+        if info is None:
+            lbl.setText(
+                t("Configured backend: {summary} — active backend appears after recording starts.").format(
+                    summary=configured_summary
+                )
+            )
+            lbl.setStyleSheet("color: palette(placeholder-text); font-size: 9pt;")
+            return
+
+        summary = f"{info['model']} · {info['device']} / {info['compute']}"
+        if info["degraded"]:
+            lbl.setText(
+                t("Active backend: {summary} — GPU not in use. Free the GPU and "
+                  "restart to recover quality.").format(summary=summary)
+            )
+            lbl.setStyleSheet("color: #c0c040; font-size: 9pt;")
+        else:
+            lbl.setText(t("Active backend: {summary}").format(summary=summary))
+            lbl.setStyleSheet("color: #80c080; font-size: 9pt;")
 
     def _stt_fields_changed(self, old_env: dict[str, str]) -> bool:
         import config as cfg
@@ -3737,6 +3798,7 @@ class SettingsDialog(QDialog):
             vals[f"CALLER_{n}_LABEL"]         = _get(blk["label"])
             vals[f"CALLER_{n}_PASTE_BACK"]    = str(blk["paste_back"].isChecked())  # type: ignore
             vals[f"CALLER_{n}_CUSTOM_KEY"]    = _get(blk["custom_key"])
+            vals[f"CALLER_{n}_CUSTOM_LABEL"]  = _get(blk["custom_label"])
             vals[f"CALLER_{n}_CONTEXT_AMBIENT"] = str(blk["context_ambient"].isChecked())  # type: ignore
             documents_mode = str(blk["context_documents_mode"].currentData())  # type: ignore[attr-defined]
             browser_mode = str(blk["context_browser_mode"].currentData())  # type: ignore[attr-defined]
@@ -4038,6 +4100,7 @@ def _translate_status_message(message: str) -> str:
         "Error reading status: ",
         "Keychain error: ",
         "Test failed: ",
+        "Could not load tools: ",
         "Error: ",
         "Logged in • account ",
         "Logged in - account ",

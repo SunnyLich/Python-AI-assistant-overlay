@@ -70,6 +70,14 @@ def test_audio_host_does_not_import_qt_or_appkit_at_module_top():
         assert needle not in imports
 
 
+def test_audio_speed_boost_handler_does_not_import_core_audio():
+    source = (ROOT / "macos_py/workers/audio_host.py").read_text(encoding="utf-8")
+
+    assert "from core import audio\n" not in source
+    assert "import core.audio" not in source
+    assert "audio.set_tts_speed_boost" not in source
+
+
 def test_supervisor_does_not_import_worker_stacks():
     imports = _top_level_imports("macos_py/supervisor/ipc.py")
     forbidden = [

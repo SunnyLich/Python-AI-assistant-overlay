@@ -5,7 +5,6 @@ import os
 
 import pytest
 
-
 pytestmark = pytest.mark.skipif(importlib.util.find_spec("PySide6") is None, reason="PySide6 not installed")
 
 
@@ -35,7 +34,13 @@ def _qapp():
 
 
 def test_mac_ui_agent_run_dialog_recreates_meeting_room(tmp_path):
-    _qapp()
+    app = _qapp()
+    import config
+    from ui import i18n
+
+    old_language = getattr(config, "APP_LANGUAGE", "")
+    config.APP_LANGUAGE = "en"
+    i18n.set_language(app=app)
     from macos_py.workers.ui_host import MacAgentRunDialog
 
     dialog = MacAgentRunDialog(
@@ -74,3 +79,5 @@ def test_mac_ui_agent_run_dialog_recreates_meeting_room(tmp_path):
         assert "patch_file" in detail
     finally:
         dialog.close()
+        config.APP_LANGUAGE = old_language
+        i18n.set_language(app=app)

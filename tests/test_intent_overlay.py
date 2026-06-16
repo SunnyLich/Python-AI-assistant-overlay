@@ -81,3 +81,43 @@ def test_intent_overlay_key_debug_avoids_prompt_text(monkeypatch, capsys):
         config.CALLER_ROWS[:] = old_rows
         overlay.close()
         app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_intent_overlay_translates_default_custom_prompt_label(monkeypatch):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    import config
+    from ui import i18n
+    import ui.intent_overlay as intent_overlay
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    old_rows = list(config.CALLER_ROWS)
+    old_language = getattr(config, "APP_LANGUAGE", "")
+    config.APP_LANGUAGE = "zh-Hant"
+    i18n.set_language(app=app)
+    config.CALLER_ROWS[:] = [{"intents": [], "custom_key": "s", "custom_label": ""}]
+    try:
+        row = intent_overlay._build_rows(0)[-1]
+
+        assert row["label"] == i18n.t("Custom prompt")
+        assert row["label"] != "Custom prompt"
+    finally:
+        config.CALLER_ROWS[:] = old_rows
+        config.APP_LANGUAGE = old_language
+        i18n.set_language(app=app)
+
+
+def test_intent_overlay_preserves_custom_prompt_label():
+    import config
+    import ui.intent_overlay as intent_overlay
+
+    old_rows = list(config.CALLER_ROWS)
+    config.CALLER_ROWS[:] = [{"intents": [], "custom_key": "s", "custom_label": "Freeform"}]
+    try:
+        row = intent_overlay._build_rows(0)[-1]
+
+        assert row["label"] == "Freeform"
+    finally:
+        config.CALLER_ROWS[:] = old_rows

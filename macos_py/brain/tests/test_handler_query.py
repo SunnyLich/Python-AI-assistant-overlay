@@ -87,12 +87,14 @@ def test_query_forwards_tool_policy(record_ctx, monkeypatch):
         allow_screenshot_tool,
         screenshot_tool_b64,
         pinned_tools=None,
+        history=None,
     ):
         captured["use_tools"] = use_tools
         captured["allowed_tools"] = allowed_tools
         captured["allow_screenshot_tool"] = allow_screenshot_tool
         captured["screenshot_tool_b64"] = screenshot_tool_b64
         captured["pinned_tools"] = pinned_tools
+        captured["history"] = history
         yield "ok"
 
     monkeypatch.setattr(handlers, "_stream_query_reply", fake_stream)
@@ -116,6 +118,7 @@ def test_query_forwards_tool_policy(record_ctx, monkeypatch):
         "allow_screenshot_tool": True,
         "screenshot_tool_b64": "screen-data",
         "pinned_tools": ["my_tool"],
+        "history": None,
     }
 
 

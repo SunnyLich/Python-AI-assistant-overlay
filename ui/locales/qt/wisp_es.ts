@@ -3,8 +3,36 @@
   <context>
     <name>Wisp</name>
     <message>
+      <source> Logs</source>
+      <translation> Registros</translation>
+    </message>
+    <message>
+      <source> Settings</source>
+      <translation> Configuración</translation>
+    </message>
+    <message>
+      <source>'Let model decide' screenshots do not work with ChatGPT or Copilot. Pick a different Chat model, or turn screenshots On instead.</source>
+      <translation>Las capturas de "Dejar que el modelo decida" no funcionan con ChatGPT ni Copilot. Elige otro modelo de chat o activa las capturas.</translation>
+    </message>
+    <message>
+      <source>(missing task.json)</source>
+      <translation>(falta task.json)</translation>
+    </message>
+    <message>
+      <source>(no diff artifact)</source>
+      <translation>(sin artefacto diff)</translation>
+    </message>
+    <message>
+      <source>(no final report)</source>
+      <translation>(sin informe final)</translation>
+    </message>
+    <message>
       <source>+ Add API Key</source>
       <translation>+ Añadir clave API</translation>
+    </message>
+    <message>
+      <source>+ Add Caller Hotkey</source>
+      <translation>+ Añadir atajo de llamada</translation>
     </message>
     <message>
       <source>+ Add fallback model</source>
@@ -13,6 +41,30 @@
     <message>
       <source>+ Add row</source>
       <translation>+ Añadir fila</translation>
+    </message>
+    <message>
+      <source>Ask anything</source>
+      <translation>Pregunta lo que sea</translation>
+    </message>
+    <message>
+      <source>Custom prompt</source>
+      <translation>Prompt personalizado</translation>
+    </message>
+    <message>
+      <source>ESC to cancel</source>
+      <translation>ESC para cancelar</translation>
+    </message>
+    <message>
+      <source>1 (fastest)</source>
+      <translation>1 (más rápido)</translation>
+    </message>
+    <message>
+      <source>5 (recommended)</source>
+      <translation>5 (recomendado)</translation>
+    </message>
+    <message>
+      <source>8 (most accurate)</source>
+      <translation>8 (más preciso)</translation>
     </message>
     <message>
       <source>AI Assistant Icon</source>
@@ -24,6 +76,14 @@
     </message>
     <message>
       <source>API Key</source>
+      <translation>Clave API</translation>
+    </message>
+    <message>
+      <source>API Keys</source>
+      <translation>Claves API</translation>
+    </message>
+    <message>
+      <source>API key</source>
       <translation>Clave API</translation>
     </message>
     <message>
@@ -53,6 +113,10 @@
     <message>
       <source>Add a message.</source>
       <translation>Añade un mensaje.</translation>
+    </message>
+    <message>
+      <source>Add a row for each provider you want to use. Alias is optional - useful when you have multiple keys for the same provider. Custom endpoints are configured below.</source>
+      <translation>Añade una fila por cada proveedor que quieras usar. El alias es opcional; es útil cuando tienes varias claves para el mismo proveedor. Los endpoints personalizados se configuran abajo.</translation>
     </message>
     <message>
       <source>Add a short instruction, correction, or context update.</source>
@@ -92,15 +156,19 @@
     </message>
     <message>
       <source>Addon Manager</source>
-      <translation>Administrador de complementos</translation>
+      <translation>Gestor de addons</translation>
     </message>
     <message>
       <source>Addons</source>
-      <translation>Complementos</translation>
+      <translation>Addons</translation>
     </message>
     <message>
       <source>Addons are Python packages in the &lt;code&gt;addons/&lt;/code&gt; folder. Each addon runs in its own host process.</source>
       <translation>Los complementos son paquetes de Python en la carpeta &lt;code&gt;addons/&lt;/code&gt;. Cada complemento se ejecuta en su propio proceso anfitrión.</translation>
+    </message>
+    <message>
+      <source>Addons are Python packages in the addons/ folder. Each addon runs in its own host process.</source>
+      <translation>Los addons son paquetes de Python en la carpeta addons/. Cada addon se ejecuta en su propio proceso host.</translation>
     </message>
     <message>
       <source>Advanced Settings</source>
@@ -119,12 +187,24 @@
       <translation>Diff del agente</translation>
     </message>
     <message>
+      <source>Agent Meeting</source>
+      <translation>Reunión de agentes</translation>
+    </message>
+    <message>
+      <source>Agent Task</source>
+      <translation>Tarea de agente</translation>
+    </message>
+    <message>
       <source>Agent Task History</source>
       <translation>Historial de tareas de agente</translation>
     </message>
     <message>
       <source>Agent Task Spec</source>
       <translation>Especificación de tarea de agente</translation>
+    </message>
+    <message>
+      <source>Agent task cancelled.</source>
+      <translation>Tarea de agente cancelada.</translation>
     </message>
     <message>
       <source>Agent task history...</source>
@@ -143,6 +223,10 @@
       <translation>Agentes y comunicación</translation>
     </message>
     <message>
+      <source>Alias</source>
+      <translation>Alias</translation>
+    </message>
+    <message>
       <source>Allow globs</source>
       <translation>Globs permitidos</translation>
     </message>
@@ -157,6 +241,10 @@
     <message>
       <source>Ambient</source>
       <translation>Ambiental</translation>
+    </message>
+    <message>
+      <source>Any OpenAI-compatible endpoint, including Ollama and LM Studio. Select Custom in a model row below after setting the base URL.</source>
+      <translation>Cualquier endpoint compatible con OpenAI, incluidos Ollama y LM Studio. Selecciona Custom en una fila de modelo después de configurar la URL base.</translation>
     </message>
     <message>
       <source>App</source>
@@ -175,10 +263,6 @@
       <translation>Aplicar a todo</translation>
     </message>
     <message>
-      <source>Confirm</source>
-      <translation>Confirmar</translation>
-    </message>
-    <message>
       <source>Approvals</source>
       <translation>Aprobaciones</translation>
     </message>
@@ -188,11 +272,19 @@
     </message>
     <message>
       <source>Approve Addon Dependencies</source>
-      <translation>Aprobar dependencias del complemento</translation>
+      <translation>Aprobar dependencias del addon</translation>
     </message>
     <message>
       <source>Approve env</source>
       <translation>Aprobar entorno</translation>
+    </message>
+    <message>
+      <source>Approve or decline in the Agent Task window.</source>
+      <translation>Aprueba o rechaza en la ventana de tarea de agente.</translation>
+    </message>
+    <message>
+      <source>Arabic</source>
+      <translation>Árabe</translation>
     </message>
     <message>
       <source>Ask before final changes</source>
@@ -211,8 +303,16 @@
       <translation>Autenticación</translation>
     </message>
     <message>
+      <source>Auto (GPU if available)</source>
+      <translation>Auto (GPU si está disponible)</translation>
+    </message>
+    <message>
       <source>Auto document chars</source>
       <translation>Caracteres de documentos automáticos</translation>
+    </message>
+    <message>
+      <source>Auto screenshot needs an Image model. Pick one under Image model.</source>
+      <translation>La captura automática necesita un modelo de imagen. Elige uno en Modelo de imagen.</translation>
     </message>
     <message>
       <source>Auto-detect</source>
@@ -239,8 +339,16 @@
       <translation>URL base</translation>
     </message>
     <message>
+      <source>Beam size</source>
+      <translation>Tamaño de haz</translation>
+    </message>
+    <message>
       <source>Block globs</source>
       <translation>Globs bloqueados</translation>
+    </message>
+    <message>
+      <source>Briefed</source>
+      <translation>Informado</translation>
     </message>
     <message>
       <source>Briefing</source>
@@ -263,8 +371,30 @@
       <translation>Navegador/Web:</translation>
     </message>
     <message>
+      <source>Browser/Web:
+Off — no web/browser tools.
+On — read the current browser page before sending the prompt.
+Let model decide — expose web search and browser page fetch tools.</source>
+      <translation>Navegador/Web:
+Desactivado — sin herramientas web/navegador.
+Activado — lee la página actual del navegador antes de enviar el prompt.
+Dejar decidir al modelo — expone búsqueda web y herramientas para obtener páginas del navegador.</translation>
+    </message>
+    <message>
+      <source>Browser/Web: </source>
+      <translation>Navegador/Web: </translation>
+    </message>
+    <message>
+      <source>Builder</source>
+      <translation>Constructor</translation>
+    </message>
+    <message>
       <source>CALLER HOTKEYS</source>
       <translation>ATAJOS DE LLAMADA</translation>
+    </message>
+    <message>
+      <source>CHAT MODEL</source>
+      <translation>MODELO DE CHAT</translation>
     </message>
     <message>
       <source>CONTEXT TOOLS</source>
@@ -277,6 +407,10 @@
     <message>
       <source>Caller Hotkeys</source>
       <translation>Atajos de llamada</translation>
+    </message>
+    <message>
+      <source>Calling model</source>
+      <translation>Llamando al modelo</translation>
     </message>
     <message>
       <source>Cancel</source>
@@ -315,20 +449,16 @@
       <translation>Modelo de chat</translation>
     </message>
     <message>
-      <source>CHAT MODEL</source>
-      <translation>MODELO DE CHAT</translation>
-    </message>
-    <message>
-      <source>Codex (ChatGPT subscription)</source>
-      <translation>Codex (suscripción de ChatGPT)</translation>
-    </message>
-    <message>
-      <source>Codex (ChatGPT subscription) [OAuth]</source>
-      <translation>Codex (suscripción de ChatGPT) [OAuth]</translation>
+      <source>Chat model uses a subscription login. You may need to sign in again after restart. For fewer login issues, use an API-key provider.</source>
+      <translation>El modelo de chat usa un inicio de sesión de suscripción. Puede que tengas que iniciar sesión otra vez después de reiniciar. Para menos problemas de inicio de sesión, usa un proveedor con clave API.</translation>
     </message>
     <message>
       <source>ChatGPT Pro / Plus</source>
       <translation>ChatGPT Pro / Plus</translation>
+    </message>
+    <message>
+      <source>ChatGPT cannot use live context tools here. Use On to attach context up front, or choose another Chat model for Let model decide.</source>
+      <translation>ChatGPT no puede usar herramientas de contexto en vivo aquí. Usa Activado para adjuntar contexto al inicio, o elige otro modelo de chat para Dejar que el modelo decida.</translation>
     </message>
     <message>
       <source>Checking status...</source>
@@ -363,16 +493,16 @@
       <translation>Elige dos agentes distintos.</translation>
     </message>
     <message>
-      <source>Choose which saved credential and model powers each purpose.</source>
-      <translation>Elige qué credencial guardada y qué modelo usa cada propósito.</translation>
-    </message>
-    <message>
       <source>Choose which installed/addon tools this hotkey may use</source>
       <translation>Elegir qué herramientas instaladas/de complementos puede usar este atajo</translation>
     </message>
     <message>
       <source>Choose which installed/addon tools voice queries may use</source>
       <translation>Elegir qué herramientas instaladas/de complementos pueden usar las consultas de voz</translation>
+    </message>
+    <message>
+      <source>Choose which saved credential and model powers each purpose.</source>
+      <translation>Elige qué credencial guardada y qué modelo usa cada propósito.</translation>
     </message>
     <message>
       <source>Clear context</source>
@@ -389,6 +519,14 @@
     <message>
       <source>Close</source>
       <translation>Cerrar</translation>
+    </message>
+    <message>
+      <source>Codex (ChatGPT subscription)</source>
+      <translation>Codex (suscripción de ChatGPT)</translation>
+    </message>
+    <message>
+      <source>Codex (ChatGPT subscription) [OAuth]</source>
+      <translation>Codex (suscripción de ChatGPT) [OAuth]</translation>
     </message>
     <message>
       <source>Colors for the theme selected above. Light and Dark each keep their
@@ -423,12 +561,20 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Tipo de cálculo</translation>
     </message>
     <message>
+      <source>Confirm</source>
+      <translation>Confirmar</translation>
+    </message>
+    <message>
       <source>Consolidation interval (min):</source>
       <translation>Intervalo de consolidación (min):</translation>
     </message>
     <message>
       <source>Context</source>
       <translation>Contexto</translation>
+    </message>
+    <message>
+      <source>Context · </source>
+      <translation>Contexto · </translation>
     </message>
     <message>
       <source>Context:</source>
@@ -447,8 +593,20 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Conversación</translation>
     </message>
     <message>
+      <source>Conversation </source>
+      <translation>Conversación </translation>
+    </message>
+    <message>
+      <source>Coordinator</source>
+      <translation>Coordinador</translation>
+    </message>
+    <message>
       <source>Copied</source>
       <translation>Copiado</translation>
+    </message>
+    <message>
+      <source>Copilot cannot read screenshots. Pick a different Image model.</source>
+      <translation>Copilot no puede leer capturas de pantalla. Elige otro modelo de imagen.</translation>
     </message>
     <message>
       <source>Copy from Last Task</source>
@@ -463,6 +621,10 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>No se pudieron cargar las herramientas</translation>
     </message>
     <message>
+      <source>Could not load tools: </source>
+      <translation>No se pudieron cargar las herramientas: </translation>
+    </message>
+    <message>
       <source>Create Pair Exchanges</source>
       <translation>Crear intercambios por pares</translation>
     </message>
@@ -473,6 +635,14 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
     <message>
       <source>Create files</source>
       <translation>Crear archivos</translation>
+    </message>
+    <message>
+      <source>Current objective</source>
+      <translation>Objetivo actual</translation>
+    </message>
+    <message>
+      <source>Custom (OpenAI-compatible)</source>
+      <translation>Personalizado (compatible con OpenAI)</translation>
     </message>
     <message>
       <source>Custom / enter manually?</source>
@@ -491,6 +661,10 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Proveedor personalizado</translation>
     </message>
     <message>
+      <source>Custom provider</source>
+      <translation>Proveedor personalizado</translation>
+    </message>
+    <message>
       <source>Custom provider key stored in OS keychain</source>
       <translation>Clave del proveedor personalizado guardada en el llavero del sistema</translation>
     </message>
@@ -505,6 +679,10 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
     <message>
       <source>Decline</source>
       <translation>Rechazar</translation>
+    </message>
+    <message>
+      <source>Decoding beam width. 5 (Whisper's default) is noticeably more accurate than greedy (1) for a small speed cost; raise it for tricky audio.</source>
+      <translation>Ancho de haz de decodificación. 5 (valor predeterminado de Whisper) es bastante más preciso que greedy (1) con un pequeño coste de velocidad; súbelo para audio difícil.</translation>
     </message>
     <message>
       <source>Define agents and their exchange rules in the separate communication window.</source>
@@ -567,6 +745,10 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Anulación del ID de cliente OAuth de desarrollador</translation>
     </message>
     <message>
+      <source>Device</source>
+      <translation>Dispositivo</translation>
+    </message>
+    <message>
       <source>Dictated text</source>
       <translation>Texto dictado</translation>
     </message>
@@ -576,7 +758,11 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
     </message>
     <message>
       <source>Discard the current agents and communications and restore the defaults</source>
-      <translation>Descartar los agentes y comunicaciones actuales y restaurar los valores predeterminados</translation>
+      <translation>Descarta los agentes y comunicaciones actuales y restaura los valores predeterminados</translation>
+    </message>
+    <message>
+      <source>Done</source>
+      <translation>Hecho</translation>
     </message>
     <message>
       <source>Done when</source>
@@ -619,8 +805,28 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Tecla Enter:</translation>
     </message>
     <message>
+      <source>Environment: </source>
+      <translation>Entorno: </translation>
+    </message>
+    <message>
+      <source>Error reading status: </source>
+      <translation>Error al leer el estado: </translation>
+    </message>
+    <message>
+      <source>Error:</source>
+      <translation>Error:</translation>
+    </message>
+    <message>
+      <source>Error: </source>
+      <translation>Error: </translation>
+    </message>
+    <message>
       <source>Example: Add tray launch action mockup</source>
       <translation>Ejemplo: añadir maqueta de acción de inicio en la bandeja</translation>
+    </message>
+    <message>
+      <source>Explicit handoff to </source>
+      <translation>Traspaso explícito a </translation>
     </message>
     <message>
       <source>Facts the assistant remembers about you across sessions. Click a fact to edit it; changes save immediately.</source>
@@ -628,11 +834,23 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
     </message>
     <message>
       <source>Failed</source>
-      <translation>Falló</translation>
+      <translation>Fallido</translation>
     </message>
     <message>
       <source>Fallback Model</source>
       <translation>Modelo de respaldo</translation>
+    </message>
+    <message>
+      <source>Fetch GitHub repository metadata using the signed-in GitHub OAuth account.</source>
+      <translation>Obtiene metadatos del repositorio de GitHub con la cuenta GitHub OAuth conectada.</translation>
+    </message>
+    <message>
+      <source>Fetch a GitHub issue or pull request by repository and number.</source>
+      <translation>Obtiene un issue o pull request de GitHub por repositorio y número.</translation>
+    </message>
+    <message>
+      <source>Fetch the latest model names from the provider</source>
+      <translation>Obtiene los nombres de modelos más recientes del proveedor</translation>
     </message>
     <message>
       <source>Fields have been filled from the last task.</source>
@@ -651,6 +869,14 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Informe final</translation>
     </message>
     <message>
+      <source>Final report appears here when the task finishes.</source>
+      <translation>El informe final aparece aquí cuando termina la tarea.</translation>
+    </message>
+    <message>
+      <source>Final report:</source>
+      <translation>Informe final:</translation>
+    </message>
+    <message>
       <source>Fine-grained PAT with Copilot Requests: Read-only. Stored in OS keychain.</source>
       <translation>PAT detallado con Copilot Requests: solo lectura. Guardado en el llavero del sistema.</translation>
     </message>
@@ -665,6 +891,10 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
     <message>
       <source>French</source>
       <translation>Francés</translation>
+    </message>
+    <message>
+      <source>From</source>
+      <translation>De</translation>
     </message>
     <message>
       <source>Full turn max tokens</source>
@@ -695,6 +925,20 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Git/GitHub:</translation>
     </message>
     <message>
+      <source>Git/GitHub:
+Off — no git or GitHub tools.
+On — read local git status and diff before sending the prompt.
+Let model decide — expose git status/diff and GitHub repo/issue tools.</source>
+      <translation>Git/GitHub:
+Desactivado — sin herramientas git ni GitHub.
+Activado — lee el estado y diff de git local antes de enviar el prompt.
+Dejar decidir al modelo — expone estado/diff de git y herramientas de repositorio/issue de GitHub.</translation>
+    </message>
+    <message>
+      <source>Git/GitHub: </source>
+      <translation>Git/GitHub: </translation>
+    </message>
+    <message>
       <source>GitHub Copilot</source>
       <translation>GitHub Copilot</translation>
     </message>
@@ -709,6 +953,10 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
     <message>
       <source>Go to:</source>
       <translation>Ve a:</translation>
+    </message>
+    <message>
+      <source>Handing off to </source>
+      <translation>Traspasando a </translation>
     </message>
     <message>
       <source>Heads up</source>
@@ -747,6 +995,10 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Mantener para grabar voz</translation>
     </message>
     <message>
+      <source>Hooks: </source>
+      <translation>Hooks: </translation>
+    </message>
+    <message>
       <source>Hotkey...</source>
       <translation>Atajo...</translation>
     </message>
@@ -759,6 +1011,10 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Cómo sabe el agente que terminó: pruebas pasan, archivos cambiados, PR abierto, resumen producido, etc.</translation>
     </message>
     <message>
+      <source>IMAGE MODEL</source>
+      <translation>MODELO DE IMAGEN</translation>
+    </message>
+    <message>
       <source>INSTALLED + PLUGIN TOOLS</source>
       <translation>HERRAMIENTAS INSTALADAS + PLUGINS</translation>
     </message>
@@ -767,12 +1023,28 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Tamaño del icono (px)</translation>
     </message>
     <message>
+      <source>Image model</source>
+      <translation>Modelo de imagen</translation>
+    </message>
+    <message>
+      <source>Image model uses a subscription login. You may need to sign in again after restart. For fewer login issues, use an API-key provider.</source>
+      <translation>El modelo de imagen usa un inicio de sesión de suscripción. Puede que tengas que iniciar sesión otra vez después de reiniciar. Para menos problemas de inicio de sesión, usa un proveedor con clave API.</translation>
+    </message>
+    <message>
+      <source>Implementation</source>
+      <translation>Implementación</translation>
+    </message>
+    <message>
+      <source>Implementer</source>
+      <translation>Implementador</translation>
+    </message>
+    <message>
       <source>Install Addon Archive</source>
-      <translation>Instalar archivo de complemento</translation>
+      <translation>Instalar archivo de addon</translation>
     </message>
     <message>
       <source>Install Addon Folder</source>
-      <translation>Instalar carpeta de complemento</translation>
+      <translation>Instalar carpeta de addon</translation>
     </message>
     <message>
       <source>Install archive</source>
@@ -788,23 +1060,27 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
     </message>
     <message>
       <source>Install or rebuild this addon's dependency environment</source>
-      <translation>Instalar o reconstruir el entorno de dependencias de este complemento</translation>
+      <translation>Instala o recompila el entorno de dependencias de este addon</translation>
+    </message>
+    <message>
+      <source>Install or rebuild this environment now?</source>
+      <translation>¿Instalar o recompilar este entorno ahora?</translation>
     </message>
     <message>
       <source>Invalid Agent Task</source>
       <translation>Tarea de agente no válida</translation>
     </message>
     <message>
+      <source>Italian</source>
+      <translation>Italiano</translation>
+    </message>
+    <message>
       <source>Japanese</source>
       <translation>Japonés</translation>
     </message>
     <message>
-      <source>Image model</source>
-      <translation>Modelo de imagen</translation>
-    </message>
-    <message>
-      <source>IMAGE MODEL</source>
-      <translation>MODELO DE IMAGEN</translation>
+      <source>Joining briefing</source>
+      <translation>Uniéndose al briefing</translation>
     </message>
     <message>
       <source>Key</source>
@@ -813,6 +1089,10 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
     <message>
       <source>Keybinds</source>
       <translation>Atajos</translation>
+    </message>
+    <message>
+      <source>Keychain error: </source>
+      <translation>Error del llavero: </translation>
     </message>
     <message>
       <source>Korean</source>
@@ -829,6 +1109,14 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
     <message>
       <source>Last chat</source>
       <translation>Último chat</translation>
+    </message>
+    <message>
+      <source>Last tool:</source>
+      <translation>Última herramienta:</translation>
+    </message>
+    <message>
+      <source>Latest thought</source>
+      <translation>Último razonamiento</translation>
     </message>
     <message>
       <source>Legacy tool folder</source>
@@ -851,12 +1139,32 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Registro en vivo</translation>
     </message>
     <message>
+      <source>Live: </source>
+      <translation>En vivo: </translation>
+    </message>
+    <message>
       <source>Loading conversation...</source>
       <translation>Cargando conversación...</translation>
     </message>
     <message>
       <source>Local faster-whisper model. small is a good first upgrade for Chinese; medium/large-v3 are heavier.</source>
       <translation>Modelo local faster-whisper. small es una buena primera mejora para chino; medium/large-v3 son más pesados.</translation>
+    </message>
+    <message>
+      <source>Logged in</source>
+      <translation>Sesi?n iniciada</translation>
+    </message>
+    <message>
+      <source>Logged in - account </source>
+      <translation>Sesión iniciada · cuenta </translation>
+    </message>
+    <message>
+      <source>Logged in as </source>
+      <translation>Sesi?n iniciada como </translation>
+    </message>
+    <message>
+      <source>Logged in • account </source>
+      <translation>Sesi?n iniciada • cuenta </translation>
     </message>
     <message>
       <source>Logs</source>
@@ -919,6 +1227,24 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Memoria:</translation>
     </message>
     <message>
+      <source>Memory:
+Off — do not use stored facts for this caller.
+On — fetch relevant stored facts before sending the prompt.
+Let model decide — expose a memory search tool during the answer.</source>
+      <translation>Memoria:
+Desactivado — no usa hechos guardados para esta llamada.
+Activado — obtiene hechos relevantes antes de enviar el prompt.
+Dejar decidir al modelo — expone una herramienta de búsqueda de memoria durante la respuesta.</translation>
+    </message>
+    <message>
+      <source>Memory: </source>
+      <translation>Memoria: </translation>
+    </message>
+    <message>
+      <source>Message</source>
+      <translation>Mensaje</translation>
+    </message>
+    <message>
       <source>Message... (Enter to send, Shift+Enter for newline)</source>
       <translation>Mensaje... (Enter para enviar, Shift+Enter para nueva línea)</translation>
     </message>
@@ -927,16 +1253,36 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Modelo</translation>
     </message>
     <message>
-      <source>Model routing</source>
-      <translation>Enrutamiento de modelos</translation>
-    </message>
-    <message>
       <source>Model Trace</source>
       <translation>Traza del modelo</translation>
     </message>
     <message>
+      <source>Model error; retrying</source>
+      <translation>Error del modelo; reintentando</translation>
+    </message>
+    <message>
+      <source>Model health</source>
+      <translation>Estado del modelo</translation>
+    </message>
+    <message>
+      <source>Model routing</source>
+      <translation>Enrutamiento de modelos</translation>
+    </message>
+    <message>
+      <source>Model tools: </source>
+      <translation>Herramientas de modelo: </translation>
+    </message>
+    <message>
+      <source>Name</source>
+      <translation>Nombre</translation>
+    </message>
+    <message>
       <source>Name:</source>
       <translation>Nombre:</translation>
+    </message>
+    <message>
+      <source>Needs approval</source>
+      <translation>Requiere aprobación</translation>
     </message>
     <message>
       <source>Nested value chars</source>
@@ -959,8 +1305,16 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>No hay tarea anterior</translation>
     </message>
     <message>
+      <source>No activity yet.</source>
+      <translation>Aún no hay actividad.</translation>
+    </message>
+    <message>
       <source>No addons loaded. Drop a folder with addon.toml into addons/.</source>
       <translation>No hay complementos cargados. Coloca una carpeta con addon.toml en addons/.</translation>
+    </message>
+    <message>
+      <source>No agent task runs yet.</source>
+      <translation>Aún no hay ejecuciones de tareas de agente.</translation>
     </message>
     <message>
       <source>No conversations yet.
@@ -969,6 +1323,14 @@ Press Ctrl+Q to ask something.</source>
       <translation>Aún no hay conversaciones.
 
 Pulsa Ctrl+Q para preguntar algo.</translation>
+    </message>
+    <message>
+      <source>No current objective</source>
+      <translation>Sin objetivo actual</translation>
+    </message>
+    <message>
+      <source>No current objective.</source>
+      <translation>Sin objetivo actual.</translation>
     </message>
     <message>
       <source>No extra tools found. Install script tools under the legacy tool folder, or enable addons that add tools.</source>
@@ -989,6 +1351,14 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Aún no hay salida de registro.</translation>
     </message>
     <message>
+      <source>No messages yet.</source>
+      <translation>Aún no hay mensajes.</translation>
+    </message>
+    <message>
+      <source>No packages declared</source>
+      <translation>No hay paquetes declarados</translation>
+    </message>
+    <message>
       <source>No plugins found.</source>
       <translation>No se encontraron plugins.</translation>
     </message>
@@ -997,8 +1367,12 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>No se encontró una tarea anterior para copiar.</translation>
     </message>
     <message>
+      <source>No thought yet.</source>
+      <translation>Aún no hay razonamiento.</translation>
+    </message>
+    <message>
       <source>None</source>
-      <translation>Ninguno</translation>
+      <translation>Ninguna</translation>
     </message>
     <message>
       <source>Not configured</source>
@@ -1033,44 +1407,16 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Desactivado por defecto para evitar ruido. Los comandos explícitos de recordar/nota siguen guardando hechos.</translation>
     </message>
     <message>
+      <source>Ollama (local)</source>
+      <translation>Ollama (local)</translation>
+    </message>
+    <message>
       <source>On</source>
       <translation>Activado</translation>
     </message>
     <message>
       <source>On the ChatGPT provider, 'Let model decide' context tools are not run as live Wisp tool calls. Open documents can be injected up front when enabled, but browser/web and GitHub tool calls will not run live on that route.</source>
       <translation>Con el proveedor ChatGPT, las herramientas de contexto de 'Dejar que el modelo decida' no se ejecutan como llamadas de herramientas en vivo de Wisp. Los documentos abiertos pueden inyectarse al principio cuando están activados, pero las llamadas de navegador/web y GitHub no se ejecutarán en vivo en esa ruta.</translation>
-    </message>
-    <message>
-      <source>Auto screenshot needs an Image model. Pick one under Image model.</source>
-      <translation>La captura automática necesita un modelo de imagen. Elige uno en Modelo de imagen.</translation>
-    </message>
-    <message>
-      <source>Copilot cannot read screenshots. Pick a different Image model.</source>
-      <translation>Copilot no puede leer capturas de pantalla. Elige otro modelo de imagen.</translation>
-    </message>
-    <message>
-      <source>This Image model may not read screenshots. Pick a model with image support.</source>
-      <translation>Este modelo de imagen puede no leer capturas de pantalla. Elige un modelo con soporte de imágenes.</translation>
-    </message>
-    <message>
-      <source>'Let model decide' screenshots do not work with ChatGPT or Copilot. Pick a different Chat model, or turn screenshots On instead.</source>
-      <translation>Las capturas de "Dejar que el modelo decida" no funcionan con ChatGPT ni Copilot. Elige otro modelo de chat o activa las capturas.</translation>
-    </message>
-    <message>
-      <source>This Chat model may not read screenshots. Pick an image-capable Chat model, or use Image model with the same provider.</source>
-      <translation>Este modelo de chat puede no leer capturas de pantalla. Elige un modelo de chat con imágenes o usa un modelo de imagen del mismo proveedor.</translation>
-    </message>
-    <message>
-      <source>ChatGPT cannot use live context tools here. Use On to attach context up front, or choose another Chat model for Let model decide.</source>
-      <translation>ChatGPT no puede usar herramientas de contexto en vivo aquí. Usa Activado para adjuntar contexto al inicio, o elige otro modelo de chat para Dejar que el modelo decida.</translation>
-    </message>
-    <message>
-      <source>Image model uses a subscription login. You may need to sign in again after restart. For fewer login issues, use an API-key provider.</source>
-      <translation>El modelo de imagen usa un inicio de sesión de suscripción. Puede que tengas que iniciar sesión otra vez después de reiniciar. Para menos problemas de inicio de sesión, usa un proveedor con clave API.</translation>
-    </message>
-    <message>
-      <source>Chat model uses a subscription login. You may need to sign in again after restart. For fewer login issues, use an API-key provider.</source>
-      <translation>El modelo de chat usa un inicio de sesión de suscripción. Puede que tengas que iniciar sesión otra vez después de reiniciar. Para menos problemas de inicio de sesión, usa un proveedor con clave API.</translation>
     </message>
     <message>
       <source>Open Agents Communication Window</source>
@@ -1090,7 +1436,7 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
     </message>
     <message>
       <source>Open addons folder</source>
-      <translation>Abrir carpeta de complementos</translation>
+      <translation>Abrir carpeta de addons</translation>
     </message>
     <message>
       <source>Open docs</source>
@@ -1105,16 +1451,30 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Abrir documentos:</translation>
     </message>
     <message>
+      <source>Open docs: </source>
+      <translation>Abrir documentos: </translation>
+    </message>
+    <message>
       <source>Open documents</source>
       <translation>Abrir documentos</translation>
     </message>
     <message>
+      <source>Open documents:
+Off — do not include document text.
+On — read supported open documents before sending the prompt.
+Let model decide — expose an open-document tool during the answer.</source>
+      <translation>Documentos abiertos:
+Desactivado — no incluye texto de documentos.
+Activado — lee documentos abiertos compatibles antes de enviar el prompt.
+Dejar decidir al modelo — expone una herramienta de documentos abiertos durante la respuesta.</translation>
+    </message>
+    <message>
       <source>Open this addon's diagnostic log</source>
-      <translation>Abrir el registro diagnóstico de este complemento</translation>
+      <translation>Abre el registro de diagnóstico de este addon</translation>
     </message>
     <message>
       <source>Open this addon's settings</source>
-      <translation>Abrir la configuración de este complemento</translation>
+      <translation>Abre los ajustes de este addon</translation>
     </message>
     <message>
       <source>Opening browser… waiting for callback</source>
@@ -1133,16 +1493,28 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Otros atajos</translation>
     </message>
     <message>
-      <source>Provider</source>
-      <translation>Proveedor</translation>
-    </message>
-    <message>
       <source>PROVIDER</source>
       <translation>PROVEEDOR</translation>
     </message>
     <message>
+      <source>Packages:</source>
+      <translation>Paquetes:</translation>
+    </message>
+    <message>
+      <source>Packages: </source>
+      <translation>Paquetes: </translation>
+    </message>
+    <message>
       <source>Parallel work</source>
       <translation>Trabajo paralelo</translation>
+    </message>
+    <message>
+      <source>Parsing repaired JSON</source>
+      <translation>Analizando JSON reparado</translation>
+    </message>
+    <message>
+      <source>Parsing response</source>
+      <translation>Analizando respuesta</translation>
     </message>
     <message>
       <source>Paste a GitHub Copilot-capable token first.</source>
@@ -1166,7 +1538,7 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
     </message>
     <message>
       <source>Paused after current turn</source>
-      <translation>Pausado después del turno actual</translation>
+      <translation>Pausado tras el turno actual</translation>
     </message>
     <message>
       <source>Permission Modes</source>
@@ -1174,11 +1546,27 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
     </message>
     <message>
       <source>Permission needed</source>
-      <translation>Se necesita permiso</translation>
+      <translation>Permiso requerido</translation>
+    </message>
+    <message>
+      <source>Permissions: </source>
+      <translation>Permisos: </translation>
+    </message>
+    <message>
+      <source>Phase</source>
+      <translation>Fase</translation>
     </message>
     <message>
       <source>Pick color</source>
       <translation>Elegir color</translation>
+    </message>
+    <message>
+      <source>Planner</source>
+      <translation>Planificador</translation>
+    </message>
+    <message>
+      <source>Planning</source>
+      <translation>Planificación</translation>
     </message>
     <message>
       <source>Portuguese</source>
@@ -1213,6 +1601,10 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Prompt</translation>
     </message>
     <message>
+      <source>Prompt </source>
+      <translation>Prompt </translation>
+    </message>
+    <message>
       <source>Prompt &amp; Token Limits</source>
       <translation>Límites de prompt y tokens</translation>
     </message>
@@ -1223,6 +1615,18 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
     <message>
       <source>Prompts</source>
       <translation>Indicaciones</translation>
+    </message>
+    <message>
+      <source>Provider</source>
+      <translation>Proveedor</translation>
+    </message>
+    <message>
+      <source>Provider credentials</source>
+      <translation>Credenciales del proveedor</translation>
+    </message>
+    <message>
+      <source>Python: </source>
+      <translation>Python: </translation>
     </message>
     <message>
       <source>Quit</source>
@@ -1237,6 +1641,10 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Color de palabra leída</translation>
     </message>
     <message>
+      <source>Read-only briefing</source>
+      <translation>Briefing de solo lectura</translation>
+    </message>
+    <message>
       <source>Read-only max tokens</source>
       <translation>Tokens máximos de solo lectura</translation>
     </message>
@@ -1245,12 +1653,20 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Razonamiento</translation>
     </message>
     <message>
+      <source>Receiving response</source>
+      <translation>Recibiendo respuesta</translation>
+    </message>
+    <message>
+      <source>Receiving response (</source>
+      <translation>Recibiendo respuesta (</translation>
+    </message>
+    <message>
       <source>Recent Activity</source>
       <translation>Actividad reciente</translation>
     </message>
     <message>
       <source>Recognition language for hold-to-talk. Auto-detect is useful if you switch languages often.</source>
-      <translation>Idioma de reconocimiento para mantener pulsado para hablar. La detección automática es útil si cambias de idioma con frecuencia.</translation>
+      <translation>Idioma de reconocimiento para mantener pulsado y hablar. La detección automática es útil si cambias de idioma a menudo.</translation>
     </message>
     <message>
       <source>Refresh</source>
@@ -1274,15 +1690,23 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
     </message>
     <message>
       <source>Remove Agent</source>
-      <translation>Eliminar agente</translation>
+      <translation>Quitar agente</translation>
     </message>
     <message>
       <source>Remove Communication</source>
-      <translation>Eliminar comunicación</translation>
+      <translation>Quitar comunicación</translation>
     </message>
     <message>
       <source>Repair env</source>
       <translation>Reparar entorno</translation>
+    </message>
+    <message>
+      <source>Repairing JSON</source>
+      <translation>Reparando JSON</translation>
+    </message>
+    <message>
+      <source>Repairing response</source>
+      <translation>Reparando respuesta</translation>
     </message>
     <message>
       <source>Replace the current agents and communications with the defaults?</source>
@@ -1291,6 +1715,10 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
     <message>
       <source>Report</source>
       <translation>Informe</translation>
+    </message>
+    <message>
+      <source>Researcher</source>
+      <translation>Investigador</translation>
     </message>
     <message>
       <source>Reset All…</source>
@@ -1310,15 +1738,19 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
     </message>
     <message>
       <source>Reset to Default</source>
-      <translation>Restablecer a predeterminado</translation>
+      <translation>Restablecer valores predeterminados</translation>
     </message>
     <message>
       <source>Reset to default?</source>
       <translation>¿Restablecer a predeterminado?</translation>
     </message>
     <message>
+      <source>Responsibility</source>
+      <translation>Responsabilidad</translation>
+    </message>
+    <message>
       <source>Restore every agent card to its default position and size</source>
-      <translation>Restaurar cada tarjeta de agente a su posición y tamaño predeterminados</translation>
+      <translation>Restaura cada tarjeta de agente a su posición y tamaño predeterminados</translation>
     </message>
     <message>
       <source>Retrieval max distance:</source>
@@ -1329,6 +1761,10 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Top-k de recuperación:</translation>
     </message>
     <message>
+      <source>Retrieve additional context the user can see. Pass a URL to fetch a web page; omit it to read open local documents from supported apps (Word, Excel, PowerPoint, PDF, LibreOffice, Notepad, etc.).</source>
+      <translation>Recupera contexto adicional visible para el usuario. Pasa una URL para obtener una página web; omítela para leer documentos locales abiertos en apps compatibles (Word, Excel, PowerPoint, PDF, LibreOffice, Notepad, etc.).</translation>
+    </message>
+    <message>
       <source>Retry</source>
       <translation>Reintentar</translation>
     </message>
@@ -1337,8 +1773,40 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Reintentar ejecución</translation>
     </message>
     <message>
+      <source>Retrying</source>
+      <translation>Reintentando</translation>
+    </message>
+    <message>
+      <source>Return read-only git diff for the configured local repository.</source>
+      <translation>Devuelve el diff git de solo lectura del repositorio local configurado.</translation>
+    </message>
+    <message>
+      <source>Return read-only git status for the configured local repository.</source>
+      <translation>Devuelve el estado git de solo lectura del repositorio local configurado.</translation>
+    </message>
+    <message>
+      <source>Review</source>
+      <translation>Revisión</translation>
+    </message>
+    <message>
+      <source>Reviewer</source>
+      <translation>Revisor</translation>
+    </message>
+    <message>
+      <source>Role</source>
+      <translation>Rol</translation>
+    </message>
+    <message>
+      <source>Role:</source>
+      <translation>Rol:</translation>
+    </message>
+    <message>
       <source>Run Log</source>
       <translation>Registro de ejecución</translation>
+    </message>
+    <message>
+      <source>Run folder:</source>
+      <translation>Carpeta de ejecución:</translation>
     </message>
     <message>
       <source>Run implementer agents in parallel (file leases prevent write conflicts)</source>
@@ -1355,6 +1823,10 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
     <message>
       <source>Runtime</source>
       <translation>Tiempo de ejecución</translation>
+    </message>
+    <message>
+      <source>Russian</source>
+      <translation>Ruso</translation>
     </message>
     <message>
       <source>SPEECH TO TEXT</source>
@@ -1389,16 +1861,38 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Filtros de alcance</translation>
     </message>
     <message>
+      <source>Scopes: </source>
+      <translation>Permisos: </translation>
+    </message>
+    <message>
       <source>Screenshot</source>
       <translation>Captura</translation>
+    </message>
+    <message>
+      <source>Screenshot of your screen:
+• Off — never capture.
+• On — capture at hotkey time and send it with the query.
+• Let model decide — expose a screenshot tool during the answer.</source>
+      <translation>Captura de pantalla:
+• Desactivado — nunca captura.
+• Activado — captura al pulsar el atajo y la envía con la consulta.
+• Dejar decidir al modelo — expone una herramienta de captura durante la respuesta.</translation>
     </message>
     <message>
       <source>Screenshot:</source>
       <translation>Captura:</translation>
     </message>
     <message>
+      <source>Screenshot: </source>
+      <translation>Captura: </translation>
+    </message>
+    <message>
+      <source>Search the web for current information.</source>
+      <translation>Busca información actual en la web.</translation>
+    </message>
+    <message>
       <source>Select an agent or communication, or click an exchange in the bottom relationship map to edit it above.</source>
-      <translation>Selecciona un agente o comunicación, o haz clic en un intercambio del mapa inferior para editarlo arriba.</translation>
+      <translation>Selecciona un agente o comunicación, o haz clic en un intercambio en el mapa inferior para editarlo arriba.</translation>
     </message>
     <message>
       <source>Selected conversation</source>
@@ -1429,6 +1923,14 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Iniciar sesión</translation>
     </message>
     <message>
+      <source>Sign in opens GitHub in your browser and links this app to your account.</source>
+      <translation>Iniciar sesión abre GitHub en tu navegador y vincula esta app con tu cuenta.</translation>
+    </message>
+    <message>
+      <source>Sign in or save provider API keys and custom endpoint details before assigning models.</source>
+      <translation>Inicia sesión o guarda las claves API del proveedor y los detalles de endpoints personalizados antes de asignar modelos.</translation>
+    </message>
+    <message>
       <source>Sign in with GitHub</source>
       <translation>Iniciar sesión con GitHub</translation>
     </message>
@@ -1457,6 +1959,10 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Idioma de voz</translation>
     </message>
     <message>
+      <source>Speech to Text</source>
+      <translation>Voz a texto</translation>
+    </message>
+    <message>
       <source>Start Agent Task</source>
       <translation>Iniciar tarea de agente</translation>
     </message>
@@ -1481,12 +1987,32 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Iniciando autenticación de dispositivo de GitHub...</translation>
     </message>
     <message>
+      <source>Starting...</source>
+      <translation>Iniciando...</translation>
+    </message>
+    <message>
+      <source>Status update</source>
+      <translation>Actualización de estado</translation>
+    </message>
+    <message>
+      <source>Status:</source>
+      <translation>Estado:</translation>
+    </message>
+    <message>
+      <source>Still receiving response</source>
+      <translation>Aún recibiendo respuesta</translation>
+    </message>
+    <message>
       <source>Stored in OS keychain</source>
       <translation>Guardada en el llavero del sistema</translation>
     </message>
     <message>
       <source>Stored in OS keychain. Token format looks like a fine-grained GitHub PAT.</source>
       <translation>Guardado en el llavero del sistema. El formato del token parece un PAT detallado de GitHub.</translation>
+    </message>
+    <message>
+      <source>Stored, but </source>
+      <translation>Guardado, pero </translation>
     </message>
     <message>
       <source>Summary</source>
@@ -1533,8 +2059,16 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Tarea</translation>
     </message>
     <message>
-      <source>Test TTS</source>
-      <translation>Probar TTS</translation>
+      <source>Task spec:</source>
+      <translation>Especificación de tarea:</translation>
+    </message>
+    <message>
+      <source>Test</source>
+      <translation>Probar</translation>
+    </message>
+    <message>
+      <source>Test </source>
+      <translation>Prueba </translation>
     </message>
     <message>
       <source>Test Chat model</source>
@@ -1549,8 +2083,28 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Probar modelo de memoria</translation>
     </message>
     <message>
+      <source>Test TTS</source>
+      <translation>Probar TTS</translation>
+    </message>
+    <message>
+      <source>Test custom</source>
+      <translation>Probar personalizado</translation>
+    </message>
+    <message>
+      <source>Test failed: </source>
+      <translation>Prueba fallida: </translation>
+    </message>
+    <message>
       <source>Test token / SDK</source>
       <translation>Probar token / SDK</translation>
+    </message>
+    <message>
+      <source>Tester</source>
+      <translation>Probador</translation>
+    </message>
+    <message>
+      <source>Testing</source>
+      <translation>Pruebas</translation>
     </message>
     <message>
       <source>Text bubble color</source>
@@ -1597,12 +2151,24 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Estos valores usan por defecto los desplegables de contexto del atajo; cambiar uno aquí solo sobrescribe el desplegable de esa herramienta. El contexto automático (desplegables en Activado) no se ve afectado.</translation>
     </message>
     <message>
+      <source>Thinking</source>
+      <translation>Pensando</translation>
+    </message>
+    <message>
+      <source>This Chat model may not read screenshots. Pick an image-capable Chat model, or use Image model with the same provider.</source>
+      <translation>Este modelo de chat puede no leer capturas de pantalla. Elige un modelo de chat con imágenes o usa un modelo de imagen del mismo proveedor.</translation>
+    </message>
+    <message>
+      <source>This Image model may not read screenshots. Pick a model with image support.</source>
+      <translation>Este modelo de imagen puede no leer capturas de pantalla. Elige un modelo con soporte de imágenes.</translation>
+    </message>
+    <message>
       <source>This addon does not expose settings.</source>
-      <translation>Este complemento no expone configuración.</translation>
+      <translation>Este addon no expone ajustes.</translation>
     </message>
     <message>
       <source>This prompt is prepended to every LLM request as the system instruction.</source>
-      <translation>Este prompt se antepone a cada solicitud al LLM como instrucción del sistema.</translation>
+      <translation>Este prompt se antepone a cada solicitud del LLM como instrucción del sistema.</translation>
     </message>
     <message>
       <source>Time limit</source>
@@ -1621,12 +2187,20 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Título</translation>
     </message>
     <message>
+      <source>To</source>
+      <translation>Para</translation>
+    </message>
+    <message>
       <source>Token</source>
       <translation>Token</translation>
     </message>
     <message>
       <source>Token format looks like a fine-grained GitHub PAT.</source>
       <translation>El formato del token parece un PAT detallado de GitHub.</translation>
+    </message>
+    <message>
+      <source>Tool Calling Keywords</source>
+      <translation>Palabras clave de herramientas</translation>
     </message>
     <message>
       <source>Tool document chars</source>
@@ -1649,12 +2223,28 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Herramientas</translation>
     </message>
     <message>
+      <source>Tools with &lt;b&gt;no keywords&lt;/b&gt; are always sent to the model.&lt;br&gt;Tools with keywords are only sent when the prompt contains at least one.&lt;br&gt;Separate multiple keywords with commas.</source>
+      <translation>Las herramientas &lt;b&gt;sin palabras clave&lt;/b&gt; siempre se envían al modelo.&lt;br&gt;Las herramientas con palabras clave solo se envían cuando el prompt contiene al menos una.&lt;br&gt;Separa varias palabras clave con comas.</translation>
+    </message>
+    <message>
+      <source>Tools: </source>
+      <translation>Herramientas: </translation>
+    </message>
+    <message>
       <source>Tried in order if the primary model fails or is unavailable.</source>
       <translation>Se prueban en orden si el modelo principal falla o no está disponible.</translation>
     </message>
     <message>
+      <source>Trigger</source>
+      <translation>Disparador</translation>
+    </message>
+    <message>
       <source>Turn limit</source>
       <translation>Límite de turnos</translation>
+    </message>
+    <message>
+      <source>Turn limit reached</source>
+      <translation>Límite de turnos alcanzado</translation>
     </message>
     <message>
       <source>Type any model name...</source>
@@ -1663,6 +2253,10 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
     <message>
       <source>Type your prompt, press Enter…</source>
       <translation>Escribe tu prompt y pulsa Enter…</translation>
+    </message>
+    <message>
+      <source>Using </source>
+      <translation>Usando </translation>
     </message>
     <message>
       <source>VISION MODEL</source>
@@ -1685,12 +2279,24 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Voz (mantener para hablar)</translation>
     </message>
     <message>
+      <source>Waiting</source>
+      <translation>Esperando</translation>
+    </message>
+    <message>
+      <source>Waiting </source>
+      <translation>Esperando </translation>
+    </message>
+    <message>
       <source>What should be exchanged: findings, files, decisions, blockers, tests, or final notes.</source>
       <translation>Qué se debe intercambiar: hallazgos, archivos, decisiones, bloqueos, pruebas o notas finales.</translation>
     </message>
     <message>
       <source>When should this exchange happen?</source>
       <translation>¿Cuándo debe ocurrir este intercambio?</translation>
+    </message>
+    <message>
+      <source>Where Whisper runs. GPU (CUDA) is much faster, especially for large-v3, but needs an NVIDIA GPU with CUDA installed. Auto uses the GPU when present and falls back to CPU.</source>
+      <translation>Dónde se ejecuta Whisper. GPU (CUDA) es mucho más rápido, especialmente con large-v3, pero requiere una GPU NVIDIA con CUDA instalado. Auto usa la GPU si existe y vuelve a CPU si no.</translation>
     </message>
     <message>
       <source>Whisper compute precision. Keep int8 for CPU unless you know you need another mode.</source>
@@ -1725,6 +2331,10 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Configuración del modelo Whisper para transcripción al mantener pulsado para hablar. Los modelos más grandes mejoran la precisión del habla en mandarín/cantonés, pero usan más disco y CPU.</translation>
     </message>
     <message>
+      <source>Wisp Addons (*.wisp *.zip)</source>
+      <translation>Addons de Wisp (*.wisp *.zip)</translation>
+    </message>
+    <message>
       <source>X Remove</source>
       <translation>X Eliminar</translation>
     </message>
@@ -1735,6 +2345,10 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
     <message>
       <source>Your settings were saved, but:</source>
       <translation>Tu configuración se guardó, pero:</translation>
+    </message>
+    <message>
+      <source>alias (optional)</source>
+      <translation>alias (opcional)</translation>
     </message>
     <message>
       <source>approval-required: ask before every write</source>
@@ -1757,6 +2371,18 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>aprobar automáticamente lecturas seguras</translation>
     </message>
     <message>
+      <source>average latency</source>
+      <translation>latencia media</translation>
+    </message>
+    <message>
+      <source>avg</source>
+      <translation>prom.</translation>
+    </message>
+    <message>
+      <source>calls</source>
+      <translation>llamadas</translation>
+    </message>
+    <message>
       <source>capture_screen</source>
       <translation>captura de pantalla</translation>
     </message>
@@ -1765,12 +2391,32 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>el contexto se truncó para ajustarse al límite</translation>
     </message>
     <message>
+      <source>current runtime</source>
+      <translation>runtime actual</translation>
+    </message>
+    <message>
+      <source>declares Python/package dependencies.</source>
+      <translation>declara dependencias de Python/paquetes.</translation>
+    </message>
+    <message>
+      <source>e.g. Please elaborate on that.</source>
+      <translation>p. ej., desarrolla eso, por favor.</translation>
+    </message>
+    <message>
       <source>e.g. repo read:user user:email</source>
       <translation>p. ej. repo read:user user:email</translation>
     </message>
     <message>
       <source>enter API key</source>
       <translation>introduce clave API</translation>
+    </message>
+    <message>
+      <source>fallback</source>
+      <translation>respaldo</translation>
+    </message>
+    <message>
+      <source>fallbacks</source>
+      <translation>respaldos</translation>
     </message>
     <message>
       <source>get_context</source>
@@ -1803,6 +2449,14 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
     <message>
       <source>image</source>
       <translation>imagen</translation>
+    </message>
+    <message>
+      <source>invalid</source>
+      <translation>inválido</translation>
+    </message>
+    <message>
+      <source>invalid JSON</source>
+      <translation>JSON inválido</translation>
     </message>
     <message>
       <source>leave empty to always include</source>
@@ -1857,6 +2511,14 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>read-only: solo inspeccionar</translation>
     </message>
     <message>
+      <source>repair</source>
+      <translation>reparación</translation>
+    </message>
+    <message>
+      <source>repairs</source>
+      <translation>reparaciones</translation>
+    </message>
+    <message>
       <source>same as task</source>
       <translation>igual que la tarea</translation>
     </message>
@@ -1887,162 +2549,6 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
     <message>
       <source>xhigh</source>
       <translation>muy alto</translation>
-    </message>
-    <message>
-      <source>Hooks: </source>
-      <translation>Hooks: </translation>
-    </message>
-    <message>
-      <source>Model tools: </source>
-      <translation>Herramientas de modelo: </translation>
-    </message>
-    <message>
-      <source>Permissions: </source>
-      <translation>Permisos: </translation>
-    </message>
-    <message>
-      <source>Packages: </source>
-      <translation>Paquetes: </translation>
-    </message>
-    <message>
-      <source>Python: </source>
-      <translation>Python: </translation>
-    </message>
-    <message>
-      <source>Environment: </source>
-      <translation>Entorno: </translation>
-    </message>
-    <message>
-      <source>Browser/Web: </source>
-      <translation>Navegador/Web: </translation>
-    </message>
-    <message>
-      <source>Open docs: </source>
-      <translation>Abrir documentos: </translation>
-    </message>
-    <message>
-      <source>Git/GitHub: </source>
-      <translation>Git/GitHub: </translation>
-    </message>
-    <message>
-      <source>Memory: </source>
-      <translation>Memoria: </translation>
-    </message>
-    <message>
-      <source>Screenshot: </source>
-      <translation>Captura: </translation>
-    </message>
-    <message>
-      <source>Context · </source>
-      <translation>Contexto · </translation>
-    </message>
-    <message>
-      <source>Conversation </source>
-      <translation>Conversación </translation>
-    </message>
-    <message>
-      <source>Test </source>
-      <translation>Prueba </translation>
-    </message>
-    <message>
-      <source>Error: </source>
-      <translation>Error: </translation>
-    </message>
-    <message>
-      <source>Keychain error: </source>
-      <translation>Error del llavero: </translation>
-    </message>
-    <message>
-      <source>Test failed: </source>
-      <translation>Prueba fallida: </translation>
-    </message>
-    <message>
-      <source>Live: </source>
-      <translation>En vivo: </translation>
-    </message>
-    <message>
-      <source>Error reading status: </source>
-      <translation>Error al leer el estado: </translation>
-    </message>
-    <message>
-      <source>Logged in as </source>
-      <translation>Sesi?n iniciada como </translation>
-    </message>
-    <message>
-      <source>Logged in • account </source>
-      <translation>Sesi?n iniciada • cuenta </translation>
-    </message>
-    <message>
-      <source>Logged in</source>
-      <translation>Sesi?n iniciada</translation>
-    </message>
-    <message>
-      <source>Scopes: </source>
-      <translation>Permisos: </translation>
-    </message>
-    <message>
-      <source>Stored, but </source>
-      <translation>Guardado, pero </translation>
-    </message>
-    <message>
-      <source> Settings</source>
-      <translation> Configuración</translation>
-    </message>
-    <message>
-      <source> Logs</source>
-      <translation> Registros</translation>
-    </message>
-    <message>
-      <source>Provider credentials</source>
-      <translation>Credenciales del proveedor</translation>
-    </message>
-    <message>
-      <source>Sign in or save provider API keys and custom endpoint details before assigning models.</source>
-      <translation>Inicia sesión o guarda las claves API del proveedor y los detalles de endpoints personalizados antes de asignar modelos.</translation>
-    </message>
-    <message>
-      <source>Sign in opens GitHub in your browser and links this app to your account.</source>
-      <translation>Iniciar sesión abre GitHub en tu navegador y vincula esta app con tu cuenta.</translation>
-    </message>
-    <message>
-      <source>API Keys</source>
-      <translation>Claves API</translation>
-    </message>
-    <message>
-      <source>Add a row for each provider you want to use. Alias is optional - useful when you have multiple keys for the same provider. Custom endpoints are configured below.</source>
-      <translation>Añade una fila por cada proveedor que quieras usar. El alias es opcional; es útil cuando tienes varias claves para el mismo proveedor. Los endpoints personalizados se configuran abajo.</translation>
-    </message>
-    <message>
-      <source>Alias</source>
-      <translation>Alias</translation>
-    </message>
-    <message>
-      <source>alias (optional)</source>
-      <translation>alias (opcional)</translation>
-    </message>
-    <message>
-      <source>Custom provider</source>
-      <translation>Proveedor personalizado</translation>
-    </message>
-    <message>
-      <source>Any OpenAI-compatible endpoint, including Ollama and LM Studio. Select Custom in a model row below after setting the base URL.</source>
-      <translation>Cualquier endpoint compatible con OpenAI, incluidos Ollama y LM Studio. Selecciona Custom en una fila de modelo después de configurar la URL base.</translation>
-    </message>
-    <message>
-      <source>API key</source>
-      <translation>Clave API</translation>
-    </message>
-    <message>
-      <source>Test custom</source>
-      <translation>Probar personalizado</translation>
-    </message>
-    <message>
-      <source>Test</source>
-      <translation>Probar</translation>
-    </message>
-    <message>
-      <source>Logged in - account </source>
-      <translation>Sesión iniciada · cuenta </translation>
     </message>
   </context>
 </TS>

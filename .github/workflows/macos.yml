@@ -13,9 +13,13 @@ on:
     paths:
       - "core/**"
       - "ui/**"
+      - "macos_py/**"
+      - "packaging/**"
       - "main.py"
       - "config.py"
       - "requirements*.txt"
+      - "requirements-dev.txt"
+      - "pyproject.toml"
       - "requirements-macos.lock"
       - "scripts/compile_macos_lock.sh"
       - "scripts/macos_testbot.py"
@@ -26,9 +30,13 @@ on:
     paths:
       - "core/**"
       - "ui/**"
+      - "macos_py/**"
+      - "packaging/**"
       - "main.py"
       - "config.py"
       - "requirements*.txt"
+      - "requirements-dev.txt"
+      - "pyproject.toml"
       - "requirements-macos.lock"
       - "scripts/compile_macos_lock.sh"
       - "scripts/macos_testbot.py"
@@ -49,6 +57,8 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements-macos.lock
+            requirements-dev.txt
+            pyproject.toml
 
       - uses: astral-sh/setup-uv@v5
 
@@ -69,7 +79,7 @@ jobs:
           uv pip sync requirements-macos.lock --python "$(command -v python)" --strict
 
       - name: Byte-compile all sources
-        run: python -m compileall -q core ui main.py config.py
+        run: python -m compileall -q core ui macos_py main.py config.py
 
       - name: Headless import + pyobjc smoke test
         env:

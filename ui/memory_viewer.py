@@ -51,6 +51,28 @@ _CAT_LABELS = {
 _memory_log = logging.getLogger("wisp.memory_viewer")
 
 
+def _load_projects() -> list[dict]:
+    """Named projects for the scope selectors (best-effort, never raises)."""
+    try:
+        from core.conversation_store import store as conversation_store
+        return conversation_store.load_projects()
+    except Exception:
+        return []
+
+
+def _build_project_combo(projects: list[dict] | None) -> QComboBox:
+    """A scope dropdown: 'General' (data "") plus each named project (data id)."""
+    from core.conversation_store.store import GENERAL_PROJECT_ID
+    combo = QComboBox()
+    combo.addItem(t("General"), userData="")
+    for proj in (projects or []):
+        pid = str(proj.get("id") or "")
+        if not pid or pid == GENERAL_PROJECT_ID:
+            continue
+        combo.addItem(proj.get("name", pid), userData=pid)
+    return combo
+
+
 class _MemoryPanelSignals(QObject):
     loaded = Signal(int, object, str)
     mutation_done = Signal(str)
@@ -59,7 +81,10 @@ class _MemoryPanelSignals(QObject):
 class _FactRow(QWidget):
     """A single editable fact row: [text input] [category] [delete]."""
 
-    def __init__(self, fact: dict, manager: "MemoryManager", parent: QWidget, *, read_only: bool = False):
+    def __init__(
+        self, fact: dict, manager: "MemoryManager", parent: QWidget, *,
+        read_only: bool = False, projects: list[dict] | None = None,
+    ):
         super().__init__(parent)
         self._fact_id = fact["id"]
         self._manager = manager
@@ -78,16 +103,17 @@ class _FactRow(QWidget):
             self._text_edit.editingFinished.connect(self._on_text_changed)
         layout.addWidget(self._text_edit)
 
-        self._cat_combo = QComboBox()
-        for cat in _CATEGORIES:
-            self._cat_combo.addItem(t(_CAT_LABELS[cat]), userData=cat)
-        idx = _CATEGORIES.index(fact.get("category", "general"))
-        self._cat_combo.setCurrentIndex(idx)
-        self._cat_combo.setFixedWidth(160)
-        self._cat_combo.setEnabled(not read_only)
+        # Scope selector: "General" (global) + each named project. The selected
+        # data is the project id (or "" for General); category is derived.
+        self._proj_combo = _build_project_combo(projects)
+        current = str(fact.get("project") or "")
+        idx = self._proj_combo.findData(current)
+        self._proj_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._proj_combo.setFixedWidth(160)
+        self._proj_combo.setEnabled(not read_only)
         if not read_only:
-            self._cat_combo.currentIndexChanged.connect(self._on_category_changed)
-        layout.addWidget(self._cat_combo)
+            self._proj_combo.currentIndexChanged.connect(self._on_scope_changed)
+        layout.addWidget(self._proj_combo)
 
         if not read_only:
             del_btn = QPushButton("X")
@@ -100,22 +126,18 @@ class _FactRow(QWidget):
             layout.addWidget(del_btn)
 
     def _on_text_changed(self) -> None:
-        new_text = self._text_edit.text().strip()
-        if not new_text:
-            return
-        cat = self._cat_combo.currentData()
-        self._run_background(
-            lambda: self._manager.update_fact(self._fact_id, new_text, cat),
-            "update",
-        )
+        self._save_fact()
 
-    def _on_category_changed(self) -> None:
+    def _on_scope_changed(self) -> None:
+        self._save_fact()
+
+    def _save_fact(self) -> None:
         new_text = self._text_edit.text().strip()
         if not new_text:
             return
-        cat = self._cat_combo.currentData()
+        project = self._proj_combo.currentData() or ""
         self._run_background(
-            lambda: self._manager.update_fact(self._fact_id, new_text, cat),
+            lambda: self._manager.update_fact(self._fact_id, new_text, project=project),
             "update",
         )
 
@@ -171,6 +193,7 @@ class MemoryPanel(QWidget):
         super().__init__(parent)
         self._manager = manager
         self._read_only = read_only
+        self._projects = _load_projects()
         self._load_token = 0
         self._loading = False
         self._refresh_btn = None
@@ -213,9 +236,7 @@ class MemoryPanel(QWidget):
             self._add_text.returnPressed.connect(self._on_add_fact)
             add_layout.addWidget(self._add_text)
 
-            self._add_cat = QComboBox()
-            for cat in _CATEGORIES:
-                self._add_cat.addItem(t(_CAT_LABELS[cat]), userData=cat)
+            self._add_cat = _build_project_combo(self._projects)
             self._add_cat.setFixedWidth(160)
             add_layout.addWidget(self._add_cat)
 
@@ -282,12 +303,24 @@ class MemoryPanel(QWidget):
         self._render_facts(list(facts or []))
 
     def _render_facts(self, facts: list[dict]) -> None:
-        grouped: dict[str, list[dict]] = {cat: [] for cat in _CATEGORIES}
+        from core.conversation_store.store import GENERAL_PROJECT_ID
+
+        # Group by project id ("" == General). Facts referencing a project that
+        # no longer exists fall back to the General bucket.
+        names = {
+            str(p.get("id") or ""): p.get("name", "")
+            for p in self._projects
+            if str(p.get("id") or "") not in ("", GENERAL_PROJECT_ID)
+        }
+        grouped: dict[str, list[dict]] = {}
         for fact in facts:
-            cat = fact.get("category", "general")
-            if cat not in grouped:
-                cat = "general"
-            grouped[cat].append(fact)
+            pid = str(fact.get("project") or "")
+            if pid and pid not in names:
+                pid = ""  # orphaned project id -> General
+            grouped.setdefault(pid, []).append(fact)
+
+        # General first, then named projects in the project-list order.
+        order = [""] + list(names.keys())
 
         container = QWidget()
         layout = QVBoxLayout(container)
@@ -295,18 +328,22 @@ class MemoryPanel(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
 
         has_any = False
-        for cat in _CATEGORIES:
-            cat_facts = grouped[cat]
-            if not cat_facts:
+        for pid in order:
+            group_facts = grouped.get(pid)
+            if not group_facts:
                 continue
             has_any = True
 
-            group = QGroupBox(t(_CAT_LABELS[cat]))
+            title = t("General") if pid == "" else names.get(pid, pid)
+            group = QGroupBox(title)
             group_layout = QVBoxLayout(group)
             group_layout.setSpacing(2)
 
-            for fact in cat_facts:
-                row = _FactRow(fact, self._manager, group, read_only=self._read_only)
+            for fact in group_facts:
+                row = _FactRow(
+                    fact, self._manager, group,
+                    read_only=self._read_only, projects=self._projects,
+                )
                 group_layout.addWidget(row)
 
             layout.addWidget(group)
@@ -331,15 +368,15 @@ class MemoryPanel(QWidget):
         text = self._add_text.text().strip()
         if not text:
             return
-        category = self._add_cat.currentData()
+        project = self._add_cat.currentData() or ""
         self._add_text.clear()
-        self._run_add_fact(text, category)
+        self._run_add_fact(text, project)
 
-    def _run_add_fact(self, text: str, category: str) -> None:
+    def _run_add_fact(self, text: str, project: str) -> None:
         def worker() -> None:
             error = ""
             try:
-                self._manager.add_fact_manual(text, category)
+                self._manager.add_fact_manual(text, project=project)
             except Exception as exc:
                 error = str(exc)
                 _memory_log.warning("Memory add failed: %s", exc)
@@ -367,9 +404,9 @@ class MemoryViewer(QDialog):
     def __init__(self, manager: "MemoryManager", parent=None):
         super().__init__(parent)
         self.setWindowTitle(t("Long-term Memory"))
-        self.setMinimumSize(620, 480)
+        self.setMinimumSize(760, 560)
         enable_standard_window_controls(self)
-        fit_window_to_screen(self, preferred_width=620, preferred_height=520)
+        fit_window_to_screen(self, preferred_width=820, preferred_height=640)
 
         root = QVBoxLayout(self)
         root.setSpacing(8)
@@ -401,5 +438,5 @@ class MemoryViewer(QDialog):
 
     def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
-        fit_window_to_screen(self, preferred_width=620, preferred_height=520)
+        fit_window_to_screen(self, preferred_width=820, preferred_height=640)
 

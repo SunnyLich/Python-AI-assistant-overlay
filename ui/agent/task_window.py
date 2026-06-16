@@ -59,6 +59,23 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from ui.agent.log_parser import parse_live_log_event
+from ui.agent.combo_helpers import (
+    AGENT_PROVIDER_OPTIONS as _AGENT_PROVIDER_OPTIONS,
+    AGENT_ROLE_OPTIONS as _AGENT_ROLE_OPTIONS,
+    APPROVAL_OPTIONS as _APPROVAL_OPTIONS,
+    COMMUNICATION_PHASE_OPTIONS as _COMMUNICATION_PHASE_OPTIONS,
+    MAP_AGENT_PROVIDER_OPTIONS as _MAP_AGENT_PROVIDER_OPTIONS,
+    PERMISSION_OPTIONS as _PERMISSION_OPTIONS,
+    REASONING_OPTIONS as _REASONING_OPTIONS,
+    REPORT_OPTIONS as _REPORT_OPTIONS,
+    SANDBOX_OPTIONS as _SANDBOX_OPTIONS,
+    add_translated_combo_items as _add_translated_combo_items,
+    combo_value as _combo_value,
+    display_agent_name as _display_agent_name,
+    display_phase as _display_phase,
+    display_role as _display_role,
+    set_combo_value as _set_combo_value,
+)
 from ui.i18n import localize_widget_tree, t
 from ui.settings_panel.helpers import parse_fallback_rows
 from ui.shared.window_utils import enable_standard_window_controls, fit_window_to_screen
@@ -219,7 +236,7 @@ class AgentTaskDialog(QDialog):
         self._advanced_visible = False
 
         self.setWindowTitle(t("Start Agent Task"))
-        self.setMinimumSize(560, 420)
+        self.setMinimumSize(680, 520)
         enable_standard_window_controls(self)
 
         self._build_ui()
@@ -297,20 +314,20 @@ class AgentTaskDialog(QDialog):
         self.title_edit.setText(spec.title)
         self.objective_edit.setPlainText(spec.objective)
         self.scope_edit.setText(spec.scope_folder)
-        self.sandbox_combo.setCurrentText(spec.sandbox_mode)
-        self.approval_combo.setCurrentText(spec.approval_policy)
+        _set_combo_value(self.sandbox_combo, spec.sandbox_mode)
+        _set_combo_value(self.approval_combo, spec.approval_policy)
         self.provider_combo.setCurrentText(getattr(spec, "provider", "same as app"))
         self.model_edit.setText(spec.model)
         self._set_fallback_rows(getattr(spec, "model_fallbacks", "") or "")
-        self.reasoning_combo.setCurrentText(spec.reasoning_effort)
+        _set_combo_value(self.reasoning_combo, spec.reasoning_effort)
         self.runtime_minutes.setValue(spec.max_runtime_minutes)
         self.max_turns.setValue(spec.max_turns)
-        self.allow_shell.setCurrentText(getattr(spec, "shell_permission_mode", self._permission_mode_from_bool(spec.allow_shell)))
-        self.allow_network.setCurrentText(getattr(spec, "network_permission_mode", self._permission_mode_from_bool(spec.allow_network)))
-        self.allow_git.setCurrentText(getattr(spec, "git_permission_mode", self._permission_mode_from_bool(spec.allow_git)))
-        self.allow_create.setCurrentText(getattr(spec, "file_create_permission_mode", self._permission_mode_from_bool(spec.allow_file_create)))
-        self.allow_edit.setCurrentText(getattr(spec, "file_edit_permission_mode", self._permission_mode_from_bool(spec.allow_file_edit)))
-        self.allow_delete.setCurrentText(getattr(spec, "file_delete_permission_mode", self._permission_mode_from_bool(spec.allow_file_delete)))
+        _set_combo_value(self.allow_shell, getattr(spec, "shell_permission_mode", self._permission_mode_from_bool(spec.allow_shell)))
+        _set_combo_value(self.allow_network, getattr(spec, "network_permission_mode", self._permission_mode_from_bool(spec.allow_network)))
+        _set_combo_value(self.allow_git, getattr(spec, "git_permission_mode", self._permission_mode_from_bool(spec.allow_git)))
+        _set_combo_value(self.allow_create, getattr(spec, "file_create_permission_mode", self._permission_mode_from_bool(spec.allow_file_create)))
+        _set_combo_value(self.allow_edit, getattr(spec, "file_edit_permission_mode", self._permission_mode_from_bool(spec.allow_file_edit)))
+        _set_combo_value(self.allow_delete, getattr(spec, "file_delete_permission_mode", self._permission_mode_from_bool(spec.allow_file_delete)))
         self.allowed_globs_edit.setText(", ".join(spec.allowed_file_globs))
         self.blocked_globs_edit.setText(", ".join(spec.blocked_file_globs))
         self.full_turn_tokens.setValue(getattr(spec, "full_turn_max_tokens", 8192))
@@ -325,7 +342,7 @@ class AgentTaskDialog(QDialog):
         self.visible_files_delta_limit.setValue(getattr(spec, "visible_files_delta_limit", 80))
         self.required_context_edit.setPlainText(spec.required_context)
         self.completion_edit.setPlainText(spec.completion_criteria)
-        self.report_combo.setCurrentText(spec.report_format)
+        _set_combo_value(self.report_combo, spec.report_format)
         self.parallel_briefing.setChecked(bool(getattr(spec, "parallel_read_only_briefing", True)))
         self.parallel_execution.setChecked(bool(getattr(spec, "parallel_execution", False)))
         self.max_parallel_agents.setValue(int(getattr(spec, "max_parallel_agents", 4) or 4))
@@ -520,26 +537,12 @@ class AgentTaskDialog(QDialog):
         self.agent_role_combo = QComboBox()
         self.agent_role_combo.hide()
         self.agent_role_combo.setEditable(True)
-        self.agent_role_combo.addItems([
-            "Coordinator",
-            "Planner",
-            "Implementer",
-            "Reviewer",
-            "Tester",
-            "Researcher",
-        ])
+        _add_translated_combo_items(self.agent_role_combo, _AGENT_ROLE_OPTIONS)
         self.agent_role_combo.currentTextChanged.connect(self._agent_role_changed)
         self.agent_provider_combo = QComboBox()
         self.agent_provider_combo.hide()
         self.agent_provider_combo.setEditable(True)
-        self.agent_provider_combo.addItems([
-            "same as task",
-            "groq",
-            "openai",
-            "anthropic",
-            "chatgpt",
-            "copilot",
-        ])
+        _add_translated_combo_items(self.agent_provider_combo, _AGENT_PROVIDER_OPTIONS)
         self.agent_provider_combo.currentTextChanged.connect(self._save_current_agent)
         self.agent_model_edit = QLineEdit()
         self.agent_model_edit.hide()
@@ -585,13 +588,7 @@ class AgentTaskDialog(QDialog):
         layout.setSpacing(10)
         form = _expanding_form_layout()
         self.sandbox_combo = QComboBox()
-        self.sandbox_combo.addItems(
-            [
-                "workspace-write: scope folder only",
-                "read-only: inspect only",
-                "approval-required: ask before every write",
-            ]
-        )
+        _add_translated_combo_items(self.sandbox_combo, _SANDBOX_OPTIONS)
 
         self.allowed_globs_edit = QLineEdit()
         self.allowed_globs_edit.setPlaceholderText("Optional, comma-separated: *.py, ui/*.py")
@@ -640,13 +637,13 @@ class AgentTaskDialog(QDialog):
     @staticmethod
     def _permission_combo(default: str) -> QComboBox:
         combo = QComboBox()
-        combo.addItems(["auto", "ask permission", "never permit"])
-        combo.setCurrentText(default)
+        _add_translated_combo_items(combo, _PERMISSION_OPTIONS)
+        _set_combo_value(combo, default)
         return combo
 
     @staticmethod
     def _permission_enabled(combo: QComboBox) -> bool:
-        return combo.currentText() != "never permit"
+        return _combo_value(combo) != "never permit"
 
     @staticmethod
     def _permission_mode_from_bool(enabled: bool) -> str:
@@ -658,17 +655,11 @@ class AgentTaskDialog(QDialog):
         form.setSpacing(10)
 
         self.reasoning_combo = QComboBox()
-        self.reasoning_combo.addItems(["low", "medium", "high", "xhigh"])
+        _add_translated_combo_items(self.reasoning_combo, _REASONING_OPTIONS)
 
         self.approval_combo = QComboBox()
-        self.approval_combo.addItems(
-            [
-                "never escalate",
-                "auto-approve safe reads",
-                "ask before escalation",
-            ]
-        )
-        self.approval_combo.setCurrentText("ask before escalation")
+        _add_translated_combo_items(self.approval_combo, _APPROVAL_OPTIONS)
+        _set_combo_value(self.approval_combo, "ask before escalation")
 
         self.runtime_minutes = QSpinBox()
         self.runtime_minutes.setRange(1, 480)
@@ -747,14 +738,7 @@ class AgentTaskDialog(QDialog):
         )
 
         self.report_combo = QComboBox()
-        self.report_combo.addItems(
-            [
-                "Summary + changed files + verification",
-                "Patch only",
-                "Detailed implementation report",
-                "Ask before final changes",
-            ]
-        )
+        _add_translated_combo_items(self.report_combo, _REPORT_OPTIONS)
 
         form.addRow("Done when", self.completion_edit)
         form.addRow("Report", self.report_combo)
@@ -784,12 +768,12 @@ class AgentTaskDialog(QDialog):
         # Default the model to the app's configured LLM (provider + model +
         # fallbacks) instead of the old "same as app" sentinel.
         self._copy_model_from_app()
-        self.allow_shell.setCurrentText("auto")
-        self.allow_network.setCurrentText("never permit")
-        self.allow_git.setCurrentText("auto")
-        self.allow_create.setCurrentText("auto")
-        self.allow_edit.setCurrentText("auto")
-        self.allow_delete.setCurrentText("never permit")
+        _set_combo_value(self.allow_shell, "auto")
+        _set_combo_value(self.allow_network, "never permit")
+        _set_combo_value(self.allow_git, "auto")
+        _set_combo_value(self.allow_create, "auto")
+        _set_combo_value(self.allow_edit, "auto")
+        _set_combo_value(self.allow_delete, "never permit")
         self.runtime_minutes.setValue(60)
         self.max_turns.setValue(30)
         self.blocked_globs_edit.setText(".env, private/*, .git/*")
@@ -871,8 +855,8 @@ class AgentTaskDialog(QDialog):
         available_h = screen.availableGeometry().height() if screen is not None else 680
         fit_window_to_screen(
             self,
-            preferred_width=680,
-            preferred_height=min(640, max(460, available_h - 80)),
+            preferred_width=780,
+            preferred_height=min(700, max(560, available_h - 80)),
         )
 
     def showEvent(self, event):  # noqa: N802
@@ -930,22 +914,23 @@ class AgentTaskDialog(QDialog):
             if row < 0 or row >= len(self._agent_specs):
                 self.agent_name_edit.clear()
                 self.agent_role_combo.setCurrentText("")
-                self.agent_provider_combo.setCurrentText("same as task")
+                _set_combo_value(self.agent_provider_combo, "same as task")
                 self.agent_model_edit.clear()
                 self.agent_responsibility_edit.clear()
                 return
             agent = self._agent_specs[row]
             self.agent_name_edit.setText(agent.get("name", ""))
-            self.agent_role_combo.setCurrentText(agent.get("role", "Implementer"))
-            self.agent_provider_combo.setCurrentText(agent.get("provider", "same as task"))
+            _set_combo_value(self.agent_role_combo, agent.get("role", "Implementer"))
+            _set_combo_value(self.agent_provider_combo, agent.get("provider", "same as task"))
             self.agent_model_edit.setText("" if agent.get("model", "same as task") == "same as task" else agent.get("model", ""))
             self.agent_responsibility_edit.setPlainText(agent.get("responsibility", ""))
         finally:
             self._loading_agent = False
 
-    def _agent_role_changed(self, role: str) -> None:
+    def _agent_role_changed(self, _role: str) -> None:
         if self._loading_agent:
             return
+        role = _combo_value(self.agent_role_combo, "Implementer")
         current = self.agent_responsibility_edit.toPlainText().strip()
         template = role_responsibility(role)
         if template and (not current or is_role_template(current)):
@@ -962,8 +947,8 @@ class AgentTaskDialog(QDialog):
         new_name = self.agent_name_edit.text().strip() or f"Agent {row + 1}"
         self._agent_specs[row] = {
             "name": new_name,
-            "role": self.agent_role_combo.currentText().strip() or "Implementer",
-            "provider": self.agent_provider_combo.currentText().strip() or "same as task",
+            "role": _combo_value(self.agent_role_combo, "Implementer"),
+            "provider": _combo_value(self.agent_provider_combo, "same as task"),
             "model": self.agent_model_edit.text().strip() or "same as task",
             "responsibility": self.agent_responsibility_edit.toPlainText().strip(),
         }
@@ -1069,13 +1054,14 @@ class AgentTaskDialog(QDialog):
     def _agent_label(agent: dict[str, str]) -> str:
         role = agent.get("role") or "Agent"
         name = agent.get("name") or role
-        return f"{name}  -  {role}"
+        return f"{_display_agent_name(name)}  -  {_display_role(role)}"
 
     @staticmethod
     def _communication_label(spec: dict[str, str]) -> str:
         return (
-            f"{spec.get('from_agent', '?')} -> {spec.get('to_agent', '?')}  "
-            f"[{spec.get('phase', 'Any time')}]"
+            f"{_display_agent_name(spec.get('from_agent', '?'))} -> "
+            f"{_display_agent_name(spec.get('to_agent', '?'))}  "
+            f"[{_display_phase(spec.get('phase', 'Any time'))}]"
         )
 
     def _agent_names(self) -> list[str]:
@@ -1164,12 +1150,12 @@ class AgentTaskDialog(QDialog):
             title=title,
             objective=objective,
             scope_folder=str(scope),
-            sandbox_mode=self.sandbox_combo.currentText(),
-            approval_policy=self.approval_combo.currentText(),
+            sandbox_mode=_combo_value(self.sandbox_combo),
+            approval_policy=_combo_value(self.approval_combo),
             provider=provider,
             model=model,
             model_fallbacks=self._collect_fallbacks(),
-            reasoning_effort=self.reasoning_combo.currentText(),
+            reasoning_effort=_combo_value(self.reasoning_combo),
             max_runtime_minutes=self.runtime_minutes.value(),
             max_turns=self.max_turns.value(),
             allow_shell=self._permission_enabled(self.allow_shell),
@@ -1178,17 +1164,17 @@ class AgentTaskDialog(QDialog):
             allow_file_create=self._permission_enabled(self.allow_create),
             allow_file_edit=self._permission_enabled(self.allow_edit),
             allow_file_delete=self._permission_enabled(self.allow_delete),
-            shell_permission_mode=self.allow_shell.currentText(),
-            network_permission_mode=self.allow_network.currentText(),
-            git_permission_mode=self.allow_git.currentText(),
-            file_create_permission_mode=self.allow_create.currentText(),
-            file_edit_permission_mode=self.allow_edit.currentText(),
-            file_delete_permission_mode=self.allow_delete.currentText(),
+            shell_permission_mode=_combo_value(self.allow_shell),
+            network_permission_mode=_combo_value(self.allow_network),
+            git_permission_mode=_combo_value(self.allow_git),
+            file_create_permission_mode=_combo_value(self.allow_create),
+            file_edit_permission_mode=_combo_value(self.allow_edit),
+            file_delete_permission_mode=_combo_value(self.allow_delete),
             allowed_file_globs=self._split_globs(self.allowed_globs_edit.text()),
             blocked_file_globs=self._split_globs(self.blocked_globs_edit.text()),
             required_context=self.required_context_edit.toPlainText().strip(),
             completion_criteria=self.completion_edit.toPlainText().strip(),
-            report_format=self.report_combo.currentText(),
+            report_format=_combo_value(self.report_combo),
             agents=agents,
             communications=communications,
             parallel_read_only_briefing=self.parallel_briefing.isChecked(),
@@ -1545,7 +1531,7 @@ class AgentCommunicationMapWindow(QDialog):
         self._relationship_nodes: list[_RelationshipAgentItem] = []
         self._dragging_map = False
         self.setWindowTitle(t("Agent Communication Map"))
-        self.setMinimumSize(920, 520)
+        self.setMinimumSize(1040, 620)
         enable_standard_window_controls(self)
 
         root = QVBoxLayout(self)
@@ -1616,18 +1602,10 @@ class AgentCommunicationMapWindow(QDialog):
         self.map_agent_name = QLineEdit()
         self.map_agent_role = QComboBox()
         self.map_agent_role.setEditable(True)
-        self.map_agent_role.addItems(["Coordinator", "Planner", "Implementer", "Reviewer", "Tester", "Researcher"])
+        _add_translated_combo_items(self.map_agent_role, _AGENT_ROLE_OPTIONS)
         self.map_agent_provider = QComboBox()
         self.map_agent_provider.setEditable(True)
-        self.map_agent_provider.addItems([
-            "same as task",
-            "copilot",
-            "chatgpt",
-            "openai",
-            "anthropic",
-            "groq",
-            "google",
-        ])
+        _add_translated_combo_items(self.map_agent_provider, _MAP_AGENT_PROVIDER_OPTIONS)
         self.map_agent_model = QLineEdit()
         self.map_agent_model.setPlaceholderText("same as task")
         self.map_agent_responsibility = QTextEdit()
@@ -1661,7 +1639,7 @@ class AgentCommunicationMapWindow(QDialog):
         self.map_comm_to = QComboBox()
         self.map_comm_phase = QComboBox()
         self.map_comm_phase.setEditable(True)
-        self.map_comm_phase.addItems(["Planning", "Implementation", "Review", "Testing", "Status update", "Completion"])
+        _add_translated_combo_items(self.map_comm_phase, _COMMUNICATION_PHASE_OPTIONS)
         self.map_comm_trigger = QLineEdit()
         self.map_comm_trigger.setPlaceholderText("When should this exchange happen?")
         self.map_comm_message = QTextEdit()
@@ -1705,7 +1683,7 @@ class AgentCommunicationMapWindow(QDialog):
         footer.setStyleSheet("color: #777;")
         content_root.addWidget(footer)
         localize_widget_tree(self)
-        fit_window_to_screen(self, preferred_width=980, preferred_height=620)
+        fit_window_to_screen(self, preferred_width=1100, preferred_height=700)
 
     def _reset_to_default(self) -> None:
         """Confirm, then restore the default agents and communications."""
@@ -1745,8 +1723,9 @@ class AgentCommunicationMapWindow(QDialog):
         names = self._task_dialog._agent_names()
         self.map_comm_from.clear()
         self.map_comm_to.clear()
-        self.map_comm_from.addItems(names)
-        self.map_comm_to.addItems(names)
+        for name in names:
+            self.map_comm_from.addItem(_display_agent_name(name), name)
+            self.map_comm_to.addItem(_display_agent_name(name), name)
         self._loading = False
         if self.window_agent_list.count():
             self.window_agent_list.setCurrentRow(max(0, min(current_agent, self.window_agent_list.count() - 1)))
@@ -1786,8 +1765,8 @@ class AgentCommunicationMapWindow(QDialog):
                 self._draw_relationship_map,
                 x,
                 y,
-                name,
-                role,
+                _display_agent_name(name),
+                _display_role(role),
             )
             self._relationship_nodes.append(node)
             self.relationship_scene.addItem(node)
@@ -1805,7 +1784,7 @@ class AgentCommunicationMapWindow(QDialog):
             my = (sy + ty) / 2
             item = _RelationshipItem(idx, self._select_exchange_from_map, mx - 82, my - 18, 164, 36)
             self.relationship_scene.addItem(item)
-            text = QGraphicsTextItem(comm.get("phase") or "Exchange")
+            text = QGraphicsTextItem(_display_phase(comm.get("phase") or "Exchange"))
             text.setDefaultTextColor(QColor("#203047"))
             text.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
             text.setTextWidth(150)
@@ -1933,22 +1912,23 @@ class AgentCommunicationMapWindow(QDialog):
             if row < 0 or row >= len(self._task_dialog._agent_specs):
                 self.map_agent_name.clear()
                 self.map_agent_role.setCurrentText("")
-                self.map_agent_provider.setCurrentText("same as task")
+                _set_combo_value(self.map_agent_provider, "same as task")
                 self.map_agent_model.clear()
                 self.map_agent_responsibility.clear()
                 return
             agent = self._task_dialog._agent_specs[row]
             self.map_agent_name.setText(agent.get("name", ""))
-            self.map_agent_role.setCurrentText(agent.get("role", "Implementer"))
-            self.map_agent_provider.setCurrentText(agent.get("provider", "same as task"))
+            _set_combo_value(self.map_agent_role, agent.get("role", "Implementer"))
+            _set_combo_value(self.map_agent_provider, agent.get("provider", "same as task"))
             self.map_agent_model.setText("" if agent.get("model", "same as task") == "same as task" else agent.get("model", ""))
             self.map_agent_responsibility.setPlainText(agent.get("responsibility", ""))
         finally:
             self._loading = False
 
-    def _map_agent_role_changed(self, role: str) -> None:
+    def _map_agent_role_changed(self, _role: str) -> None:
         if self._loading:
             return
+        role = _combo_value(self.map_agent_role, "Implementer")
         current = self.map_agent_responsibility.toPlainText().strip()
         template = role_responsibility(role)
         if template and (not current or is_role_template(current)):
@@ -1965,8 +1945,8 @@ class AgentCommunicationMapWindow(QDialog):
         new_name = self.map_agent_name.text().strip() or f"Agent {row + 1}"
         self._task_dialog._agent_specs[row] = {
             "name": new_name,
-            "role": self.map_agent_role.currentText().strip() or "Implementer",
-            "provider": self.map_agent_provider.currentText().strip() or "same as task",
+            "role": _combo_value(self.map_agent_role, "Implementer"),
+            "provider": _combo_value(self.map_agent_provider, "same as task"),
             "model": self.map_agent_model.text().strip() or "same as task",
             "responsibility": self.map_agent_responsibility.toPlainText().strip(),
         }
@@ -1993,9 +1973,9 @@ class AgentCommunicationMapWindow(QDialog):
                 self.map_comm_message.clear()
                 return
             comm = self._task_dialog._communication_specs[row]
-            self.map_comm_from.setCurrentText(comm.get("from_agent", ""))
-            self.map_comm_to.setCurrentText(comm.get("to_agent", ""))
-            self.map_comm_phase.setCurrentText(comm.get("phase", "Status update"))
+            _set_combo_value(self.map_comm_from, comm.get("from_agent", ""))
+            _set_combo_value(self.map_comm_to, comm.get("to_agent", ""))
+            _set_combo_value(self.map_comm_phase, comm.get("phase", "Status update"))
             self.map_comm_trigger.setText(comm.get("trigger", ""))
             self.map_comm_message.setPlainText(comm.get("message", ""))
         finally:
@@ -2007,12 +1987,12 @@ class AgentCommunicationMapWindow(QDialog):
         row = self.exchange_list.currentRow()
         if row < 0 or row >= len(self._task_dialog._communication_specs):
             return
-        source = self.map_comm_from.currentText().strip()
-        target = self.map_comm_to.currentText().strip()
+        source = _combo_value(self.map_comm_from)
+        target = _combo_value(self.map_comm_to)
         self._task_dialog._communication_specs[row] = {
             "from_agent": source,
             "to_agent": target,
-            "phase": self.map_comm_phase.currentText().strip() or "Status update",
+            "phase": _combo_value(self.map_comm_phase, "Status update"),
             "trigger": self.map_comm_trigger.text().strip(),
             "message": self.map_comm_message.toPlainText().strip(),
         }
@@ -2024,8 +2004,9 @@ class AgentCommunicationMapWindow(QDialog):
     @staticmethod
     def _communication_label(spec: dict[str, str]) -> str:
         return (
-            f"{spec.get('from_agent', '?')} -> {spec.get('to_agent', '?')} "
-            f"[{spec.get('phase', 'Exchange')}]"
+            f"{_display_agent_name(spec.get('from_agent', '?'))} -> "
+            f"{_display_agent_name(spec.get('to_agent', '?'))} "
+            f"[{_display_phase(spec.get('phase', 'Exchange'))}]"
         )
 
 
@@ -2050,19 +2031,13 @@ class AgentCommunicationDialog(QDialog):
         form.setSpacing(10)
 
         self.from_combo = QComboBox()
-        self.from_combo.addItems(agents)
         self.to_combo = QComboBox()
-        self.to_combo.addItems(agents)
+        for agent in agents:
+            self.from_combo.addItem(_display_agent_name(agent), agent)
+            self.to_combo.addItem(_display_agent_name(agent), agent)
         self.phase_combo = QComboBox()
         self.phase_combo.setEditable(True)
-        self.phase_combo.addItems([
-            "Planning",
-            "Implementation",
-            "Review",
-            "Testing",
-            "Status update",
-            "Completion",
-        ])
+        _add_translated_combo_items(self.phase_combo, _COMMUNICATION_PHASE_OPTIONS)
         self.trigger_edit = QLineEdit()
         self.trigger_edit.setPlaceholderText("When should this exchange happen?")
         self.message_edit = QTextEdit()
@@ -2072,11 +2047,11 @@ class AgentCommunicationDialog(QDialog):
         )
 
         if data.get("from_agent") in agents:
-            self.from_combo.setCurrentText(data["from_agent"])
+            _set_combo_value(self.from_combo, data["from_agent"])
         if data.get("to_agent") in agents:
-            self.to_combo.setCurrentText(data["to_agent"])
+            _set_combo_value(self.to_combo, data["to_agent"])
         if data.get("phase"):
-            self.phase_combo.setCurrentText(data["phase"])
+            _set_combo_value(self.phase_combo, data["phase"])
         self.trigger_edit.setText(data.get("trigger", ""))
         self.message_edit.setPlainText(data.get("message", ""))
 
@@ -2096,8 +2071,8 @@ class AgentCommunicationDialog(QDialog):
         localize_widget_tree(self)
 
     def _accept(self) -> None:
-        source = self.from_combo.currentText().strip()
-        target = self.to_combo.currentText().strip()
+        source = _combo_value(self.from_combo)
+        target = _combo_value(self.to_combo)
         if not source or not target:
             QMessageBox.warning(self, t("Communication"), t("Choose both agents."))
             return
@@ -2107,7 +2082,7 @@ class AgentCommunicationDialog(QDialog):
         self.communication = {
             "from_agent": source,
             "to_agent": target,
-            "phase": self.phase_combo.currentText().strip() or "Status update",
+            "phase": _combo_value(self.phase_combo, "Status update"),
             "trigger": self.trigger_edit.text().strip(),
             "message": self.message_edit.toPlainText().strip(),
         }
@@ -2129,7 +2104,8 @@ class AgentNudgeDialog(QDialog):
         form.setSpacing(10)
 
         self.target_combo = QComboBox()
-        self.target_combo.addItems(targets)
+        for target in targets:
+            self.target_combo.addItem(_display_agent_name(target), target)
         self.message_edit = QTextEdit()
         self.message_edit.setMinimumHeight(130)
         self.message_edit.setPlaceholderText("Add a short instruction, correction, or context update.")
@@ -2147,7 +2123,7 @@ class AgentNudgeDialog(QDialog):
         localize_widget_tree(self)
 
     def _accept(self) -> None:
-        target = self.target_combo.currentText().strip()
+        target = _combo_value(self.target_combo)
         message = self.message_edit.toPlainText().strip()
         if not target:
             QMessageBox.warning(self, t("Nudge Agent"), t("Choose a target."))
@@ -2225,7 +2201,7 @@ class AgentRunWindow(QDialog):
             for name in self._agent_names
         }
         self.setWindowTitle(f"{t('Agent Task')} - {spec.title}")
-        self.setMinimumSize(820, 560)
+        self.setMinimumSize(960, 620)
         enable_standard_window_controls(self)
 
         root = QVBoxLayout(self)
@@ -2378,7 +2354,7 @@ class AgentRunWindow(QDialog):
         self.finished.connect(self._on_finished)
         self.approval_requested.connect(self._show_approval)
         localize_widget_tree(self)
-        fit_window_to_screen(self, preferred_width=1180, preferred_height=720)
+        fit_window_to_screen(self, preferred_width=1240, preferred_height=760)
 
     def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
@@ -2705,8 +2681,8 @@ class AgentRunWindow(QDialog):
                 self._select_live_agent,
                 x,
                 y,
-                name,
-                str(state.get("role") or "Agent"),
+                _display_agent_name(name),
+                _display_role(str(state.get("role") or "Agent")),
                 str(state.get("status") or "Waiting"),
                 self._shorten(str(state.get("objective") or ""), 96),
                 self._health_badge(name),
@@ -2836,17 +2812,19 @@ class AgentRunWindow(QDialog):
             return
         history = "\n".join(f"- {item}" for item in state.get("history", []))
         health = self._health_detail(name)
+        display_name = _display_agent_name(name)
+        display_role = _display_role(str(state.get("role") or "Agent"))
         summary = (
-            f"<h3>{html.escape(name)}</h3>"
-            f"<p><b>Role:</b> {html.escape(str(state.get('role') or 'Agent'))}<br>"
-            f"<b>Status:</b> {html.escape(str(state.get('status') or 'Waiting'))}<br>"
-            f"<b>Last tool:</b> {html.escape(str(state.get('tool') or 'None'))}</p>"
-            f"<p><b>Current objective</b><br>{html.escape(str(state.get('objective') or 'No current objective.'))}</p>"
-            f"<p><b>Model health</b><br>{html.escape(health)}</p>"
-            f"<p><b>Latest thought</b><br>{html.escape(str(state.get('thought') or 'No thought yet.'))}</p>"
+            f"<h3>{html.escape(display_name)}</h3>"
+            f"<p><b>{t('Role:')}</b> {html.escape(display_role)}<br>"
+            f"<b>{t('Status:')}</b> {html.escape(t(str(state.get('status') or 'Waiting')))}<br>"
+            f"<b>{t('Last tool:')}</b> {html.escape(str(state.get('tool') or t('None')))}</p>"
+            f"<p><b>{t('Current objective')}</b><br>{html.escape(str(state.get('objective') or t('No current objective.')))}</p>"
+            f"<p><b>{t('Model health')}</b><br>{html.escape(health)}</p>"
+            f"<p><b>{t('Latest thought')}</b><br>{html.escape(str(state.get('thought') or t('No thought yet.')))}</p>"
         )
         self._set_html_preserving_scroll(self.agent_summary_view, summary)
-        self._set_plain_text_preserving_scroll(self.agent_activity_view, history or "- No activity yet.")
+        self._set_plain_text_preserving_scroll(self.agent_activity_view, history or f"- {t('No activity yet.')}")
 
     def _health_badge(self, name: str) -> str:
         health = self._agent_health(name)
@@ -2909,8 +2887,8 @@ class AgentRunWindow(QDialog):
 
     @staticmethod
     def _agent_label(name: str, role: str) -> str:
-        safe_name = html.escape(name)
-        safe_role = html.escape(role)
+        safe_name = html.escape(_display_agent_name(name))
+        safe_role = html.escape(_display_role(role))
         if safe_role and safe_role.lower() != safe_name.lower():
             return f'<b>{safe_name}</b> <span style="color:#8f8f9e;">({safe_role})</span>'
         return f"<b>{safe_name}</b>"
@@ -3042,7 +3020,7 @@ class DiffViewer(QDialog):
     def __init__(self, diff_path: Path, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle(t("Agent Diff"))
-        self.setMinimumSize(760, 520)
+        self.setMinimumSize(880, 580)
         enable_standard_window_controls(self)
         layout = QVBoxLayout(self)
         viewer = QTextEdit()
@@ -3051,7 +3029,7 @@ class DiffViewer(QDialog):
         viewer.setPlainText(diff_path.read_text(encoding="utf-8", errors="replace"))
         layout.addWidget(viewer)
         localize_widget_tree(self)
-        fit_window_to_screen(self, preferred_width=820, preferred_height=620)
+        fit_window_to_screen(self, preferred_width=960, preferred_height=680)
 
 
 class AgentRunHistoryWindow(QDialog):
@@ -3067,7 +3045,7 @@ class AgentRunHistoryWindow(QDialog):
         self._runs_root = AGENT_RUNS_DIR
         self._current_run: Path | None = None
         self.setWindowTitle(t("Agent Task History"))
-        self.setMinimumSize(820, 520)
+        self.setMinimumSize(940, 580)
         enable_standard_window_controls(self)
 
         root = QVBoxLayout(self)
@@ -3119,7 +3097,7 @@ class AgentRunHistoryWindow(QDialog):
 
         self._load_runs()
         localize_widget_tree(self)
-        fit_window_to_screen(self, preferred_width=900, preferred_height=620)
+        fit_window_to_screen(self, preferred_width=1020, preferred_height=680)
 
     def _load_runs(self) -> None:
         self.run_list.clear()

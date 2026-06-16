@@ -47,7 +47,7 @@ class PluginManagerDialog(QDialog):
         self._log_dialogs: dict[str, AddonLogDialog] = {}
         enable_standard_window_controls(self)
         self._build_ui()
-        fit_window_to_screen(self, preferred_width=480, preferred_height=400)
+        fit_window_to_screen(self, preferred_width=620, preferred_height=500)
 
     def _build_ui(self):
         root = self.layout()
@@ -385,7 +385,7 @@ class AddonSettingsDialog(QDialog):
         self.setModal(False)
         enable_standard_window_controls(self)
         self._build_ui()
-        fit_window_to_screen(self, preferred_width=420, preferred_height=360)
+        fit_window_to_screen(self, preferred_width=560, preferred_height=460)
 
     def reload_settings(self, settings: list) -> None:
         self._settings = settings
@@ -522,7 +522,7 @@ class AddonLogDialog(QDialog):
         root.addLayout(footer)
 
         self.reload_logs(logs)
-        fit_window_to_screen(self, preferred_width=560, preferred_height=360)
+        fit_window_to_screen(self, preferred_width=680, preferred_height=460)
 
     def reload_logs(self, logs: str) -> None:
         self._logs.setPlainText(logs or t("No log output yet."))

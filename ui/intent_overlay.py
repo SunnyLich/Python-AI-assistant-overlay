@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QWidget, QApplication, QLineEdit
 from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QRect
 from PySide6.QtGui import QPainter, QColor, QFont, QPen, QBrush, QPainterPath
 import config
+from ui.i18n import t
 
 _IS_WIN = sys.platform == "win32"
 _IS_MAC = sys.platform == "darwin"
@@ -67,10 +68,11 @@ def _build_rows(caller_idx: int = 0) -> list[dict]:
     for r in _addon_intent_rows(caller_idx, used_keys):
         rows.append(r)
     custom_key = caller.get("custom_key", "s")
+    custom_label = str(caller.get("custom_label") or "").strip() or t("Custom prompt")
     rows.append({
         "glyph":     custom_key.upper(),
-        "label":     "Custom prompt",
-        "hint":      "Ask anything",
+        "label":     custom_label,
+        "hint":      t("Ask anything"),
         "prompt":    "",
         "is_custom": True,
     })
@@ -189,7 +191,7 @@ class IntentOverlay(QWidget):
 
         self._input_line = QLineEdit(self)
         self._input_line.installEventFilter(self)
-        self._input_line.setPlaceholderText("Type your prompt, press Enter…")
+        self._input_line.setPlaceholderText(t("Type your prompt, press Enter…"))
         self._input_line.setStyleSheet(
             "QLineEdit {"
             "  background: rgba(255,255,255,10);"
@@ -359,7 +361,7 @@ class IntentOverlay(QWidget):
             esc_y = y + 4
         p.setFont(esc_font)
         p.setPen(QPen(_HINT_ESC))
-        p.drawText(0, esc_y, _W, 18, Qt.AlignmentFlag.AlignCenter, "ESC to cancel")
+        p.drawText(0, esc_y, _W, 18, Qt.AlignmentFlag.AlignCenter, t("ESC to cancel"))
 
         p.end()
 

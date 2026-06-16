@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core import context_fetcher
+from core import context_fetcher, context_hotkey
 
 
 def test_fetch_and_save_uses_hotkey_time_hwnd(monkeypatch):
@@ -40,12 +40,9 @@ def test_fetch_and_save_uses_hotkey_time_hwnd(monkeypatch):
 
 
 def test_browser_context_text_reads_page_by_saved_hwnd(monkeypatch):
-    pytest.importorskip("PySide6")
-    import main
-
     calls: list[tuple[str, int]] = []
     monkeypatch.setattr(
-        main.context_fetcher,
+        context_hotkey.context_fetcher,
         "fetch_browser_content_for_window",
         lambda url, hwnd: calls.append((url, hwnd)) or "Rendered page text",
     )
@@ -54,7 +51,7 @@ def test_browser_context_text_reads_page_by_saved_hwnd(monkeypatch):
         browser_content="",
     )
 
-    text = main.App._browser_context_text(snapshot)
+    text = context_hotkey.browser_context_text(snapshot)
 
     assert calls == [("https://example.test/page", 777)]
     assert "URL: https://example.test/page" in text
@@ -62,9 +59,6 @@ def test_browser_context_text_reads_page_by_saved_hwnd(monkeypatch):
 
 
 def test_context_priority_source_prefers_active_browser():
-    pytest.importorskip("PySide6")
-    import main
-
     snapshot = SimpleNamespace(
         active_window=SimpleNamespace(
             url="https://example.test/page",
@@ -73,7 +67,7 @@ def test_context_priority_source_prefers_active_browser():
     )
 
     assert (
-        main.App._context_priority_source(
+        context_hotkey.context_priority_source(
             snapshot,
             "[Browser/Web]\nPage text",
             "Document text",
@@ -83,9 +77,6 @@ def test_context_priority_source_prefers_active_browser():
 
 
 def test_context_priority_source_prefers_document_when_browser_is_background():
-    pytest.importorskip("PySide6")
-    import main
-
     snapshot = SimpleNamespace(
         active_window=SimpleNamespace(
             url="",
@@ -94,7 +85,7 @@ def test_context_priority_source_prefers_document_when_browser_is_background():
     )
 
     assert (
-        main.App._context_priority_source(
+        context_hotkey.context_priority_source(
             snapshot,
             "[Browser/Web]\nPage text",
             "Document text",

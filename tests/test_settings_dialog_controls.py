@@ -62,6 +62,7 @@ def test_tts_voice_tab_exposes_stt_settings():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication, QLabel
 
+    from ui.i18n import t
     from ui.settings_panel.dialog import SettingsDialog
 
     app = QApplication.instance() or QApplication(sys.argv)
@@ -72,9 +73,9 @@ def test_tts_voice_tab_exposes_stt_settings():
     try:
         assert {"STT_MODEL", "STT_COMPUTE_TYPE", "STT_LANGUAGE"} <= set(dialog._fields)
         labels = {label.text() for label in tab.findChildren(QLabel)}
-        assert "Whisper model" in labels
-        assert "Compute type" in labels
-        assert "Speech language" in labels
+        assert t("Whisper model") in labels
+        assert t("Compute type") in labels
+        assert t("Speech language") in labels
         stt_model = dialog._fields["STT_MODEL"]
         assert not stt_model.isEditable()
         model_values = {
@@ -109,6 +110,44 @@ def test_tts_voice_tab_exposes_stt_settings():
         ) == "yue"
     finally:
         tab.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_tts_voice_tab_does_not_import_stt_stack():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    import core
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    old_stt_module = sys.modules.pop("core.stt", None)
+    old_core_stt = getattr(core, "stt", None)
+    had_core_stt = hasattr(core, "stt")
+    if had_core_stt:
+        delattr(core, "stt")
+
+    dialog = SettingsDialog.__new__(SettingsDialog)
+    dialog._fields = {}
+    dialog._env = {}
+    tab = None
+    try:
+        tab = SettingsDialog._tab_tts(dialog)
+
+        assert "core.stt" not in sys.modules
+        assert "Configured backend:" in dialog._stt_active_lbl.text()
+    finally:
+        if tab is not None:
+            tab.deleteLater()
+        if old_stt_module is not None:
+            sys.modules["core.stt"] = old_stt_module
+        else:
+            sys.modules.pop("core.stt", None)
+        if had_core_stt:
+            core.stt = old_core_stt
+        elif hasattr(core, "stt"):
+            delattr(core, "stt")
         app.processEvents()
 
 
@@ -244,7 +283,7 @@ def test_i18n_uses_qt_catalog_without_dynamic_matching(monkeypatch):
         i18n.set_language(app=app)
 
         assert i18n.t("Settings") == "\u8bbe\u7f6e"
-        assert i18n.t("Hooks: ") == "\u94a9\u5b50\uff1a"
+        assert i18n.t("Hooks: ") == "\u4e8b\u4ef6\u6302\u94a9\uff1a"
         assert i18n.t("Demo Addon Settings") == "Demo Addon Settings"
         assert i18n.t("Hooks: startup, query") == "Hooks: startup, query"
     finally:
@@ -305,7 +344,7 @@ def test_i18n_translates_settings_apply_tool_warning(monkeypatch):
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
 def test_llm_model_routing_surface_translates_to_traditional_chinese():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton
+    from PySide6.QtWidgets import QApplication, QLabel, QComboBox, QLineEdit, QPushButton
 
     import config
     from ui.settings_panel.dialog import SettingsDialog
@@ -323,7 +362,19 @@ def test_llm_model_routing_surface_translates_to_traditional_chinese():
             for edit in dialog.findChildren(QLineEdit)
             if edit.placeholderText()
         }
-        visible_texts = label_texts | button_texts | placeholder_texts
+        all_combo_texts = {
+            combo.itemText(i)
+            for combo in dialog.findChildren(QComboBox)
+            for i in range(combo.count())
+        }
+        tooltip_texts = set()
+        for cls in (QLabel, QComboBox, QLineEdit, QPushButton):
+            tooltip_texts.update(
+                widget.toolTip()
+                for widget in dialog.findChildren(cls)
+                if widget.toolTip()
+            )
+        visible_texts = label_texts | button_texts | placeholder_texts | all_combo_texts | tooltip_texts
         combo_texts = {
             row["api_key_combo"].itemText(i)
             for rows in dialog._model_section_rows.values()
@@ -347,6 +398,13 @@ def test_llm_model_routing_surface_translates_to_traditional_chinese():
             "alias (optional)",
             "Custom provider",
             "Any OpenAI-compatible endpoint",
+            "Speech to Text",
+            "Whisper model settings",
+            "API keys are saved to the OS keychain",
+            "Beam size",
+            "Device",
+            "+ Add Caller Hotkey",
+            "Tools with <b>no keywords</b>",
         ):
             assert not any(fragment in text for text in visible_texts)
 
@@ -368,6 +426,15 @@ def test_llm_model_routing_surface_translates_to_traditional_chinese():
         assert "\u81ea\u8a02\u63d0\u4f9b\u8005".upper() in label_texts
         assert any("\u4efb\u4f55\u76f8\u5bb9 OpenAI" in text for text in label_texts)
         assert "\u6e2c\u8a66\u81ea\u8a02" in button_texts
+        assert "\u8a9e\u97f3\u8f49\u6587\u5b57".upper() in label_texts
+        assert any("\u6309\u4f4f\u8aaa\u8a71\u8f49\u5beb\u4f7f\u7528\u7684 Whisper" in text for text in label_texts)
+        assert "\u88dd\u7f6e" in label_texts
+        assert "\u675f\u5bec" in label_texts
+        assert "5\uff08\u5efa\u8b70\uff09" in all_combo_texts
+        assert "\u81ea\u52d5\uff08\u6709 GPU \u6642\u4f7f\u7528\uff09" in all_combo_texts
+        assert any("API \u5bc6\u9470\u6703\u4fdd\u5b58\u5230\u7cfb\u7d71\u9470\u5319\u4e32" in text for text in label_texts)
+        assert "+ \u65b0\u589e\u547c\u53eb\u5feb\u6377\u9375" in button_texts
+        assert any("\u6c92\u6709<b>\u95dc\u9375\u5b57</b>\u7684\u5de5\u5177" in text for text in label_texts)
         assert "\u6a21\u578b\u8def\u7531" in label_texts
         assert "\u9078\u64c7\u6bcf\u500b\u7528\u9014\u4f7f\u7528\u54ea\u500b\u5df2\u5132\u5b58\u6191\u8b49\u548c\u6a21\u578b\u3002" in label_texts
         assert "<small><b>\u63d0\u4f9b\u8005</b></small>" in label_texts
@@ -963,6 +1030,7 @@ def test_caller_memory_combo_uses_third_column_second_row():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication, QGridLayout, QLabel, QVBoxLayout, QWidget
 
+    from ui.i18n import t
     from ui.settings_panel.dialog import SettingsDialog
 
     app = QApplication.instance() or QApplication(sys.argv)
@@ -983,7 +1051,7 @@ def test_caller_memory_combo_uses_third_column_second_row():
             for idx in range(layout.count()):
                 item = layout.itemAt(idx)
                 widget = item.widget()
-                if isinstance(widget, QLabel) and widget.text() == "Memory:":
+                if isinstance(widget, QLabel) and widget.text() == t("Memory:"):
                     memory_pos = layout.getItemPosition(idx)
                     break
             if memory_pos is not None:
@@ -991,6 +1059,45 @@ def test_caller_memory_combo_uses_third_column_second_row():
 
         assert memory_pos is not None
         assert memory_pos[:2] == (1, 4)
+    finally:
+        host.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_caller_custom_prompt_row_lives_with_intent_rows():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
+
+    from ui.i18n import t
+    from ui.settings_panel.dialog import SettingsDialog, _get
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    host = QWidget()
+    dialog = SettingsDialog.__new__(SettingsDialog)
+    dialog._caller_blocks = []
+    dialog._callers_vlayout = QVBoxLayout(host)
+    dialog._fields = {}
+
+    try:
+        SettingsDialog._add_caller_block(
+            dialog,
+            custom_key="s",
+            custom_label="Freeform",
+            intents=[
+                {"key": "w", "label": "Ask", "prompt": "Ask"},
+                {"key": "a", "label": "Explain", "prompt": "Explain"},
+                {"key": "d", "label": "Fix", "prompt": "Fix"},
+            ],
+        )
+        blk = dialog._caller_blocks[0]
+        custom_row = blk["custom_key"].parentWidget()
+
+        assert _get(blk["custom_key"]) == "s"
+        assert _get(blk["custom_label"]) == "Freeform"
+        assert blk["custom_prompt"].isEnabled() is False
+        assert blk["custom_prompt"].text() == t("Custom prompt")
+        assert blk["intents_layout"].indexOf(custom_row) == 3
     finally:
         host.deleteLater()
         app.processEvents()

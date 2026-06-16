@@ -113,3 +113,62 @@ def test_agent_communication_forms_expand_across_platform_styles():
         for widget in reversed(widgets):
             widget.close()
             widget.deleteLater()
+
+
+def test_agent_communication_i18n_preserves_internal_values():
+    app = _qapp()
+
+    import config
+    from ui import i18n
+    from ui.agent.task_window import AgentCommunicationDialog, AgentCommunicationMapWindow, AgentTaskDialog
+
+    old_language = getattr(config, "APP_LANGUAGE", "")
+    config.APP_LANGUAGE = "zh-Hant"
+    i18n.set_language(app=app)
+    task_dialog = AgentTaskDialog()
+    map_window = AgentCommunicationMapWindow(task_dialog)
+    exchange_dialog = AgentCommunicationDialog(["Coordinator", "Builder"])
+    widgets = [task_dialog, map_window, exchange_dialog]
+    try:
+        map_window.refresh()
+
+        role_index = map_window.map_agent_role.findData("Coordinator")
+        phase_index = map_window.map_comm_phase.findData("Planning")
+        from_index = map_window.map_comm_from.findData("Coordinator")
+
+        assert role_index >= 0
+        assert phase_index >= 0
+        assert from_index >= 0
+        assert map_window.map_agent_role.itemText(role_index) == "\u5354\u8abf\u54e1"
+        assert map_window.map_comm_phase.itemText(phase_index) == "\u898f\u5283"
+        assert map_window.map_comm_from.itemText(from_index) == "\u5354\u8abf\u54e1"
+        assert "Coordinator" not in {
+            map_window.map_agent_role.itemText(i)
+            for i in range(map_window.map_agent_role.count())
+        }
+        assert "Planning" not in {
+            map_window.map_comm_phase.itemText(i)
+            for i in range(map_window.map_comm_phase.count())
+        }
+
+        map_window.map_comm_from.setCurrentIndex(from_index)
+        map_window.map_comm_to.setCurrentIndex(map_window.map_comm_to.findData("Builder"))
+        map_window.map_comm_phase.setCurrentIndex(phase_index)
+        map_window._save_exchange_form()
+
+        assert task_dialog._communication_specs[0]["from_agent"] == "Coordinator"
+        assert task_dialog._communication_specs[0]["to_agent"] == "Builder"
+        assert task_dialog._communication_specs[0]["phase"] == "Planning"
+        assert exchange_dialog.from_combo.itemText(
+            exchange_dialog.from_combo.findData("Coordinator")
+        ) == "\u5354\u8abf\u54e1"
+        assert exchange_dialog.phase_combo.itemText(
+            exchange_dialog.phase_combo.findData("Planning")
+        ) == "\u898f\u5283"
+    finally:
+        config.APP_LANGUAGE = old_language
+        i18n.set_language(app=app)
+        for widget in reversed(widgets):
+            widget.close()
+            widget.deleteLater()
+        app.processEvents()

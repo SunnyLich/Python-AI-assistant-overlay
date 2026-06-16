@@ -37,6 +37,11 @@ from core.llm_clients.routes import (
     route_candidates as _route_candidates,
     normalize_model_for_provider as _normalize_model_for_provider,
 )
+from core.llm_clients.logging_utils import log_event
+from core.llm_clients.messages import (
+    build_openai_messages as _build_openai_messages,
+    sanitize_history as _sanitize_history,
+)
 from dataclasses import dataclass, field
 from typing import Generator
 
@@ -50,10 +55,7 @@ def _log_context(
     max_lines: int = 12,
     max_chars: int = 1200,
 ) -> None:
-    """Print a compact preview of a context block for debugging."""
-    import time
-
-    ts = time.strftime("%H:%M:%S")
+    """Log a compact preview of a context block for debugging."""
 
     def _trim(line: str) -> str:
         return line if len(line) <= max_line else line[:max_line] + "-¦"
@@ -72,15 +74,21 @@ def _log_context(
     if truncated and body != "[empty]":
         body += "\n  [preview truncated]"
 
-    print(f"[llm {ts}] Context -” {reason}:\n  {body}")
+    log_event(
+        "llm.context_preview",
+        f"Context preview for {reason}:\n  {body}",
+        reason=reason,
+        preview=body,
+        truncated=truncated,
+    )
 
 
 def _ambient_document_max_chars() -> int:
-    return config.CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS
+    return config.get_settings().context.ambient_document_max_chars
 
 
 def _tool_document_max_chars() -> int:
-    return config.CONTEXT_TOOL_DOCUMENT_MAX_CHARS
+    return config.get_settings().context.tool_document_max_chars
 
 
 def _normalize_pdf_text(s: str) -> str:
@@ -263,15 +271,17 @@ def _execute_memory_search(inputs: dict) -> str:
 
 def _execute_memory_save(inputs: dict) -> str:
     text = str((inputs or {}).get("text") or "").strip()
-    scope = str((inputs or {}).get("scope") or "general").strip().lower()
+    scope = str((inputs or {}).get("scope") or "").strip().lower()
+    # Unset/unknown scope means "follow the conversation's project" (the store
+    # default); only an explicit "general" promotes a fact to global.
     if scope not in ("general", "project"):
-        scope = "general"
+        scope = ""
     if not text:
         return "Memory save requires the fact text to store."
     try:
         from core.memory_store import store
 
-        result = store.get_manager().save_memory(text, scope=scope)
+        result = store.get_manager().save_memory(text, scope=scope or None)
         if not result.get("ok"):
             return f"Did not store memory: {result.get('reason', 'rejected')}."
         where = "the current project" if result.get("scope") == "project" else "general memory"
@@ -433,9 +443,10 @@ def _register_builtin_tools() -> None:
                 "Save a durable fact about the user to long-term memory so it is "
                 "available in future conversations. Use this whenever the user "
                 "shares a stable preference, personal detail, or project fact "
-                "worth remembering (not transient or one-off requests). Set "
-                "scope to 'project' for facts that only apply to the user's "
-                "current project, or 'general' for facts that apply everywhere."
+                "worth remembering (not transient or one-off requests). By "
+                "default a saved fact is scoped to the conversation's current "
+                "project; set scope='general' only for universal facts (like a "
+                "personal preference) that should apply across every project."
             ),
             input_schema={
                 "type": "object",
@@ -451,8 +462,10 @@ def _register_builtin_tools() -> None:
                         "type": "string",
                         "enum": ["general", "project"],
                         "description": (
-                            "'general' for facts true everywhere; 'project' to "
-                            "scope the fact to the active project."
+                            "Omit to scope the fact to the current project "
+                            "(the default). Use 'general' to promote a universal "
+                            "fact that applies everywhere; 'project' is the "
+                            "explicit form of the default."
                         ),
                     },
                 },
@@ -548,13 +561,18 @@ def _with_screenshot_note(system: str, allow_screenshot_tool: bool) -> str:
 
 
 _MEMORY_SAVE_NOTE = (
-    "You have a memory_save tool. When the user shares a durable fact worth "
-    "remembering across sessions — a stable preference, a personal detail, or a "
-    "fact about their current project — call memory_save to store it. Use "
-    "scope='project' for facts specific to the active project, otherwise "
-    "scope='general'. Save proactively but only for genuinely durable facts: "
-    "never store transient requests, questions, or secrets, and don't announce "
-    "that you saved something unless asked."
+    "You have a memory_save tool. ALWAYS call it when the user explicitly asks "
+    "you to remember, note, or save something (e.g. 'remember winter is "
+    "coming') — store exactly what they asked, even if it seems trivial. Also "
+    "call it proactively when the user shares a durable fact worth remembering "
+    "across sessions: a stable preference, a personal detail, or a fact about "
+    "their current project. Scope: by default (omit scope) the fact is filed "
+    "under the conversation's current project — keep that default for anything "
+    "specific to what you're working on. Only set scope='general' for universal "
+    "facts that should apply across every project, such as a personal "
+    "preference about how the user likes answers. Do not store one-off "
+    "questions, transient task requests, or secrets, and don't announce that "
+    "you saved something unless asked."
 )
 
 
@@ -2532,9 +2550,14 @@ def stream_response(
     max_tokens: int | None = None,
     temperature: float | None = None,
     json_mode: bool = False,
+    history: list[dict] | None = None,
 ) -> Generator[str, None, None]:
     """
     Stream a response from the configured LLM.
+
+    ``history`` is an optional list of prior {role, content} turns (the active
+    conversation) replayed before the current message so hotkey/voice prompts
+    can continue a thread with full model context.
 
     When image_base64 is provided, uses VISION_LLM_PROVIDER/MODEL.
     Otherwise uses LLM_PROVIDER/MODEL.
@@ -2567,12 +2590,10 @@ def stream_response(
     Yields:
         Text chunks as they arrive from the API.
     """
-    import time
-    ts = time.strftime("%H:%M:%S")
     if image_base64:
-        print(f"[llm {ts}] User message (vision): {user_message!r}")
+        log_event("llm.user_message", f"User message (vision): {user_message!r}", message_preview=user_message)
     else:
-        print(f"[llm {ts}] User message: {user_message!r}")
+        log_event("llm.user_message", f"User message: {user_message!r}", message_preview=user_message)
 
     if ambient_context:
         _log_context(
@@ -2626,6 +2647,7 @@ def stream_response(
                 max_tokens=max_tokens,
                 temperature=temperature,
                 json_mode=json_mode,
+                history=history,
             ),
         )
 
@@ -2659,34 +2681,87 @@ def _stream_with_fallbacks(
                 emitted = True
                 yield chunk
             if emitted:
-                ts = time.strftime("%H:%M:%S")
-                print(f"[llm {ts}] Route ({kind}) {provider}/{model} completed in {time.monotonic() - route_started:.1f}s")
+                elapsed = time.monotonic() - route_started
+                log_event(
+                    "llm.route_complete",
+                    f"Route ({kind}) {provider}/{model} completed in {elapsed:.1f}s",
+                    kind=kind,
+                    provider=provider,
+                    model=model,
+                    elapsed_seconds=elapsed,
+                )
                 return
             # Model returned HTTP 200 but zero content chunks — treat as failure.
-            ts = time.strftime("%H:%M:%S")
             last_exc = ValueError(f"Route ({kind}) {provider}/{model} returned no content")
             attempts.append((provider, model, "returned no content"))
             if not _is_route_cooling(provider, model):
                 _mark_route_cooling(provider, model)
+            elapsed = time.monotonic() - route_started
             if idx < len(ordered) - 1:
-                print(f"[llm {ts}] Route ({kind}) {provider}/{model} returned no content after {time.monotonic() - route_started:.1f}s; cooling down {_ROUTE_COOLDOWN_SECONDS:.0f}s and trying fallback")
+                log_event(
+                    "llm.route_empty_fallback",
+                    f"Route ({kind}) {provider}/{model} returned no content after {elapsed:.1f}s; cooling down {_ROUTE_COOLDOWN_SECONDS:.0f}s and trying fallback",
+                    kind=kind,
+                    provider=provider,
+                    model=model,
+                    elapsed_seconds=elapsed,
+                )
                 continue
-            print(f"[llm {ts}] Route ({kind}) {provider}/{model} returned no content after {time.monotonic() - route_started:.1f}s; cooling down {_ROUTE_COOLDOWN_SECONDS:.0f}s; no fallback left")
+            log_event(
+                "llm.route_empty_final",
+                f"Route ({kind}) {provider}/{model} returned no content after {elapsed:.1f}s; cooling down {_ROUTE_COOLDOWN_SECONDS:.0f}s; no fallback left",
+                kind=kind,
+                provider=provider,
+                model=model,
+                elapsed_seconds=elapsed,
+            )
         except Exception as exc:
             _record_route_error_capabilities(provider, model, exc)
             last_exc = exc
             attempts.append((provider, model, exc))
-            ts = time.strftime("%H:%M:%S")
+            elapsed = time.monotonic() - route_started
             if emitted:
-                print(f"[llm {ts}] Route ({kind}) {provider}/{model} failed after streaming for {time.monotonic() - route_started:.1f}s; not falling back: {exc}")
+                log_event(
+                    "llm.route_streaming_failure",
+                    f"Route ({kind}) {provider}/{model} failed after streaming for {elapsed:.1f}s; not falling back: {exc}",
+                    kind=kind,
+                    provider=provider,
+                    model=model,
+                    elapsed_seconds=elapsed,
+                    error=str(exc),
+                )
                 raise
             if not _is_route_cooling(provider, model) and _is_transient_route_error(exc):
                 _mark_route_cooling(provider, model)
-                print(f"[llm {ts}] Route ({kind}) {provider}/{model} hit transient provider error after {time.monotonic() - route_started:.1f}s; cooling down {_ROUTE_COOLDOWN_SECONDS:.0f}s and using fallback")
+                log_event(
+                    "llm.route_transient_fallback",
+                    f"Route ({kind}) {provider}/{model} hit transient provider error after {elapsed:.1f}s; cooling down {_ROUTE_COOLDOWN_SECONDS:.0f}s and using fallback",
+                    kind=kind,
+                    provider=provider,
+                    model=model,
+                    elapsed_seconds=elapsed,
+                    error=str(exc),
+                )
             if idx < len(ordered) - 1:
-                print(f"[llm {ts}] Route ({kind}) {provider}/{model} failed before output after {time.monotonic() - route_started:.1f}s; trying fallback: {exc}")
+                log_event(
+                    "llm.route_failure_fallback",
+                    f"Route ({kind}) {provider}/{model} failed before output after {elapsed:.1f}s; trying fallback: {exc}",
+                    kind=kind,
+                    provider=provider,
+                    model=model,
+                    elapsed_seconds=elapsed,
+                    error=str(exc),
+                )
                 continue
-            print(f"[llm {ts}] Route ({kind}) {provider}/{model} failed after {time.monotonic() - route_started:.1f}s; no fallback left: {exc}")
+            log_event(
+                "llm.route_failure_final",
+                f"Route ({kind}) {provider}/{model} failed after {elapsed:.1f}s; no fallback left: {exc}",
+                kind=kind,
+                provider=provider,
+                model=model,
+                elapsed_seconds=elapsed,
+                error=str(exc),
+            )
     if last_exc:
         raise _route_failure_summary(kind, attempts, last_exc) from last_exc
     raise ValueError(f"No {kind} model routes configured.")
@@ -2708,6 +2783,7 @@ def _stream_single_response_route(
     max_tokens: int | None = None,
     temperature: float | None = None,
     json_mode: bool = False,
+    history: list[dict] | None = None,
 ) -> Generator[str, None, None]:
     _check_route_config(provider, model, route_name)
     model = _normalize_model_for_provider(provider, model)
@@ -2780,6 +2856,7 @@ def _stream_single_response_route(
             max_tokens=max_tokens,
             temperature=temperature,
             json_mode=json_mode,
+            history=history,
         )
     elif provider == "anthropic":
         yield from _stream_anthropic(
@@ -2796,6 +2873,7 @@ def _stream_single_response_route(
             screenshot_tool_b64=screenshot_tool_b64,
             max_tokens=max_tokens,
             temperature=temperature,
+            history=history,
         )
     elif provider == "chatgpt":
         yield from _stream_codex(
@@ -2860,6 +2938,7 @@ def _stream_openai_compat(
     max_tokens: int | None = None,
     temperature: float | None = None,
     json_mode: bool = False,
+    history: list[dict] | None = None,
 ) -> Generator[str, None, None]:
     import json as _json
 
@@ -2873,7 +2952,7 @@ def _stream_openai_compat(
         reason = "macOS safe mode" if not macos_safety.openai_compat_tools_enabled() else "route capability cache"
         print(f"[llm] OpenAI-compatible live tools disabled by {reason}", flush=True)
         ambient_context = _inject_frontloaded_tool_context(ambient_context, allowed_tools)
-    messages = _build_openai_messages(user_message, image_base64, ambient_context, memory_context)
+    messages = _build_openai_messages(user_message, image_base64, ambient_context, memory_context, history)
     expose_screenshot = tools_allowed and allow_screenshot_tool and not image_base64 and not json_mode
     if expose_screenshot and messages and messages[0].get("role") == "system":
         messages[0]["content"] = _with_screenshot_note(messages[0]["content"], True)
@@ -3242,34 +3321,6 @@ def _stream_codex_vision(
         yield chunk
 
 
-def _build_openai_messages(
-    user_message: str,
-    image_base64: str | None,
-    ambient_context: str = "",
-    memory_context: str = "",
-) -> list:
-    system = config.get_system_prompt()
-    if memory_context:
-        system += f"\n\n{memory_context}"
-    if ambient_context:
-        system += f"\n\n---\n{ambient_context}"
-    if image_base64:
-        content = [
-            {"type": "text", "text": user_message},
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{image_base64}"},
-            },
-        ]
-    else:
-        content = user_message
-
-    return [
-        {"role": "system", "content": system},
-        {"role": "user", "content": content},
-    ]
-
-
 # ------------------------------------------------------------------
 # Anthropic Claude  -”  shared tool-loop helper
 # ------------------------------------------------------------------
@@ -3367,8 +3418,10 @@ def _stream_anthropic(
     screenshot_tool_b64: str | None = None,
     max_tokens: int | None = None,
     temperature: float | None = None,
+    history: list[dict] | None = None,
 ) -> Generator[str, None, None]:
     tools_active = use_tools or allow_screenshot_tool
+    prior_turns = _sanitize_history(history)
     cap = _get_route_capabilities("anthropic", model)
     if tools_active and cap.supports_tools is False:
         print(
@@ -3415,7 +3468,7 @@ def _stream_anthropic(
             "model": model,
             "max_tokens": anthropic_max_tokens,
             "system": system,
-            "messages": [{"role": "user", "content": content}],
+            "messages": [*prior_turns, {"role": "user", "content": content}],
         }
         if temperature is not None:
             request["temperature"] = temperature
@@ -3430,7 +3483,7 @@ def _stream_anthropic(
     # --- Tool-enabled path: stream first round for fast first-token ---
     # If no tool is called (common case), text streams immediately.
     # Only falls back to blocking create() if Claude actually invokes a tool.
-    messages: list[dict] = [{"role": "user", "content": content}]
+    messages: list[dict] = [*prior_turns, {"role": "user", "content": content}]
     tool_schemas = _get_tool_schemas(
         user_message,
         include_general=use_tools,
@@ -3459,6 +3512,7 @@ def _stream_anthropic(
             screenshot_tool_b64=screenshot_tool_b64,
             max_tokens=max_tokens,
             temperature=temperature,
+            history=history,
         )
         return
 

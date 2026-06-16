@@ -19,8 +19,24 @@ from typing import Any
 from macos_py.bootstrap import configure_paths
 from macos_py.boundaries import boundary_status
 from macos_py import VERSION, protocol
+from ui.i18n import localize_widget_tree, t
 
 log = logging.getLogger("wisp.ui_host")
+
+
+def _mac_status_text(status: str) -> str:
+    text = str(status or "")
+    for prefix in (
+        "Waiting ",
+        "Receiving response (",
+        "Handing off to ",
+        "Explicit handoff to ",
+        "Prompt ",
+        "Using ",
+    ):
+        if text.startswith(prefix):
+            return t(prefix) + text[len(prefix):]
+    return t(text)
 
 
 def _ui_log_dir() -> Path:
@@ -288,7 +304,7 @@ def _make_live_agent_item(
             role_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
             self.addToGroup(role_item)
 
-            status_item = QGraphicsTextItem(status or "Waiting")
+            status_item = QGraphicsTextItem(_mac_status_text(status or "Waiting"))
             status_item.setDefaultTextColor(QColor("#24405f" if active else "#667085"))
             status_item.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold if active else QFont.Weight.Normal))
             status_item.setTextWidth(self.TEXT_WIDTH)
@@ -296,7 +312,7 @@ def _make_live_agent_item(
             status_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
             self.addToGroup(status_item)
 
-            objective_item = QGraphicsTextItem(objective or "No current objective")
+            objective_item = QGraphicsTextItem(objective or t("No current objective"))
             objective_item.setDefaultTextColor(QColor("#344054"))
             objective_item.setFont(QFont("Segoe UI", 7))
             objective_item.setTextWidth(self.TEXT_WIDTH)
@@ -452,8 +468,8 @@ class MacAgentRunDialog:
         title = str(self._spec.get("title") or "Agent Task")
         self.dialog = QDialog()
         self.dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        self.dialog.setWindowTitle(f"Agent Task - {title}")
-        self.dialog.setMinimumSize(980, 620)
+        self.dialog.setWindowTitle(f"{t('Agent Task')} - {title}")
+        self.dialog.setMinimumSize(1100, 700)
 
         root = QVBoxLayout(self.dialog)
         root.setContentsMargins(12, 12, 12, 12)
@@ -472,8 +488,8 @@ class MacAgentRunDialog:
         approval_row.setContentsMargins(10, 8, 10, 8)
         self.approval_label = QLabel()
         self.approval_label.setWordWrap(True)
-        approve_btn = QPushButton("Approve")
-        decline_btn = QPushButton("Decline")
+        approve_btn = QPushButton(t("Approve"))
+        decline_btn = QPushButton(t("Decline"))
         approve_btn.clicked.connect(lambda: self._resolve_approval(True))
         decline_btn.clicked.connect(lambda: self._resolve_approval(False))
         approval_row.addWidget(self.approval_label, 1)
@@ -495,10 +511,10 @@ class MacAgentRunDialog:
         meeting_layout.setContentsMargins(0, 0, 0, 0)
         meeting_layout.setSpacing(6)
         meeting_header = QHBoxLayout()
-        meeting_header.addWidget(QLabel("Meeting"))
+        meeting_header.addWidget(QLabel(t("Meeting")))
         meeting_header.addStretch()
-        self.reset_layout_btn = QPushButton("Reset Layout")
-        self.reset_layout_btn.setToolTip("Restore every agent card to its default position and size")
+        self.reset_layout_btn = QPushButton(t("Reset Layout"))
+        self.reset_layout_btn.setToolTip(t("Restore every agent card to its default position and size"))
         self.reset_layout_btn.clicked.connect(self._reset_agent_layout)
         meeting_header.addWidget(self.reset_layout_btn)
         meeting_layout.addLayout(meeting_header)
@@ -508,7 +524,7 @@ class MacAgentRunDialog:
         detail_layout = QVBoxLayout(detail_panel)
         detail_layout.setContentsMargins(0, 0, 0, 0)
         detail_layout.setSpacing(6)
-        detail_layout.addWidget(QLabel("Agent Detail"))
+        detail_layout.addWidget(QLabel(t("Agent Detail")))
         self.agent_summary_view = QTextEdit()
         self.agent_summary_view.setReadOnly(True)
         self.agent_summary_view.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
@@ -516,7 +532,7 @@ class MacAgentRunDialog:
         self.agent_summary_view.setMinimumWidth(240)
         self.agent_detail_view = self.agent_summary_view
         detail_layout.addWidget(self.agent_summary_view, 1)
-        detail_layout.addWidget(QLabel("Recent Activity"))
+        detail_layout.addWidget(QLabel(t("Recent Activity")))
         self.agent_activity_view = QTextEdit()
         self.agent_activity_view.setReadOnly(True)
         self.agent_activity_view.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
@@ -526,7 +542,7 @@ class MacAgentRunDialog:
         board_layout = QVBoxLayout(board_panel)
         board_layout.setContentsMargins(0, 0, 0, 0)
         board_layout.setSpacing(6)
-        board_layout.addWidget(QLabel("Shared Board"))
+        board_layout.addWidget(QLabel(t("Shared Board")))
         self.shared_board_view = QTextEdit()
         self.shared_board_view.setReadOnly(True)
         self.shared_board_view.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
@@ -555,29 +571,29 @@ class MacAgentRunDialog:
         self.log_view.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.trace_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.final_view.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
-        self.tabs.addTab(meeting_splitter, "Meeting Room")
-        self.tabs.addTab(self.log_view, "Live Log")
-        self.tabs.addTab(self.trace_view, "Model Trace")
-        self.tabs.addTab(self.final_view, "Final Report")
+        self.tabs.addTab(meeting_splitter, t("Meeting Room"))
+        self.tabs.addTab(self.log_view, t("Live Log"))
+        self.tabs.addTab(self.trace_view, t("Model Trace"))
+        self.tabs.addTab(self.final_view, t("Final Report"))
         root.addWidget(self.tabs, 1)
         self._refresh_meeting_room()
 
         row = QHBoxLayout()
-        self.status_label = QLabel("Running...")
-        self.open_result_btn = QPushButton("Open Run Folder")
+        self.status_label = QLabel(t("Running..."))
+        self.open_result_btn = QPushButton(t("Open Run Folder"))
         self.open_result_btn.setEnabled(False)
         self.open_result_btn.clicked.connect(self._open_result_folder)
-        self.open_scope_btn = QPushButton("Open Scope Folder")
+        self.open_scope_btn = QPushButton(t("Open Scope Folder"))
         self.open_scope_btn.clicked.connect(self._open_scope_folder)
-        self.retry_btn = QPushButton("Retry")
+        self.retry_btn = QPushButton(t("Retry"))
         self.retry_btn.setEnabled(False)
         self.retry_btn.clicked.connect(self._retry_run)
-        self.continue_btn = QPushButton("Continue")
+        self.continue_btn = QPushButton(t("Continue"))
         self.continue_btn.setEnabled(False)
         self.continue_btn.clicked.connect(self._continue_run)
-        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn = QPushButton(t("Cancel"))
         self.cancel_btn.clicked.connect(self._cancel_run)
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(t("Close"))
         close_btn.clicked.connect(self.dialog.close)
         row.addWidget(self.status_label)
         row.addStretch()
@@ -588,6 +604,7 @@ class MacAgentRunDialog:
         row.addWidget(self.cancel_btn)
         row.addWidget(close_btn)
         root.addLayout(row)
+        localize_widget_tree(self.dialog)
 
     def show(self) -> None:
         self.dialog.show()
@@ -603,7 +620,7 @@ class MacAgentRunDialog:
         if line:
             self._update_live_meeting(line)
             self._append_text(self.log_view, line)
-            self.status_label.setText("Running...")
+            self.status_label.setText(t("Running..."))
             self._refresh_meeting_room()
 
     def append_trace(self, data: dict[str, Any]) -> None:
@@ -622,18 +639,18 @@ class MacAgentRunDialog:
         elif error_text:
             self.final_view.setPlainText(error_text)
         elif payload.get("cancelled"):
-            self.final_view.setPlainText("Agent task cancelled.")
+            self.final_view.setPlainText(t("Agent task cancelled."))
         else:
-            self.final_view.setPlainText("(no final report)")
+            self.final_view.setPlainText(t("(no final report)"))
 
         if error_text:
-            self.status_label.setText("Failed")
+            self.status_label.setText(t("Failed"))
             self._set_agent_status(self._active_agent, "Failed", error_text)
         elif payload.get("cancelled"):
-            self.status_label.setText("Cancelled")
+            self.status_label.setText(t("Cancelled"))
             self._set_agent_status(self._active_agent, "Cancelled", "Agent task cancelled.")
         else:
-            self.status_label.setText("Finished")
+            self.status_label.setText(t("Finished"))
             for name in self._agent_names:
                 status = str(self._agent_states.get(name, {}).get("status") or "")
                 if status not in {"Done", "Failed", "Cancelled"}:
@@ -655,16 +672,16 @@ class MacAgentRunDialog:
             detail_text = ", ".join(f"{key}={value}" for key, value in details.items())
         if not detail_text:
             detail_text = str(payload.get("detail") or payload.get("reason") or "")
-        text = f"Permission needed: {action}"
+        text = f"{t('Permission needed')}: {action}"
         if detail_text:
             text += f"\n{detail_text}"
         self.approval_label.setText(text)
         self.approval_panel.show()
-        self.status_label.setText("Permission needed")
+        self.status_label.setText(t("Permission needed"))
         self._set_agent_status(self._active_agent, "Needs approval", text)
         self._refresh_meeting_room()
         self._host._agent_notify_approval(
-            text + "\nApprove or decline in the Agent Task window.",
+            text + "\n" + t("Approve or decline in the Agent Task window."),
             resolved=False,
             data=payload,
         )
@@ -786,10 +803,10 @@ class MacAgentRunDialog:
             self._set_agent_status(self._active_agent, "Retrying", body)
             return
         if body.startswith("agent run paused"):
-            self.status_label.setText("Paused after current turn")
+            self.status_label.setText(t("Paused after current turn"))
             return
         if body.startswith("agent run resumed"):
-            self.status_label.setText("Running...")
+            self.status_label.setText(t("Running..."))
             return
         if body.startswith("agent reached turn limit"):
             self._set_agent_status(self._active_agent, "Turn limit reached", body)
@@ -915,7 +932,7 @@ class MacAgentRunDialog:
             self._QBrush(self._QColor("#dbe6f2")),
         )
 
-        title = self.meeting_scene.addText("Agent Meeting", self._QFont("Segoe UI", 11, self._QFont.Weight.DemiBold))
+        title = self.meeting_scene.addText(t("Agent Meeting"), self._QFont("Segoe UI", 11, self._QFont.Weight.DemiBold))
         title.setDefaultTextColor(self._QColor("#26384f"))
         title.setTextWidth(150)
         title.setPos(465, 267)
@@ -1057,24 +1074,24 @@ class MacAgentRunDialog:
         health = self._health_detail(self._selected_agent)
         detail = (
             f"<h3>{html.escape(self._selected_agent)}</h3>"
-            f"<p><b>Role:</b> {html.escape(str(state.get('role') or 'Agent'))}<br>"
-            f"<b>Status:</b> {html.escape(str(state.get('status') or 'Waiting'))}<br>"
-            f"<b>Last tool:</b> {html.escape(str(state.get('tool') or 'None'))}</p>"
-            f"<p><b>Current objective</b><br>"
-            f"{html.escape(str(state.get('objective') or 'No current objective.'))}</p>"
-            f"<p><b>Model health</b><br>{html.escape(health)}</p>"
-            f"<p><b>Latest thought</b><br>"
-            f"{html.escape(str(state.get('thought') or 'No thought yet.'))}</p>"
+            f"<p><b>{html.escape(t('Role:'))}</b> {html.escape(str(state.get('role') or t('Agent')))}<br>"
+            f"<b>{html.escape(t('Status:'))}</b> {html.escape(_mac_status_text(str(state.get('status') or 'Waiting')))}<br>"
+            f"<b>{html.escape(t('Last tool:'))}</b> {html.escape(str(state.get('tool') or t('None')))}</p>"
+            f"<p><b>{html.escape(t('Current objective'))}</b><br>"
+            f"{html.escape(str(state.get('objective') or t('No current objective.')))}</p>"
+            f"<p><b>{html.escape(t('Model health'))}</b><br>{html.escape(health)}</p>"
+            f"<p><b>{html.escape(t('Latest thought'))}</b><br>"
+            f"{html.escape(str(state.get('thought') or t('No thought yet.')))}</p>"
         )
         self.agent_detail_view.setHtml(detail)
         history = state.get("history") or []
         self.agent_activity_view.setPlainText(
-            "\n".join(f"- {item}" for item in history[-18:]) or "- No activity yet."
+            "\n".join(f"- {item}" for item in history[-18:]) or f"- {t('No activity yet.')}"
         )
 
     def _refresh_shared_board(self) -> None:
         if not self._meeting_messages:
-            self.shared_board_view.setPlainText("No messages yet.")
+            self.shared_board_view.setPlainText(t("No messages yet."))
             return
         lines: list[str] = []
         for item in self._meeting_messages:
@@ -1088,8 +1105,8 @@ class MacAgentRunDialog:
         calls = int(health.get("calls", 0))
         avg = "-" if not calls else f"{float(health.get('total_latency', 0.0)) / calls:.1f}s"
         return (
-            f"avg {avg} | invalid {int(health.get('invalid_json', 0))} | "
-            f"repair {int(health.get('repairs', 0))} | fallback {int(health.get('fallbacks', 0))}"
+            f"{t('avg')} {avg} | {t('invalid')} {int(health.get('invalid_json', 0))} | "
+            f"{t('repair')} {int(health.get('repairs', 0))} | {t('fallback')} {int(health.get('fallbacks', 0))}"
         )
 
     def _health_detail(self, name: str) -> str:
@@ -1097,10 +1114,10 @@ class MacAgentRunDialog:
         calls = int(health.get("calls", 0))
         avg = 0.0 if not calls else float(health.get("total_latency", 0.0)) / calls
         return (
-            f"calls {calls}, average latency {avg:.1f}s, "
-            f"invalid JSON {int(health.get('invalid_json', 0))}, "
-            f"repairs {int(health.get('repairs', 0))}, "
-            f"fallbacks {int(health.get('fallbacks', 0))}"
+            f"{t('calls')} {calls}, {t('average latency')} {avg:.1f}s, "
+            f"{t('invalid JSON')} {int(health.get('invalid_json', 0))}, "
+            f"{t('repairs')} {int(health.get('repairs', 0))}, "
+            f"{t('fallbacks')} {int(health.get('fallbacks', 0))}"
         )
 
     @staticmethod
@@ -1127,7 +1144,7 @@ class MacAgentRunDialog:
         )
 
     def _cancel_run(self) -> None:
-        self.status_label.setText("Cancelling...")
+        self.status_label.setText(t("Cancelling..."))
         self.cancel_btn.setEnabled(False)
         self._host.emit("ui.agent.cancel_requested", {})
 
@@ -1177,8 +1194,8 @@ class MacAgentHistoryDialog:
 
         self.dialog = QDialog()
         self.dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        self.dialog.setWindowTitle("Agent Task History")
-        self.dialog.setMinimumSize(820, 520)
+        self.dialog.setWindowTitle(t("Agent Task History"))
+        self.dialog.setMinimumSize(960, 620)
 
         root = QVBoxLayout(self.dialog)
         root.setContentsMargins(12, 12, 12, 12)
@@ -1199,25 +1216,25 @@ class MacAgentHistoryDialog:
         self.log_view.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.trace_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.diff_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        self.tabs.addTab(self.summary_view, "Summary")
-        self.tabs.addTab(self.log_view, "Run Log")
-        self.tabs.addTab(self.trace_view, "Model Trace")
-        self.tabs.addTab(self.diff_view, "Diff")
+        self.tabs.addTab(self.summary_view, t("Summary"))
+        self.tabs.addTab(self.log_view, t("Run Log"))
+        self.tabs.addTab(self.trace_view, t("Model Trace"))
+        self.tabs.addTab(self.diff_view, t("Diff"))
         splitter.addWidget(self.tabs)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 3)
         root.addWidget(splitter, 1)
 
         row = QHBoxLayout()
-        refresh_btn = QPushButton("Refresh")
+        refresh_btn = QPushButton(t("Refresh"))
         refresh_btn.clicked.connect(lambda: self._host.emit("ui.agent.history.refresh", {}))
-        open_btn = QPushButton("Open Run Folder")
+        open_btn = QPushButton(t("Open Run Folder"))
         open_btn.clicked.connect(self._open_current_run)
-        retry_btn = QPushButton("Retry")
+        retry_btn = QPushButton(t("Retry"))
         retry_btn.clicked.connect(lambda: self._emit_current("ui.agent.history.retry"))
-        continue_btn = QPushButton("Continue")
+        continue_btn = QPushButton(t("Continue"))
         continue_btn.clicked.connect(lambda: self._emit_current("ui.agent.history.continue"))
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(t("Close"))
         close_btn.clicked.connect(self.dialog.close)
         row.addStretch()
         row.addWidget(refresh_btn)
@@ -1226,6 +1243,7 @@ class MacAgentHistoryDialog:
         row.addWidget(continue_btn)
         row.addWidget(close_btn)
         root.addLayout(row)
+        localize_widget_tree(self.dialog)
 
     def show(self) -> None:
         self.dialog.show()
@@ -1250,7 +1268,7 @@ class MacAgentHistoryDialog:
             self.run_list.setCurrentRow(0)
         else:
             self._current_run_dir = ""
-            self._clear_views("No agent task runs yet.")
+            self._clear_views(t("No agent task runs yet."))
 
     def update_detail(self, data: dict[str, Any]) -> None:
         payload = data if isinstance(data, dict) else {"error": str(data)}
@@ -1263,19 +1281,19 @@ class MacAgentHistoryDialog:
         final = str(payload.get("final") or "")
         task_json = str(payload.get("task_json") or "")
         if error and not final:
-            summary = f"Run folder:\n{run_dir}\n\nError:\n{error}"
+            summary = f"{t('Run folder:')}\n{run_dir}\n\n{t('Error:')}\n{error}"
         else:
             summary = (
-                f"Run folder:\n{run_dir}\n\n"
-                f"Final report:\n{final or '(no final report)'}\n\n"
-                f"Task spec:\n{task_json or '(missing task.json)'}"
+                f"{t('Run folder:')}\n{run_dir}\n\n"
+                f"{t('Final report:')}\n{final or t('(no final report)')}\n\n"
+                f"{t('Task spec:')}\n{task_json or t('(missing task.json)')}"
             )
             if error:
-                summary += f"\n\nError:\n{error}"
+                summary += f"\n\n{t('Error:')}\n{error}"
         self.summary_view.setPlainText(summary)
         self.log_view.setPlainText(str(payload.get("run_log") or ""))
         self.trace_view.setPlainText(str(payload.get("verbose_log") or ""))
-        self.diff_view.setPlainText(str(payload.get("diff_patch") or "(no diff artifact)"))
+        self.diff_view.setPlainText(str(payload.get("diff_patch") or t("(no diff artifact)")))
 
     def _selected_run_changed(self, current, _previous) -> None:
         if self._loading or current is None:
@@ -1338,7 +1356,16 @@ class QtProtocolHost:
         self._plugin_log_dialogs: dict[str, Any] = {}
         self._agent_run_dialog: MacAgentRunDialog | None = None
         self._agent_history_dialog: MacAgentHistoryDialog | None = None
-        self._all_conversations: list[dict] = []
+        from core.conversation_store import store as conversation_store
+        self._active_project_id = conversation_store.GENERAL_PROJECT_ID
+        # Conversation hotkey/voice prompts continue. None on startup so the
+        # first prompt opens a fresh conversation; not persisted across restarts.
+        self._active_conversation_idx: int | None = None
+        try:
+            self._all_conversations: list[dict] = conversation_store.load_conversations()
+        except Exception:
+            self._all_conversations = []
+        self._apply_memory_project()
         self._chat_request_ids = itertools.count(1)
         self._chat_streams: dict[str, "queue.Queue[tuple[str, Any]]"] = {}
         self._chat_streams_lock = threading.Lock()
@@ -1508,6 +1535,8 @@ class QtProtocolHost:
             return self._chat_error(**params)
         if method == "ui.chat.add_conversation":
             return self._chat_add_conversation(**params)
+        if method == "ui.chat.active_history":
+            return self._chat_active_history()
         if method == "ui.chat.ingest":
             return self._chat_ingest()
         if method == "ui.show_chat":
@@ -1807,6 +1836,70 @@ class QtProtocolHost:
             self._memory = MemoryProxy(self.emit)
         return self._memory
 
+    # ------------------------------------------------------------------
+    # Projects & conversation persistence
+    # ------------------------------------------------------------------
+
+    def _persist_conversations(self) -> None:
+        try:
+            from core.conversation_store import store as conversation_store
+            conversation_store.save_conversations(self._all_conversations)
+        except Exception:
+            log.exception("failed to persist conversations")
+
+    def _apply_memory_project(self) -> None:
+        try:
+            from core.conversation_store import store as conversation_store
+            from core.memory_store import store as memory_store
+            pid = self._active_project_id
+            memory_store.set_active_project(
+                None if pid == conversation_store.GENERAL_PROJECT_ID else pid
+            )
+        except Exception:
+            log.exception("failed to apply memory project scope")
+
+    def _set_active_project(self, project_id: str | None) -> None:
+        from core.conversation_store import store as conversation_store
+        self._active_project_id = project_id or conversation_store.GENERAL_PROJECT_ID
+        self._apply_memory_project()
+
+    def _create_project(self, name: str):
+        try:
+            from core.conversation_store import store as conversation_store
+            return conversation_store.add_project(name)
+        except Exception:
+            log.exception("failed to create project %r", name)
+            return None
+
+    def _set_active_conversation(self, idx) -> None:
+        """Chat window selected/started a conversation -> retarget hotkey prompts."""
+        if idx is None or (isinstance(idx, int) and 0 <= idx < len(self._all_conversations)):
+            self._active_conversation_idx = idx
+
+    def _chat_active_history(self) -> dict[str, Any]:
+        """Return prior turns + memory project for the active conversation.
+
+        The supervisor replays ``history`` to the model (full continuation) and
+        uses ``project_id`` (None = global) to scope memory in the brain. When
+        starting fresh, history is empty and the project is the dropdown's.
+        """
+        from core.conversation_store import store as conversation_store
+        idx = self._active_conversation_idx
+        history: list[dict] = []
+        if idx is not None and 0 <= idx < len(self._all_conversations):
+            conv = self._all_conversations[idx]
+            project = conv.get("project_id") or conversation_store.GENERAL_PROJECT_ID
+            history = [
+                {"role": m.get("role"), "content": m.get("content")}
+                for m in conv.get("messages", [])
+                if m.get("role") in ("user", "assistant")
+                and isinstance(m.get("content"), str) and m.get("content").strip()
+            ]
+        else:
+            project = self._active_project_id
+        memory_project = None if project == conversation_store.GENERAL_PROJECT_ID else project
+        return {"history": history, "project_id": memory_project}
+
     def _make_chat_send_fn(self):
         def send_with_memory(messages: list):
             request_id = f"chat-{next(self._chat_request_ids)}"
@@ -1858,21 +1951,36 @@ class QtProtocolHost:
         context: str = "",
         image_base64: str | None = None,
     ) -> dict[str, Any]:
+        import uuid as _uuid
         user_msg: dict[str, Any] = {"role": "user", "content": user}
         if image_base64:
             user_msg["image_base64"] = image_base64
+        assistant_msg = {"role": "assistant", "content": assistant}
+
+        idx = self._active_conversation_idx
+        if idx is not None and 0 <= idx < len(self._all_conversations):
+            # Continue the active conversation (the one selected in the chat window).
+            conv = self._all_conversations[idx]
+            conv.setdefault("messages", []).extend([user_msg, assistant_msg])
+            self._persist_conversations()
+            if self._chat is not None:
+                self._chat.sync_conversation(idx)
+            return {"count": len(self._all_conversations), "continued": True}
+
+        # No active conversation (fresh start) -> open a new one and make it active.
         self._all_conversations.append(
             {
-                "messages": [
-                    user_msg,
-                    {"role": "assistant", "content": assistant},
-                ],
+                "id": str(_uuid.uuid4()),
+                "project_id": self._active_project_id,
+                "messages": [user_msg, assistant_msg],
                 "context": context or "",
             }
         )
+        self._active_conversation_idx = len(self._all_conversations) - 1
+        self._persist_conversations()
         if self._chat is not None:
             self._chat.ingest_new_conversations()
-        return {"count": len(self._all_conversations)}
+        return {"count": len(self._all_conversations), "continued": False}
 
     def _chat_ingest(self) -> dict[str, Any]:
         if self._chat is not None:
@@ -1890,10 +1998,18 @@ class QtProtocolHost:
             self._chat.activateWindow()
             return {"shown": True, "reused": True}
         start_new = force_new or not self._all_conversations
+        from core.conversation_store import store as conversation_store
         self._chat = ChatWindow(
             conversations=self._all_conversations,
             send_fn=self._make_chat_send_fn(),
             start_new=start_new,
+            projects=conversation_store.load_projects(),
+            active_project_id=self._active_project_id,
+            on_project_change=self._set_active_project,
+            on_new_project=self._create_project,
+            persist_fn=self._persist_conversations,
+            active_idx=self._active_conversation_idx,
+            on_select=self._set_active_conversation,
         )
         self._chat.destroyed.connect(lambda: setattr(self, "_chat", None))
         self._chat.show()
@@ -1973,19 +2089,18 @@ class QtProtocolHost:
             self._plugins_dialog = None
 
         dialog = QDialog()
-        dialog.setWindowTitle("Addon Manager")
+        dialog.setWindowTitle(t("Addon Manager"))
         dialog.setModal(False)
         root = QVBoxLayout(dialog)
         root.setContentsMargins(20, 20, 20, 20)
         root.setSpacing(12)
 
-        title = QLabel("Addons")
+        title = QLabel(t("Addons"))
         title.setStyleSheet("font-size: 15pt; font-weight: 700;")
         root.addWidget(title)
 
         subtitle = QLabel(
-            "Addons are Python packages in the addons/ folder. "
-            "Each addon runs in its own host process."
+            t("Addons are Python packages in the addons/ folder. Each addon runs in its own host process.")
         )
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("font-size: 9pt; opacity: 0.7;")
@@ -2001,7 +2116,7 @@ class QtProtocolHost:
 
         plugin_rows = plugins or []
         if not plugin_rows:
-            empty = QLabel("No plugins found.")
+            empty = QLabel(t("No plugins found."))
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             empty.setStyleSheet("opacity: 0.55; font-size: 10pt;")
             inner_layout.addWidget(empty)
@@ -2015,24 +2130,25 @@ class QtProtocolHost:
 
         footer = QHBoxLayout()
         if plugins_dir:
-            open_btn = QPushButton("Open addons folder")
+            open_btn = QPushButton(t("Open addons folder"))
             open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(plugins_dir)))
             footer.addWidget(open_btn)
-            install_btn = QPushButton("Install archive")
+            install_btn = QPushButton(t("Install archive"))
             install_btn.clicked.connect(lambda: self._install_plugin_archive_dialog())
             footer.addWidget(install_btn)
-            install_folder_btn = QPushButton("Install folder")
+            install_folder_btn = QPushButton(t("Install folder"))
             install_folder_btn.clicked.connect(lambda: self._install_plugin_folder_dialog())
             footer.addWidget(install_folder_btn)
         footer.addStretch()
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(t("Close"))
         close_btn.clicked.connect(dialog.close)
         footer.addWidget(close_btn)
         root.addLayout(footer)
 
-        dialog.resize(520, 420)
+        dialog.resize(620, 500)
         self._plugins_dialog = dialog
         self._plugins_dialog.destroyed.connect(lambda: setattr(self, "_plugins_dialog", None))
+        localize_widget_tree(dialog)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
@@ -2043,9 +2159,9 @@ class QtProtocolHost:
 
         archive, _selected_filter = QFileDialog.getOpenFileName(
             self._plugins_dialog,
-            "Install Addon Archive",
+            t("Install Addon Archive"),
             "",
-            "Wisp Addons (*.wisp *.zip)",
+            t("Wisp Addons (*.wisp *.zip)"),
         )
         if archive:
             self.emit("ui.plugins.install_archive", {"path": archive})
@@ -2055,7 +2171,7 @@ class QtProtocolHost:
 
         folder = QFileDialog.getExistingDirectory(
             self._plugins_dialog,
-            "Install Addon Folder",
+            t("Install Addon Folder"),
             "",
         )
         if folder:
@@ -2075,15 +2191,15 @@ class QtProtocolHost:
         layout.setSpacing(6)
 
         name_row = QHBoxLayout()
-        name = str(plugin.get("name") or plugin.get("id") or "Addon")
+        name = str(plugin.get("name") or plugin.get("id") or t("Addon"))
         addon_id = str(plugin.get("id") or name)
         name_lbl = QLabel(name)
         name_lbl.setStyleSheet("font-size: 11pt; font-weight: 600;")
         name_row.addWidget(name_lbl)
         name_row.addStretch()
 
-        settings_btn = QPushButton("Settings")
-        settings_btn.setToolTip("Open this addon's settings")
+        settings_btn = QPushButton(t("Settings"))
+        settings_btn.setToolTip(t("Open this addon's settings"))
         settings_btn.clicked.connect(
             lambda _checked=False, p=plugin, aid=addon_id, n=name: self._show_plugin_settings_dialog(
                 aid,
@@ -2093,8 +2209,8 @@ class QtProtocolHost:
         )
         name_row.addWidget(settings_btn)
 
-        logs_btn = QPushButton("Logs")
-        logs_btn.setToolTip("Open this addon's diagnostic log")
+        logs_btn = QPushButton(t("Logs"))
+        logs_btn.setToolTip(t("Open this addon's diagnostic log"))
         logs_btn.clicked.connect(
             lambda _checked=False, p=plugin, aid=addon_id, n=name: self._show_plugin_log_dialog(
                 aid,
@@ -2109,7 +2225,7 @@ class QtProtocolHost:
         has_dependencies = str(runtime.get("tier") or "1") == "2"
         if has_dependencies:
             repair_btn = QPushButton(self._plugin_runtime_action_label(runtime))
-            repair_btn.setToolTip("Install or rebuild this addon's dependency environment")
+            repair_btn.setToolTip(t("Install or rebuild this addon's dependency environment"))
             repair_btn.clicked.connect(
                 lambda _checked=False, plugin_name=addon_id, display_name=name, rt=runtime: self._confirm_plugin_environment(
                     plugin_name,
@@ -2120,7 +2236,7 @@ class QtProtocolHost:
             name_row.addWidget(repair_btn)
 
         enabled = bool(plugin.get("enabled", True))
-        enable = QCheckBox("Enabled")
+        enable = QCheckBox(t("Enabled"))
         enable.setChecked(enabled)
         # "discovered" (not yet loaded into a manager) plugins can't be toggled live.
         enable.setEnabled(str(plugin.get("status") or "") in {"loaded", "disabled", "needs_dependencies", "needs_approval"})
@@ -2143,9 +2259,9 @@ class QtProtocolHost:
         tools = plugin.get("tools") or []
         details = []
         if hooks:
-            details.append("Hooks: " + ", ".join(str(h) for h in hooks))
+            details.append(t("Hooks: ") + ", ".join(str(h) for h in hooks))
         if tools:
-            details.append("Tools: " + ", ".join(str(t) for t in tools))
+            details.append(t("Tools: ") + ", ".join(str(tool) for tool in tools))
         if details:
             detail_lbl = QLabel("\n".join(details))
             detail_lbl.setWordWrap(True)
@@ -2155,7 +2271,7 @@ class QtProtocolHost:
         if has_dependencies:
             dep_parts = [self._plugin_runtime_summary(runtime)]
             if packages:
-                dep_parts.append("Packages: " + ", ".join(packages))
+                dep_parts.append(t("Packages: ") + ", ".join(packages))
             runtime_error = str(runtime.get("error") or "")
             if runtime_error:
                 dep_parts.append(runtime_error)
@@ -2177,21 +2293,21 @@ class QtProtocolHost:
 
         packages = [str(p) for p in (runtime.get("packages") or [])]
         lines = [
-            f"{display_name} declares Python/package dependencies.",
+            f"{display_name} {t('declares Python/package dependencies.')}",
             "",
-            f"Python: {runtime.get('python_requirement') or 'current runtime'}",
-            "Packages:",
+            f"{t('Python: ')}{runtime.get('python_requirement') or t('current runtime')}",
+            t("Packages:"),
         ]
         lines.extend(f"  {package}" for package in packages)
         if not packages:
-            lines.append("  No packages declared")
+            lines.append("  " + t("No packages declared"))
         env_path = str(runtime.get("env_path") or "")
         if env_path:
-            lines.extend(["", f"Environment: {env_path}"])
-        lines.extend(["", "Install or rebuild this environment now?"])
+            lines.extend(["", f"{t('Environment: ')}{env_path}"])
+        lines.extend(["", t("Install or rebuild this environment now?")])
         choice = QMessageBox.question(
             self._plugins_dialog,
-            "Approve Addon Dependencies",
+            t("Approve Addon Dependencies"),
             "\n".join(lines),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -2202,14 +2318,14 @@ class QtProtocolHost:
     @staticmethod
     def _plugin_runtime_action_label(runtime: dict[str, Any]) -> str:
         if runtime.get("needs_approval"):
-            return "Approve env"
-        return "Repair env" if runtime.get("ready") else "Install env"
+            return t("Approve env")
+        return t("Repair env") if runtime.get("ready") else t("Install env")
 
     @staticmethod
     def _plugin_runtime_summary(runtime: dict[str, Any]) -> str:
         if runtime.get("needs_approval"):
-            return "Dependency env: needs approval"
-        return "Dependency env: ready" if runtime.get("ready") else "Dependency env: needs install"
+            return t("Dependency env: needs approval")
+        return t("Dependency env: ready") if runtime.get("ready") else t("Dependency env: needs install")
 
     def _show_plugin_settings_dialog(self, plugin_name: str, display_name: str, settings: list):
         from PySide6.QtCore import Qt
@@ -2220,13 +2336,13 @@ class QtProtocolHost:
             existing.close()
 
         dialog = QDialog(self._plugins_dialog)
-        dialog.setWindowTitle(f"{display_name} Settings")
+        dialog.setWindowTitle(f"{display_name} {t('Settings')}")
         dialog.setModal(False)
         root = QVBoxLayout(dialog)
         root.setContentsMargins(20, 20, 20, 20)
         root.setSpacing(12)
 
-        title = QLabel(f"{display_name} Settings")
+        title = QLabel(f"{display_name} {t('Settings')}")
         title.setStyleSheet("font-size: 14pt; font-weight: 700;")
         root.addWidget(title)
 
@@ -2240,7 +2356,7 @@ class QtProtocolHost:
 
         settings_box = self._plugin_settings_box(plugin_name, settings)
         if settings_box is None:
-            empty = QLabel("This addon does not expose settings.")
+            empty = QLabel(t("This addon does not expose settings."))
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             empty.setStyleSheet("opacity: 0.55; font-size: 10pt;")
             inner_layout.addWidget(empty)
@@ -2252,14 +2368,15 @@ class QtProtocolHost:
 
         footer = QHBoxLayout()
         footer.addStretch()
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(t("Close"))
         close_btn.clicked.connect(dialog.close)
         footer.addWidget(close_btn)
         root.addLayout(footer)
 
-        dialog.resize(420, 360)
+        dialog.resize(500, 420)
         dialog.destroyed.connect(lambda _obj=None, key=plugin_name: self._plugin_settings_dialogs.pop(key, None))
         self._plugin_settings_dialogs[plugin_name] = dialog
+        localize_widget_tree(dialog)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
@@ -2272,40 +2389,41 @@ class QtProtocolHost:
         if existing is not None and existing.isVisible():
             text = existing.findChild(QTextEdit)
             if text is not None:
-                text.setPlainText(logs or "No log output yet.")
+                text.setPlainText(logs or t("No log output yet."))
                 text.moveCursor(QTextCursor.MoveOperation.End)
             existing.raise_()
             existing.activateWindow()
             return {"shown": True, "reused": True}
 
         dialog = QDialog(self._plugins_dialog)
-        dialog.setWindowTitle(f"{display_name} Logs")
+        dialog.setWindowTitle(f"{display_name} {t('Logs')}")
         dialog.setModal(False)
         root = QVBoxLayout(dialog)
         root.setContentsMargins(20, 20, 20, 20)
         root.setSpacing(12)
 
-        title = QLabel(f"{display_name} Logs")
+        title = QLabel(f"{display_name} {t('Logs')}")
         title.setStyleSheet("font-size: 14pt; font-weight: 700;")
         root.addWidget(title)
 
         text = QTextEdit()
         text.setReadOnly(True)
         text.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        text.setPlainText(logs or "No log output yet.")
+        text.setPlainText(logs or t("No log output yet."))
         text.moveCursor(QTextCursor.MoveOperation.End)
         root.addWidget(text, 1)
 
         footer = QHBoxLayout()
         footer.addStretch()
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(t("Close"))
         close_btn.clicked.connect(dialog.close)
         footer.addWidget(close_btn)
         root.addLayout(footer)
 
-        dialog.resize(560, 360)
+        dialog.resize(680, 460)
         dialog.destroyed.connect(lambda _obj=None, key=plugin_name: self._plugin_log_dialogs.pop(key, None))
         self._plugin_log_dialogs[plugin_name] = dialog
+        localize_widget_tree(dialog)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
@@ -2358,13 +2476,13 @@ class QtProtocolHost:
             else:
                 w = QLineEdit("" if value is None else str(value))
                 if stype == "number":
-                    w.setPlaceholderText("number")
+                    w.setPlaceholderText(t("number"))
                 w.editingFinished.connect(lambda k=key, e=w: save(k, e.text()))
 
             help_text = str(s.get("help") or "")
             if help_text:
-                w.setToolTip(help_text)
-            form.addRow(label, w)
+                w.setToolTip(t(help_text))
+            form.addRow(t(label), w)
         return box if form.rowCount() else None
 
     def _show_agent_task(self, spec: dict[str, Any] | None = None) -> dict[str, Any]:

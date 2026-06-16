@@ -12,6 +12,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $VenvDir = Join-Path $Root ".venv"
 $VenvPython = Join-Path $Root ".venv\Scripts\python.exe"
+$PythonVersionFile = Join-Path $Root ".python-version"
 $SpecName = "Wisp.spec"
 $AppName = "Wisp"
 $RequirementsFile = "requirements.txt"
@@ -21,6 +22,12 @@ $IconPath = Join-Path $Root "assets\app.ico"
 $IconSourcePng = Join-Path $Root "assets\doll\idle.png"
 
 Set-Location $Root
+
+$ExpectedPython = "3.12.13"
+if (Test-Path $PythonVersionFile) {
+    $ExpectedPython = (Get-Content $PythonVersionFile -Raw).Trim()
+}
+$ExpectedMinor = (($ExpectedPython -split "\.")[0..1] -join ".")
 
 # Force child Python processes (pip, PyInstaller) to stream their output line by
 # line so progress shows up promptly instead of arriving in buffered chunks.
@@ -38,6 +45,52 @@ function Invoke-CheckedPython {
     if ($Process.ExitCode -ne 0) {
         throw "$StepName failed with exit code $($Process.ExitCode)."
     }
+}
+
+function Get-PythonMinor {
+    param(
+        [string]$Python,
+        [string[]]$PythonArgs = @()
+    )
+
+    try {
+        return (& $Python @PythonArgs -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')" 2>$null).Trim()
+    } catch {
+        return ""
+    }
+}
+
+function Assert-PythonMinor {
+    param([string]$Python)
+
+    $ActualMinor = Get-PythonMinor -Python $Python
+    if ($ActualMinor -ne $ExpectedMinor) {
+        throw "$Python is Python $ActualMinor, but Wisp packaging is pinned to Python $ExpectedPython. Rebuild .venv with scripts\setup_dev.ps1 or rerun the launcher with Python $ExpectedPython installed."
+    }
+}
+
+function New-ProjectVenv {
+    Write-Host "Project virtual environment not found; creating it at:"
+    Write-Host "  $VenvDir"
+
+    if (Get-Command py.exe -ErrorAction SilentlyContinue) {
+        $PyLauncherArg = "-$ExpectedMinor"
+        $PyMinor = Get-PythonMinor -Python "py" -PythonArgs @($PyLauncherArg)
+        if ($PyMinor -eq $ExpectedMinor) {
+            & py $PyLauncherArg -m venv $VenvDir
+            return
+        }
+    }
+
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        $PythonMinor = Get-PythonMinor -Python "python"
+        if ($PythonMinor -eq $ExpectedMinor) {
+            & python -m venv $VenvDir
+            return
+        }
+    }
+
+    throw "Could not find Python $ExpectedPython to create the project virtual environment."
 }
 
 function Test-LongPathRisk {
@@ -59,24 +112,17 @@ function New-BuildRequirementsFile {
 
 if (-not $UseGlobalPython) {
     if (-not (Test-Path $VenvPython)) {
-        Write-Host "Project virtual environment not found; creating it at:"
-        Write-Host "  $VenvDir"
-
-        if (Get-Command python -ErrorAction SilentlyContinue) {
-            & python -m venv $VenvDir
-        } elseif (Get-Command py.exe -ErrorAction SilentlyContinue) {
-            & py -m venv $VenvDir
-        } else {
-            throw "Could not find python or py.exe to create the project virtual environment."
-        }
+        New-ProjectVenv
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $VenvPython)) {
             throw "Failed to create project virtual environment at $VenvDir."
         }
     }
     $Python = $VenvPython
+    Assert-PythonMinor -Python $Python
 } else {
     Write-Host "Using global Python because -UseGlobalPython was provided."
     $Python = "python"
+    Assert-PythonMinor -Python $Python
 }
 
 if (Test-Path $DistExe) {

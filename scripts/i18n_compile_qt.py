@@ -33,10 +33,10 @@ def compile_qm(language: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("languages", nargs="*", default=LANGUAGES, choices=LANGUAGES)
+    parser.add_argument("languages", nargs="*", choices=LANGUAGES)
     args = parser.parse_args()
 
-    for language in args.languages:
+    for language in args.languages or LANGUAGES:
         compile_qm(language)
     return 0
 

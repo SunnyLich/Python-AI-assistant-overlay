@@ -9,7 +9,16 @@ from PyInstaller.utils.hooks import collect_all
 # the package's data/binaries explicitly or the frozen app panics on parse.
 LITEPARSE_DATAS, LITEPARSE_BINARIES, LITEPARSE_HIDDENIMPORTS = collect_all("liteparse")
 
-ROOT = Path(SPECPATH).resolve().parent
+def _repo_root() -> Path:
+    start = Path(SPECPATH).resolve()
+    candidates = [start, *start.parents]
+    for candidate in candidates:
+        if (candidate / ".python-version").exists() and (candidate / "requirements.txt").exists():
+            return candidate
+    return start
+
+
+ROOT = _repo_root()
 PYSIDE6_ROOT = Path(PySide6.__file__).resolve().parent
 QT_RUNTIME_DLLS = [
     (str(path), "PySide6")
@@ -34,7 +43,7 @@ block_cipher = None
 
 
 a = Analysis(
-    [str(ROOT / "main.py")],
+    [str(ROOT / "macos_py" / "supervisor" / "app.py")],
     pathex=[str(ROOT)],
     binaries=QT_RUNTIME_DLLS + LITEPARSE_BINARIES + UV_BINARIES,
     datas=[

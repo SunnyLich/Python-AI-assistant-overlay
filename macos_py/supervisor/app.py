@@ -4,20 +4,30 @@ from __future__ import annotations
 
 import logging
 import os
+import runpy
 import signal
 import sys
 import threading
 import time
 from pathlib import Path
 
-from macos_py.supervisor.flows import FlowController
-from macos_py.supervisor.ipc import WispSupervisor
+from core.system import single_instance
 from macos_py.bootstrap import (
+    install_crash_diagnostics,
     repo_root,
     suppress_console_ctrl_c,
-    install_crash_diagnostics,
 )
-from core.system import single_instance
+from macos_py.supervisor.flows import FlowController
+from macos_py.supervisor.ipc import WispSupervisor
+
+
+def _dispatch_module_mode() -> None:
+    """Let a frozen supervisor executable emulate ``python -m module`` workers."""
+    if len(sys.argv) >= 3 and sys.argv[1] == "-m":
+        module = sys.argv[2]
+        sys.argv = [module, *sys.argv[3:]]
+        runpy.run_module(module, run_name="__main__", alter_sys=True)
+        raise SystemExit(0)
 
 
 def _prepare_run_log_dir() -> Path:
@@ -93,4 +103,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    _dispatch_module_mode()
     raise SystemExit(main())

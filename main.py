@@ -131,6 +131,8 @@ from core.system import macos_safety
 from core.system import sdk_clients
 from core.system.paths import ASSETS_DIR
 from core.memory_store.commands import extract_remember_fact
+from core import context_hotkey
+from macos_py.supervisor import tool_modes
 from ui.overlay import IconOverlay, OverlaySignals
 from ui.intent_overlay import IntentOverlay
 from ui.snip_overlay import SnipOverlay
@@ -225,6 +227,8 @@ class App(QObject):
         self._last_reply: str = ""
         self._pending_context: context_fetcher.ContextSnapshot | None = None
         self._voice_active: bool = False        # guard against spurious release events
+        self._dictate_active: bool = False      # F8 push-to-talk dictation guard
+        self._dictate_target_hwnd: int = 0      # window to paste the transcript into
         self._intent_picker: IntentOverlay | None = None
         self._snip_overlay: SnipOverlay | None = None
         self._chat_window: ChatWindow | None = None
@@ -232,6 +236,10 @@ class App(QObject):
         # Persisted chat history: each item is a dict with at least
         # {"id", "project_id", "messages": [...], "context": str}.
         self._active_project_id: str = conversation_store.GENERAL_PROJECT_ID
+        # Conversation hotkey/voice prompts continue. None on startup so the
+        # first prompt always opens a fresh conversation; updated when the user
+        # selects/starts a conversation in the chat window. Not persisted.
+        self._active_conversation_idx: int | None = None
         try:
             self._all_conversations: list[dict] = conversation_store.load_conversations()
         except Exception:
@@ -261,6 +269,7 @@ class App(QObject):
         self._signals.show_memory_viewer.connect(self._open_memory_viewer)
         self._signals.bubble_highlight.connect(self._on_bubble_highlight)
         self._signals.chat_new_conversation.connect(self._on_chat_new_conversation)
+        self._signals.chat_sync_conversation.connect(self._on_chat_sync_conversation)
         self._signals.context_items_dropped.connect(self._on_context_items_dropped)
         self._signals.remove_dropped_item.connect(self._on_remove_dropped_item)
         self._signals.summon_caller.connect(self._on_summon_caller)
@@ -284,9 +293,11 @@ class App(QObject):
         # Start fs watcher (watches Desktop/Documents/Downloads in background)
         context_fetcher.start_fs_watcher()
 
-        # Pre-load the Whisper model so the first voice query has no cold start
+        # Pre-load the Whisper model so the first voice query has no cold start.
+        # on_ready fires once the model is warmed so we can surface which backend
+        # it actually landed on (and flag a silent GPU→CPU fallback).
         if macos_safety.stt_prewarm_enabled():
-            stt.prewarm()
+            stt.prewarm(on_ready=self._on_stt_ready)
 
         # Notify mods that the app is fully initialised
         from core.plugin_manager import AppContext
@@ -296,6 +307,11 @@ class App(QObject):
             model_tool_registry=get_tool_registry(),
             config=config,
         ))
+        # Surface each addon's declared startup notification (e.g. healthcheck's
+        # "loaded" message) — the macOS supervisor does this; Windows never did.
+        # Deferred so the tray icon is live and the event loop is running, else
+        # the balloon is dropped.
+        QTimer.singleShot(1500, self._show_addon_notifications)
         self._qt.aboutToQuit.connect(lambda: self.shutdown("qt quit"))
         self._signal_timer = QTimer(self)
         self._signal_timer.setInterval(250)
@@ -358,6 +374,8 @@ class App(QObject):
             on_snip=self._on_snip_hotkey,
             on_voice_start=self._on_voice_start,
             on_voice_stop=self._on_voice_stop,
+            on_dictate_start=self._on_dictate_start,
+            on_dictate_stop=self._on_dictate_stop,
             extra_hotkeys=self._addon_hotkey_callbacks(),
         )
 
@@ -407,6 +425,8 @@ class App(QObject):
             config.HOTKEY_CLEAR_CONTEXT,
             config.HOTKEY_SNIP,
             config.HOTKEY_VOICE,
+            config.HOTKEY_DICTATE,
+            config.DICTATE_MODE,
         )
 
     def _set_idle(self) -> None:
@@ -417,91 +437,32 @@ class App(QObject):
 
     @staticmethod
     def _context_mode(caller: dict, name: str) -> str:
-        mode = str(caller.get(f"context_{name}_mode") or "").strip().lower()
-        if mode in {"off", "auto", "model"}:
-            return mode
-        if name == "memory":
-            return "auto"
-        if name == "documents":
-            if caller.get("context_documents", False):
-                return "auto"
-            if caller.get("context_tools", False):
-                return "model"
-        if name in {"browser", "github"} and caller.get("context_tools", False):
-            return "model"
-        return "off"
+        return tool_modes.context_mode(caller, name)
 
     @staticmethod
     def _window_pid_win(hwnd: int) -> int:
-        if not _IS_WIN or not hwnd:
-            return 0
-        try:
-            import ctypes
-
-            pid = ctypes.c_ulong()
-            ctypes.windll.user32.GetWindowThreadProcessId(int(hwnd), ctypes.byref(pid))
-            return int(pid.value or 0)
-        except Exception:
-            return 0
+        return context_hotkey.window_pid_win(hwnd, is_win=_IS_WIN)
 
     @staticmethod
     def _window_title_win(hwnd: int) -> str:
-        if not _IS_WIN or not hwnd:
-            return ""
-        try:
-            import ctypes
-
-            user32 = ctypes.windll.user32
-            length = user32.GetWindowTextLengthW(int(hwnd))
-            if length <= 0:
-                return ""
-            buf = ctypes.create_unicode_buffer(length + 1)
-            user32.GetWindowTextW(int(hwnd), buf, length + 1)
-            return str(buf.value or "")
-        except Exception:
-            return ""
+        return context_hotkey.window_title_win(hwnd, is_win=_IS_WIN)
 
     @staticmethod
     def _is_external_context_window_win(hwnd: int) -> bool:
-        if not _IS_WIN or not hwnd:
-            return False
-        try:
-            import ctypes
-
-            user32 = ctypes.windll.user32
-            hwnd = int(hwnd)
-            if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd):
-                return False
-            if App._window_pid_win(hwnd) == os.getpid():
-                return False
-            return bool(App._window_title_win(hwnd).strip())
-        except Exception:
-            return False
+        return context_hotkey.is_external_context_window_win(
+            hwnd,
+            is_win=_IS_WIN,
+            pid_for_hwnd=App._window_pid_win,
+            title_for_hwnd=App._window_title_win,
+        )
 
     @staticmethod
     def _find_external_context_window_win(start_hwnd: int) -> int:
-        if not _IS_WIN:
-            return 0
-        try:
-            import ctypes
-
-            user32 = ctypes.windll.user32
-            gw_hwndnext = 2
-            hwnd = user32.GetWindow(int(start_hwnd or 0), gw_hwndnext) if start_hwnd else 0
-            if not hwnd:
-                hwnd = user32.GetTopWindow(0)
-            seen: set[int] = set()
-            while hwnd and len(seen) < 200:
-                hwnd_i = int(hwnd)
-                if hwnd_i in seen:
-                    break
-                seen.add(hwnd_i)
-                if App._is_external_context_window_win(hwnd_i):
-                    return hwnd_i
-                hwnd = user32.GetWindow(hwnd_i, gw_hwndnext)
-        except Exception:
-            return 0
-        return 0
+        return context_hotkey.find_external_context_window_win(
+            start_hwnd,
+            is_win=_IS_WIN,
+            is_external=App._is_external_context_window_win,
+        )
 
     def _context_target_hwnd(self, foreground_hwnd: int) -> int:
         """Use the real app behind Wisp if Wisp already owns foreground focus."""
@@ -532,118 +493,28 @@ class App(QObject):
 
     @staticmethod
     def _tool_overrides(caller: dict) -> dict[str, str]:
-        overrides = caller.get("tools")
-        if not isinstance(overrides, dict):
-            return {}
-        return {
-            str(name): str(mode).strip().lower()
-            for name, mode in overrides.items()
-            if str(mode).strip().lower() in {"on", "model", "off"}
-        }
+        return tool_modes.tool_overrides(caller)
 
     def _allowed_model_tools(self, caller: dict) -> list[str]:
-        allowed: list[str] = []
-        if self._context_mode(caller, "documents") == "model":
-            allowed.append("get_context.documents")
-        if self._context_mode(caller, "browser") == "model":
-            allowed.extend(["web_search", "get_context.browser"])
-        if self._context_mode(caller, "github") == "model":
-            allowed.extend(["git_status", "git_diff", "github_repo", "github_issue"])
-        memory_mode = self._context_mode(caller, "memory")
-        if memory_mode == "model":
-            allowed.append("memory_search")
-        if memory_mode in ("auto", "model"):
-            # Let the model decide to store durable facts even when memory is
-            # frontloaded ("auto"); this is the write half of the memory system.
-            allowed.append("memory_save")
-        overrides = self._tool_overrides(caller)
-        for name, mode in overrides.items():
-            if mode != "off" and name not in allowed:
-                allowed.append(name)
-        removed = {name for name, mode in overrides.items() if mode == "off"}
-        if removed:
-            allowed = [
-                name
-                for name in allowed
-                if name not in removed
-                and not (name.startswith("get_context.") and "get_context" in removed)
-            ]
-        return allowed
+        return tool_modes.allowed_model_tools(caller)
 
     def _pinned_model_tools(self, caller: dict) -> list[str]:
-        pinned: list[str] = []
-        if self._context_mode(caller, "documents") == "model":
-            pinned.append("get_context")
-        if self._context_mode(caller, "browser") == "model":
-            pinned.extend(["web_search", "get_context"])
-        if self._context_mode(caller, "github") == "model":
-            pinned.extend(["git_status", "git_diff", "github_repo", "github_issue"])
-        if self._context_mode(caller, "memory") == "model":
-            pinned.append("memory_search")
-        overrides = self._tool_overrides(caller)
-        pinned.extend(name for name, mode in overrides.items() if mode == "on")
-        removed = {name for name, mode in overrides.items() if mode == "off"}
-        allowed = set(self._allowed_model_tools(caller))
-        result: list[str] = []
-        for name in pinned:
-            if name == "get_context":
-                if not ({"get_context", "get_context.browser", "get_context.documents"} & allowed):
-                    continue
-            elif name not in allowed:
-                continue
-            if name in removed:
-                continue
-            if name == "get_context" and (
-                "get_context" in removed
-                or (
-                    "get_context.browser" in removed
-                    and "get_context.documents" in removed
-                )
-            ):
-                continue
-            if name not in result:
-                result.append(name)
-        return result
+        return tool_modes.pinned_model_tools(caller)
 
     def _screenshot_tool_allowed(self, caller: dict) -> bool:
-        override = self._tool_overrides(caller).get("capture_screen")
-        if override == "off":
-            return False
-        if override in {"on", "model"}:
-            return True
-        return caller.get("context_screenshot") == "model"
+        return tool_modes.screenshot_tool_allowed(caller)
 
     @staticmethod
     def _browser_context_text(snapshot) -> str:
-        active_window = getattr(snapshot, "active_window", None)
-        url = str(getattr(active_window, "url", "") or "").strip()
-        hwnd = int(getattr(active_window, "hwnd", 0) or 0)
-        content = str(getattr(snapshot, "browser_content", "") or "").strip()
-        if not content and (url or hwnd):
-            content = context_fetcher.fetch_browser_content_for_window(url, hwnd)
-        log.info("browser context url=%r hwnd=%s chars=%d", url, hwnd, len(content or ""))
-        bits: list[str] = []
-        if url:
-            bits.append(f"URL: {url}")
-        if content:
-            bits.append(content)
-        return "[Browser/Web]\n" + "\n\n".join(bits) if bits else ""
+        return context_hotkey.browser_context_text(snapshot)
 
     @staticmethod
     def _is_browser_window(window) -> bool:
-        if not window:
-            return False
-        if str(getattr(window, "url", "") or "").strip():
-            return True
-        process = str(getattr(window, "process_name", "") or "").strip().lower()
-        browser_procs = getattr(context_fetcher, "_BROWSER_PROCS", frozenset())
-        return bool(process and process in browser_procs)
+        return context_hotkey.is_browser_window(window)
 
     @classmethod
     def _context_priority_source(cls, snapshot, ambient_text: str, active_document_text: str) -> str:
-        if not active_document_text or "[Browser/Web]" not in (ambient_text or ""):
-            return ""
-        return "Browser/Web" if cls._is_browser_window(getattr(snapshot, "active_window", None)) else "Active document"
+        return context_hotkey.context_priority_source(snapshot, ambient_text, active_document_text)
 
     def _finish_idle(self, gen_id: int) -> None:
         """Return to idle only if this generation is still the active one."""
@@ -693,6 +564,42 @@ class App(QObject):
         # removes the first query's handshake.
         llm.prewarm()
         print("[main] Connections pre-warmed.")
+
+    def _on_stt_ready(self, backend: dict | None) -> None:
+        """Called (on the STT worker thread) once the Whisper model is warmed.
+        Shows the active backend so the user can see at startup whether a
+        cuda/float16 request actually got the GPU or quietly fell back."""
+        if not backend:
+            return
+        summary = f"{backend.get('model')} · {backend.get('device')} / {backend.get('compute')}"
+        if backend.get("degraded"):
+            title = "Speech model ready — GPU not in use"
+            message = (
+                f"Loaded {summary}. Expected GPU/float16; transcription quality "
+                "may be reduced. Free the GPU and restart to recover it."
+            )
+        else:
+            title = "Speech model ready"
+            message = f"Loaded {summary}."
+        # Cross-thread → queued onto the Qt main thread by the signal.
+        self._signals.status_notification.emit(title, message)
+
+    def _show_addon_notifications(self) -> None:
+        """Surface each addon's declared startup notification (matches the macOS
+        supervisor's _show_addon_notifications)."""
+        try:
+            items = self._plugin_manager.get_notifications()
+        except Exception:
+            log.exception("addon startup notifications failed")
+            return
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            message = str(item.get("message") or "").strip()
+            if not message:
+                continue
+            title = str(item.get("title") or item.get("addon_id") or "Wisp").strip()
+            self._signals.status_notification.emit(title, message)
 
     # ------------------------------------------------------------------
     # Settings applied -" reload config + re-register hotkeys live
@@ -960,6 +867,85 @@ class App(QObject):
         self._query_and_speak(text, (None, None), gen_id=gen_id)
 
     # ------------------------------------------------------------------
+    # Push-to-talk dictation (F8): transcribe straight into the focused field,
+    # no assistant. Mirrors the voice flow's icon states (orange listening, and
+    # purple thinking only while LLM cleanup runs).
+    # ------------------------------------------------------------------
+
+    def _on_dictate_start(self):
+        """HOTKEY_DICTATE key-down → remember the focused field, then record."""
+        if self._dictate_active:
+            return  # ignore held-down repeat events
+        self._dictate_active = True
+        # Snapshot the target window now, before recording/icon can steal focus,
+        # so the transcript pastes back where the user was typing.
+        from core.platform_utils import get_foreground_window
+        self._dictate_target_hwnd = self._context_target_hwnd(get_foreground_window())
+        audio.stop()  # cut off any reply still being spoken before recording
+        stt.start_recording()
+        if config.ICON_AUTO_HIDE:
+            self._signals.show_icon.emit()
+        self._signals.set_state.emit("listening")
+        self._signals.bubble_listening.emit()
+
+    def _on_dictate_stop(self):
+        """HOTKEY_DICTATE key-up → stop, transcribe, optional cleanup, paste."""
+        if not self._dictate_active:
+            return
+        self._dictate_active = False
+        # Transcription blocks (~200–600 ms) → run off the hotkey thread.
+        threading.Thread(target=self._dictate_transcribe_and_paste, daemon=True).start()
+
+    def _dictate_transcribe_and_paste(self):
+        target_hwnd = self._dictate_target_hwnd
+        self._dictate_target_hwnd = 0
+        text = stt.stop_and_transcribe()
+        if not text:
+            self._set_idle()
+            return
+        if str(getattr(config, "DICTATE_MODE", "raw")).lower() == "llm":
+            self._signals.set_state.emit("thinking")  # purple while the LLM cleans up
+            text = self._dictation_cleanup(text)
+        self._paste_dictation(text, target_hwnd)
+        self._set_idle()
+
+    def _dictation_cleanup(self, text: str) -> str:
+        """Run the raw transcript through the LLM for punctuation/filler cleanup.
+        Any failure falls back to the raw text so dictation always pastes."""
+        prompt = (
+            "This is a raw speech-to-text dictation. Fix punctuation, "
+            "capitalization, and obvious transcription slips, and remove filler "
+            "words. Output ONLY the cleaned text, nothing else."
+        )
+        try:
+            cleaned = "".join(llm.stream_rewrite(text, prompt)).strip()
+            return cleaned or text
+        except Exception as exc:  # noqa: BLE001 — never block a paste on cleanup
+            print(f"[main] Dictation cleanup failed; pasting raw transcript: {exc}")
+            return text
+
+    def _paste_dictation(self, text: str, target_hwnd: int):
+        """Paste *text* into the field that was focused when dictation started."""
+        import time
+        try:
+            from core.platform_utils import set_foreground_window, send_keys, PASTE_COMBO
+            if sys.platform == "darwin":
+                from core.platform import macos_native
+            else:
+                import pyperclip
+                pyperclip.copy(text)
+            if target_hwnd:
+                set_foreground_window(target_hwnd)
+                time.sleep(0.15)  # let the focus switch settle
+            if sys.platform == "darwin":
+                if not macos_native.paste_text(text, PASTE_COMBO):
+                    raise RuntimeError("Could not paste through macOS helper")
+            else:
+                send_keys(PASTE_COMBO)
+        except Exception as exc:
+            print(f"[main] Dictation paste error: {exc}")
+
+    # ------------------------------------------------------------------
     # Intent picker (runs on Qt main thread via signal)
     # ------------------------------------------------------------------
 
@@ -1197,19 +1183,24 @@ class App(QObject):
         # Give mods a chance to inspect or modify the prompt/context before the LLM call.
         user_message, ambient_ctx = self._plugin_manager.before_query(user_message, ambient_ctx)
 
-        # Create the conversation up front (with an empty, mutable assistant turn)
-        # so an open chat window can show the new tab and live-highlight the reply
-        # as it streams. llm_producer fills assistant_msg in once the reply lands.
+        # Append the prompt to the active conversation (the one selected in the
+        # chat window) so hotkey/voice prompts continue that thread; if none is
+        # active (fresh start), open a new conversation. assistant_msg is the
+        # empty, mutable turn llm_producer fills in once the reply lands. The
+        # conversation's prior turns become history so the model has context.
         assistant_msg: dict = {"role": "assistant", "content": ""}
-        conversation = self._new_conversation(
-            [
-                {"role": "user", "content": user_message,
-                 **({"image_base64": screenshot_b64} if screenshot_b64 else {})},
-                assistant_msg,
-            ],
-            context=ambient_ctx,
+        user_msg: dict = {"role": "user", "content": user_message,
+                          **({"image_base64": screenshot_b64} if screenshot_b64 else {})}
+        conversation, query_history, is_new_conversation = self._continue_or_new_conversation(
+            user_msg, assistant_msg, context=ambient_ctx,
         )
-        self._signals.chat_new_conversation.emit()
+        # Scope memory (explicit "remember" + the model's memory_save tool) to
+        # this conversation's project for the duration of the query.
+        self._scope_memory(conversation.get("project_id"))
+        if is_new_conversation:
+            self._signals.chat_new_conversation.emit()
+        else:
+            self._signals.chat_sync_conversation.emit(self._active_conversation_idx)
 
         self._signals.set_state.emit("thinking")
         self._signals.bubble_thinking.emit()
@@ -1287,6 +1278,7 @@ class App(QObject):
                         not screenshot_b64
                         and self._screenshot_tool_allowed(caller)
                     ),
+                    history=query_history,
                 ):
                     full_text += chunk
                     for part, is_thought in parser.feed(chunk):
@@ -1410,6 +1402,8 @@ class App(QObject):
             on_project_change=self.set_active_project,
             on_new_project=self._create_project,
             persist_fn=self._persist_conversations,
+            active_idx=self._active_conversation_idx,
+            on_select=self.set_active_conversation,
         )
         self._chat_window.destroyed.connect(lambda: setattr(self, "_chat_window", None))
         self._chat_window.show()
@@ -1485,6 +1479,13 @@ class App(QObject):
                 (m["content"] for m in reversed(messages) if m["role"] == "user"),
                 "",
             )
+            if isinstance(last_user, str) and last_user:
+                fact = extract_remember_fact(last_user)
+                if fact:
+                    try:
+                        memory.add_explicit_fact(fact)
+                    except Exception:
+                        log.exception("explicit remember (chat) failed")
             mem_ctx = memory.retrieve_relevant(last_user) if last_user else ""
             return llm.stream_response_with_history(messages, memory_context=mem_ctx)
 
@@ -1493,6 +1494,46 @@ class App(QObject):
     # ------------------------------------------------------------------
     # Projects & conversation persistence
     # ------------------------------------------------------------------
+
+    def _continue_or_new_conversation(
+        self, user_msg: dict, assistant_msg: dict, context: str = "",
+    ) -> tuple[dict, list[dict], bool]:
+        """Resolve the conversation a hotkey/voice prompt should land in.
+
+        Returns ``(conversation, history, is_new)`` where *history* is the
+        conversation's prior turns (empty for a new conversation) to replay to
+        the model, and *is_new* tells the caller whether to add a tab or refresh
+        an existing one in the chat window.
+        """
+        idx = self._active_conversation_idx
+        if idx is not None and 0 <= idx < len(self._all_conversations):
+            conv = self._all_conversations[idx]
+            history = list(conv.get("messages", []))  # snapshot prior turns
+            conv.setdefault("messages", [])
+            conv["messages"].extend([user_msg, assistant_msg])
+            self._persist_conversations()
+            return conv, history, False
+        conv = self._new_conversation([user_msg, assistant_msg], context=context)
+        self._active_conversation_idx = len(self._all_conversations) - 1
+        return conv, [], True
+
+    def set_active_conversation(self, idx: int | None) -> None:
+        """Called by the chat window when the user selects/starts a conversation.
+
+        Memory scope follows the selected conversation's project so facts saved
+        during a hotkey/voice follow-up land in the right pool.
+        """
+        if idx is None:
+            self._active_conversation_idx = None
+            self._scope_memory(self._active_project_id)
+        elif 0 <= idx < len(self._all_conversations):
+            self._active_conversation_idx = idx
+            self._scope_memory(self._all_conversations[idx].get("project_id"))
+
+    def _on_chat_sync_conversation(self, idx: int) -> None:
+        """A hotkey/voice prompt appended to an existing conversation -> refresh it."""
+        if self._chat_window is not None:
+            self._chat_window.sync_conversation(idx)
 
     def _new_conversation(self, messages: list[dict], context: str = "") -> dict:
         """Append a new conversation stamped with the active project.
@@ -1515,17 +1556,26 @@ class App(QObject):
         except Exception:
             log.exception("failed to persist conversations")
 
-    def _apply_memory_project(self) -> None:
-        """Scope long-term memory writes/reads to the active project (General = global)."""
-        pid = self._active_project_id
+    def _scope_memory(self, project_id: str | None) -> None:
+        """Point long-term memory at a project (General/None = global pool)."""
+        pid = project_id or conversation_store.GENERAL_PROJECT_ID
         memory_module.set_active_project(
             None if pid == conversation_store.GENERAL_PROJECT_ID else pid
         )
 
+    def _apply_memory_project(self) -> None:
+        """Scope memory to the dropdown project (used at startup / no active chat)."""
+        self._scope_memory(self._active_project_id)
+
     def set_active_project(self, project_id: str | None) -> None:
-        """Set the project new conversations and memory operations are scoped to."""
+        """Set the project NEW conversations are filed under (the dropdown).
+
+        Memory scope follows the *active conversation* when one exists, so the
+        dropdown only re-scopes memory while nothing is being continued.
+        """
         self._active_project_id = project_id or conversation_store.GENERAL_PROJECT_ID
-        self._apply_memory_project()
+        if self._active_conversation_idx is None:
+            self._scope_memory(self._active_project_id)
 
     def _create_project(self, name: str) -> dict | None:
         """Create + persist a project; returns the project dict (or None on error)."""

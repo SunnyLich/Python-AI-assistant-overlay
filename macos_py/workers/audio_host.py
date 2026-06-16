@@ -6,8 +6,9 @@ import os
 import threading
 import time
 import wave
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from macos_py.service_host import run_host
 
@@ -130,6 +131,7 @@ def tts_synthesize(text: str = "", voice: str | None = None) -> dict[str, Any]:
         return {"path": str(path), "sample_rate": 22_050, "bytes": 2048, "provider": "fake"}
 
     import numpy as np
+
     import config
     from core import tts
 
@@ -232,9 +234,9 @@ def audio_stop() -> dict[str, Any]:
 
 
 def audio_speed_boost(enabled: bool = False) -> dict[str, Any]:
-    from core import audio
+    from core import audio_state
 
-    audio.set_tts_speed_boost(bool(enabled))
+    audio_state.set_tts_speed_boost(bool(enabled))
     return {"enabled": bool(enabled)}
 
 

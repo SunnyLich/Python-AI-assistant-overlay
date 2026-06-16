@@ -309,6 +309,65 @@ def test_memory_save_note_only_when_tool_offered():
     assert client._with_memory_save_note(base, None) == base
 
 
+def test_save_memory_default_scope_follows_active_project(tmp_path, monkeypatch):
+    fallback = tmp_path / "facts_fallback.json"
+    monkeypatch.setattr(store, "_MEMORY_DIR", str(tmp_path))
+    monkeypatch.setattr(store, "_FALLBACK_PATH", str(fallback))
+
+    manager = _fallback_manager()
+    try:
+        store.set_active_project("proj-9")
+        # No scope -> defaults to the active project (context-anchored).
+        result = manager.save_memory("This project ships on Friday")
+        assert result["ok"] and result["scope"] == "project" and result["project"] == "proj-9"
+        # Explicit general promotes the fact out of the project even mid-project.
+        promoted = manager.save_memory("I prefer concise answers", scope="general")
+        assert promoted["ok"] and promoted["scope"] == "general" and promoted["project"] is None
+    finally:
+        store.set_active_project(None)
+
+
+def test_add_explicit_fact_defaults_to_active_project(tmp_path, monkeypatch):
+    fallback = tmp_path / "facts_fallback.json"
+    monkeypatch.setattr(store, "_MEMORY_DIR", str(tmp_path))
+    monkeypatch.setattr(store, "_FALLBACK_PATH", str(fallback))
+
+    manager = _fallback_manager()
+    try:
+        store.set_active_project("proj-7")
+        manager.add_explicit_fact("the deadline is next Friday")
+        stored = next(
+            f for f in store._fallback_get_all_from_path() if "deadline" in f["text"]
+        )
+        assert stored.get("project") == "proj-7"
+        assert stored.get("category") == "project_context"
+    finally:
+        store.set_active_project(None)
+
+
+def test_update_fact_moves_scope_between_general_and_project(tmp_path, monkeypatch):
+    fallback = tmp_path / "facts_fallback.json"
+    monkeypatch.setattr(store, "_MEMORY_DIR", str(tmp_path))
+    monkeypatch.setattr(store, "_FALLBACK_PATH", str(fallback))
+
+    manager = _fallback_manager()
+    store.set_active_project(None)
+    manager.add_fact_manual("I like dark mode", project="")  # general
+    fid = store._fallback_get_all_from_path()[0]["id"]
+
+    # Move it into a specific project via the viewer's update path.
+    manager.update_fact(fid, "I like dark mode", project="proj-3")
+    moved = store._fallback_get_all_from_path()[0]
+    assert moved["project"] == "proj-3"
+    assert moved["category"] == "project_context"
+
+    # And back to General.
+    manager.update_fact(fid, "I like dark mode", project="")
+    back = store._fallback_get_all_from_path()[0]
+    assert (back.get("project") or "") == ""
+    assert back["category"] == "general"
+
+
 def test_memory_save_tool_executor(monkeypatch):
     from core.llm_clients import client
 

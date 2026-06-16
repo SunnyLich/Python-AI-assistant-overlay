@@ -3,8 +3,36 @@
   <context>
     <name>Wisp</name>
     <message>
+      <source> Logs</source>
+      <translation> 記錄</translation>
+    </message>
+    <message>
+      <source> Settings</source>
+      <translation> 設置</translation>
+    </message>
+    <message>
+      <source>'Let model decide' screenshots do not work with ChatGPT or Copilot. Pick a different Chat model, or turn screenshots On instead.</source>
+      <translation>「讓模型決定」截圖不適用於 ChatGPT 或 Copilot。請選擇其他聊天模型，或改為開啟截圖。</translation>
+    </message>
+    <message>
+      <source>(missing task.json)</source>
+      <translation>（缺少 task.json）</translation>
+    </message>
+    <message>
+      <source>(no diff artifact)</source>
+      <translation>（沒有 diff 成果）</translation>
+    </message>
+    <message>
+      <source>(no final report)</source>
+      <translation>（沒有最終報告）</translation>
+    </message>
+    <message>
       <source>+ Add API Key</source>
       <translation>+ 添加 API 密鑰</translation>
+    </message>
+    <message>
+      <source>+ Add Caller Hotkey</source>
+      <translation>+ 新增呼叫快捷鍵</translation>
     </message>
     <message>
       <source>+ Add fallback model</source>
@@ -13,6 +41,30 @@
     <message>
       <source>+ Add row</source>
       <translation>+ 添加行</translation>
+    </message>
+    <message>
+      <source>Ask anything</source>
+      <translation>問任何問題</translation>
+    </message>
+    <message>
+      <source>Custom prompt</source>
+      <translation>自訂提示詞</translation>
+    </message>
+    <message>
+      <source>ESC to cancel</source>
+      <translation>ESC 取消</translation>
+    </message>
+    <message>
+      <source>1 (fastest)</source>
+      <translation>1（最快）</translation>
+    </message>
+    <message>
+      <source>5 (recommended)</source>
+      <translation>5（建議）</translation>
+    </message>
+    <message>
+      <source>8 (most accurate)</source>
+      <translation>8（最準確）</translation>
     </message>
     <message>
       <source>AI Assistant Icon</source>
@@ -25,6 +77,14 @@
     <message>
       <source>API Key</source>
       <translation>API 密鑰</translation>
+    </message>
+    <message>
+      <source>API Keys</source>
+      <translation>API 金鑰</translation>
+    </message>
+    <message>
+      <source>API key</source>
+      <translation>API 金鑰</translation>
     </message>
     <message>
       <source>API keys are saved to the OS keychain. Leave blank to keep the stored key.</source>
@@ -44,15 +104,19 @@
     </message>
     <message>
       <source>Add Agent</source>
-      <translation>添加代理</translation>
+      <translation>新增代理</translation>
     </message>
     <message>
       <source>Add Communication</source>
-      <translation>添加通信</translation>
+      <translation>新增通訊</translation>
     </message>
     <message>
       <source>Add a message.</source>
       <translation>請添加消息。</translation>
+    </message>
+    <message>
+      <source>Add a row for each provider you want to use. Alias is optional - useful when you have multiple keys for the same provider. Custom endpoints are configured below.</source>
+      <translation>為每個要使用的提供者新增一列。別名為選填，當同一提供者有多個金鑰時很有用。自訂端點在下方設定。</translation>
     </message>
     <message>
       <source>Add a short instruction, correction, or context update.</source>
@@ -92,15 +156,19 @@
     </message>
     <message>
       <source>Addon Manager</source>
-      <translation>插件管理器</translation>
+      <translation>附加元件管理器</translation>
     </message>
     <message>
       <source>Addons</source>
-      <translation>插件</translation>
+      <translation>附加元件</translation>
     </message>
     <message>
       <source>Addons are Python packages in the &lt;code&gt;addons/&lt;/code&gt; folder. Each addon runs in its own host process.</source>
       <translation>插件是 &lt;code&gt;addons/&lt;/code&gt; 檔案夾中的 Python 包。每個插件都會在自己的宿主進程中運行。</translation>
+    </message>
+    <message>
+      <source>Addons are Python packages in the addons/ folder. Each addon runs in its own host process.</source>
+      <translation>附加元件是 addons/ 資料夾中的 Python 套件。每個附加元件都在自己的主機進程中執行。</translation>
     </message>
     <message>
       <source>Advanced Settings</source>
@@ -112,11 +180,19 @@
     </message>
     <message>
       <source>Agent Detail</source>
-      <translation>代理詳情</translation>
+      <translation>代理詳細資訊</translation>
     </message>
     <message>
       <source>Agent Diff</source>
       <translation>代理差異</translation>
+    </message>
+    <message>
+      <source>Agent Meeting</source>
+      <translation>代理會議</translation>
+    </message>
+    <message>
+      <source>Agent Task</source>
+      <translation>代理任務</translation>
     </message>
     <message>
       <source>Agent Task History</source>
@@ -125,6 +201,10 @@
     <message>
       <source>Agent Task Spec</source>
       <translation>代理任務規格</translation>
+    </message>
+    <message>
+      <source>Agent task cancelled.</source>
+      <translation>代理任務已取消。</translation>
     </message>
     <message>
       <source>Agent task history...</source>
@@ -143,6 +223,10 @@
       <translation>代理與通信</translation>
     </message>
     <message>
+      <source>Alias</source>
+      <translation>別名</translation>
+    </message>
+    <message>
       <source>Allow globs</source>
       <translation>允許的 glob</translation>
     </message>
@@ -157,6 +241,10 @@
     <message>
       <source>Ambient</source>
       <translation>環境</translation>
+    </message>
+    <message>
+      <source>Any OpenAI-compatible endpoint, including Ollama and LM Studio. Select Custom in a model row below after setting the base URL.</source>
+      <translation>任何相容 OpenAI 的端點，包括 Ollama 和 LM Studio。設定基礎 URL 後，在下方模型列中選擇 Custom。</translation>
     </message>
     <message>
       <source>App</source>
@@ -175,10 +263,6 @@
       <translation>應用到全部</translation>
     </message>
     <message>
-      <source>Confirm</source>
-      <translation>確認</translation>
-    </message>
-    <message>
       <source>Approvals</source>
       <translation>審批</translation>
     </message>
@@ -188,11 +272,19 @@
     </message>
     <message>
       <source>Approve Addon Dependencies</source>
-      <translation>批准插件依賴</translation>
+      <translation>批准附加元件依賴</translation>
     </message>
     <message>
       <source>Approve env</source>
       <translation>批准環境</translation>
+    </message>
+    <message>
+      <source>Approve or decline in the Agent Task window.</source>
+      <translation>請在代理任務視窗中批准或拒絕。</translation>
+    </message>
+    <message>
+      <source>Arabic</source>
+      <translation>阿拉伯語</translation>
     </message>
     <message>
       <source>Ask before final changes</source>
@@ -211,8 +303,16 @@
       <translation>身份驗證</translation>
     </message>
     <message>
+      <source>Auto (GPU if available)</source>
+      <translation>自動（有 GPU 時使用）</translation>
+    </message>
+    <message>
       <source>Auto document chars</source>
       <translation>自動文件字符數</translation>
+    </message>
+    <message>
+      <source>Auto screenshot needs an Image model. Pick one under Image model.</source>
+      <translation>自動截圖需要一個圖像模型。請在「圖像模型」下選擇一個。</translation>
     </message>
     <message>
       <source>Auto-detect</source>
@@ -239,8 +339,16 @@
       <translation>基礎 URL</translation>
     </message>
     <message>
+      <source>Beam size</source>
+      <translation>束寬</translation>
+    </message>
+    <message>
       <source>Block globs</source>
       <translation>阻止的 glob</translation>
+    </message>
+    <message>
+      <source>Briefed</source>
+      <translation>已簡報</translation>
     </message>
     <message>
       <source>Briefing</source>
@@ -263,8 +371,30 @@
       <translation>瀏覽器/網頁：</translation>
     </message>
     <message>
+      <source>Browser/Web:
+Off — no web/browser tools.
+On — read the current browser page before sending the prompt.
+Let model decide — expose web search and browser page fetch tools.</source>
+      <translation>瀏覽器/網頁：
+關閉 — 不使用網頁/瀏覽器工具。
+開啟 — 在傳送提示詞前讀取目前瀏覽器頁面。
+讓模型決定 — 提供網頁搜尋和瀏覽器頁面擷取工具。</translation>
+    </message>
+    <message>
+      <source>Browser/Web: </source>
+      <translation>瀏覽器/網頁：</translation>
+    </message>
+    <message>
+      <source>Builder</source>
+      <translation>建構者</translation>
+    </message>
+    <message>
       <source>CALLER HOTKEYS</source>
       <translation>調用快捷鍵</translation>
+    </message>
+    <message>
+      <source>CHAT MODEL</source>
+      <translation>聊天模型</translation>
     </message>
     <message>
       <source>CONTEXT TOOLS</source>
@@ -277,6 +407,10 @@
     <message>
       <source>Caller Hotkeys</source>
       <translation>調用快捷鍵</translation>
+    </message>
+    <message>
+      <source>Calling model</source>
+      <translation>正在呼叫模型</translation>
     </message>
     <message>
       <source>Cancel</source>
@@ -315,20 +449,16 @@
       <translation>聊天模型</translation>
     </message>
     <message>
-      <source>CHAT MODEL</source>
-      <translation>聊天模型</translation>
-    </message>
-    <message>
-      <source>Codex (ChatGPT subscription)</source>
-      <translation>Codex（ChatGPT 訂閱）</translation>
-    </message>
-    <message>
-      <source>Codex (ChatGPT subscription) [OAuth]</source>
-      <translation>Codex（ChatGPT 訂閱）[OAuth]</translation>
+      <source>Chat model uses a subscription login. You may need to sign in again after restart. For fewer login issues, use an API-key provider.</source>
+      <translation>聊天模型使用訂閱登入。重新啟動後你可能需要重新登入。想減少登入問題，請使用 API 密鑰提供者。</translation>
     </message>
     <message>
       <source>ChatGPT Pro / Plus</source>
       <translation>ChatGPT Pro / Plus</translation>
+    </message>
+    <message>
+      <source>ChatGPT cannot use live context tools here. Use On to attach context up front, or choose another Chat model for Let model decide.</source>
+      <translation>ChatGPT 在這裡無法使用即時上下文工具。請用「開啟」預先附加上下文，或為「讓模型決定」選擇其他聊天模型。</translation>
     </message>
     <message>
       <source>Checking status...</source>
@@ -363,16 +493,16 @@
       <translation>請選取兩個不同的代理。</translation>
     </message>
     <message>
-      <source>Choose which saved credential and model powers each purpose.</source>
-      <translation>選擇每個用途使用哪個已儲存憑證和模型。</translation>
-    </message>
-    <message>
       <source>Choose which installed/addon tools this hotkey may use</source>
       <translation>選取此快捷鍵可使用的已安裝/插件工具</translation>
     </message>
     <message>
       <source>Choose which installed/addon tools voice queries may use</source>
       <translation>選取語音查詢可使用的已安裝/插件工具</translation>
+    </message>
+    <message>
+      <source>Choose which saved credential and model powers each purpose.</source>
+      <translation>選擇每個用途使用哪個已儲存憑證和模型。</translation>
     </message>
     <message>
       <source>Clear context</source>
@@ -389,6 +519,14 @@
     <message>
       <source>Close</source>
       <translation>關閉</translation>
+    </message>
+    <message>
+      <source>Codex (ChatGPT subscription)</source>
+      <translation>Codex（ChatGPT 訂閱）</translation>
+    </message>
+    <message>
+      <source>Codex (ChatGPT subscription) [OAuth]</source>
+      <translation>Codex（ChatGPT 訂閱）[OAuth]</translation>
     </message>
     <message>
       <source>Colors for the theme selected above. Light and Dark each keep their
@@ -412,15 +550,19 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     </message>
     <message>
       <source>Communications</source>
-      <translation>通信</translation>
+      <translation>通訊</translation>
     </message>
     <message>
       <source>Completion</source>
-      <translation>完成條件</translation>
+      <translation>完成</translation>
     </message>
     <message>
       <source>Compute type</source>
       <translation>計算類型</translation>
+    </message>
+    <message>
+      <source>Confirm</source>
+      <translation>確認</translation>
     </message>
     <message>
       <source>Consolidation interval (min):</source>
@@ -429,6 +571,10 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     <message>
       <source>Context</source>
       <translation>上下文</translation>
+    </message>
+    <message>
+      <source>Context · </source>
+      <translation>上下文 · </translation>
     </message>
     <message>
       <source>Context:</source>
@@ -447,8 +593,20 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>對話</translation>
     </message>
     <message>
+      <source>Conversation </source>
+      <translation>對話 </translation>
+    </message>
+    <message>
+      <source>Coordinator</source>
+      <translation>協調員</translation>
+    </message>
+    <message>
       <source>Copied</source>
       <translation>已複製</translation>
+    </message>
+    <message>
+      <source>Copilot cannot read screenshots. Pick a different Image model.</source>
+      <translation>Copilot 無法讀取截圖。請選擇其他圖像模型。</translation>
     </message>
     <message>
       <source>Copy from Last Task</source>
@@ -463,8 +621,12 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>無法載入工具</translation>
     </message>
     <message>
+      <source>Could not load tools: </source>
+      <translation>無法載入工具：</translation>
+    </message>
+    <message>
       <source>Create Pair Exchanges</source>
-      <translation>創建成對交換</translation>
+      <translation>建立成對交換</translation>
     </message>
     <message>
       <source>Create a scoped autonomous task. The selected folder is the future filesystem boundary for reads and writes.</source>
@@ -473,6 +635,14 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     <message>
       <source>Create files</source>
       <translation>創建檔案</translation>
+    </message>
+    <message>
+      <source>Current objective</source>
+      <translation>目前目標</translation>
+    </message>
+    <message>
+      <source>Custom (OpenAI-compatible)</source>
+      <translation>自訂（相容 OpenAI）</translation>
     </message>
     <message>
       <source>Custom / enter manually?</source>
@@ -491,6 +661,10 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>自定義提供商</translation>
     </message>
     <message>
+      <source>Custom provider</source>
+      <translation>自訂提供者</translation>
+    </message>
+    <message>
       <source>Custom provider key stored in OS keychain</source>
       <translation>自訂提供商密鑰已儲存到系統鑰匙串</translation>
     </message>
@@ -505,6 +679,10 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     <message>
       <source>Decline</source>
       <translation>拒絕</translation>
+    </message>
+    <message>
+      <source>Decoding beam width. 5 (Whisper's default) is noticeably more accurate than greedy (1) for a small speed cost; raise it for tricky audio.</source>
+      <translation>解碼束寬。5（Whisper 預設）比贪心解碼（1）明顯更準，只會稍微變慢；音訊較難時可以調高。</translation>
     </message>
     <message>
       <source>Define agents and their exchange rules in the separate communication window.</source>
@@ -544,7 +722,7 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     </message>
     <message>
       <source>Dependency env: ready</source>
-      <translation>依賴環境：就緒</translation>
+      <translation>依賴環境：已就緒</translation>
     </message>
     <message>
       <source>Dependency environment is not ready.</source>
@@ -567,6 +745,10 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>開發者 OAuth 應用客戶端 ID 覆蓋</translation>
     </message>
     <message>
+      <source>Device</source>
+      <translation>裝置</translation>
+    </message>
+    <message>
       <source>Dictated text</source>
       <translation>聽寫文字</translation>
     </message>
@@ -576,7 +758,11 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     </message>
     <message>
       <source>Discard the current agents and communications and restore the defaults</source>
-      <translation>丟棄當前代理和通信並恢復預設值</translation>
+      <translation>放棄目前代理和通訊，並還原預設值</translation>
+    </message>
+    <message>
+      <source>Done</source>
+      <translation>已完成</translation>
     </message>
     <message>
       <source>Done when</source>
@@ -619,8 +805,28 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>確認鍵：</translation>
     </message>
     <message>
+      <source>Environment: </source>
+      <translation>環境：</translation>
+    </message>
+    <message>
+      <source>Error reading status: </source>
+      <translation>讀取狀態時發生錯誤：</translation>
+    </message>
+    <message>
+      <source>Error:</source>
+      <translation>錯誤：</translation>
+    </message>
+    <message>
+      <source>Error: </source>
+      <translation>錯誤：</translation>
+    </message>
+    <message>
       <source>Example: Add tray launch action mockup</source>
       <translation>示例：添加託盤啟動操作原型</translation>
+    </message>
+    <message>
+      <source>Explicit handoff to </source>
+      <translation>明確交接給 </translation>
     </message>
     <message>
       <source>Facts the assistant remembers about you across sessions. Click a fact to edit it; changes save immediately.</source>
@@ -633,6 +839,18 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     <message>
       <source>Fallback Model</source>
       <translation>備用模型</translation>
+    </message>
+    <message>
+      <source>Fetch GitHub repository metadata using the signed-in GitHub OAuth account.</source>
+      <translation>使用已登入的 GitHub OAuth 帳號擷取 GitHub 儲存庫後設資料。</translation>
+    </message>
+    <message>
+      <source>Fetch a GitHub issue or pull request by repository and number.</source>
+      <translation>按儲存庫和編號擷取 GitHub issue 或 pull request。</translation>
+    </message>
+    <message>
+      <source>Fetch the latest model names from the provider</source>
+      <translation>從提供者擷取最新模型名稱</translation>
     </message>
     <message>
       <source>Fields have been filled from the last task.</source>
@@ -651,6 +869,14 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>最終報告</translation>
     </message>
     <message>
+      <source>Final report appears here when the task finishes.</source>
+      <translation>任務完成後，最終報告會顯示在這裡。</translation>
+    </message>
+    <message>
+      <source>Final report:</source>
+      <translation>最終報告：</translation>
+    </message>
+    <message>
       <source>Fine-grained PAT with Copilot Requests: Read-only. Stored in OS keychain.</source>
       <translation>帶 Copilot Requests: Read-only 權限的細粒度 PAT。存入系統鑰匙串。</translation>
     </message>
@@ -665,6 +891,10 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     <message>
       <source>French</source>
       <translation>法語</translation>
+    </message>
+    <message>
+      <source>From</source>
+      <translation>來自</translation>
     </message>
     <message>
       <source>Full turn max tokens</source>
@@ -695,6 +925,20 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>Git/GitHub：</translation>
     </message>
     <message>
+      <source>Git/GitHub:
+Off — no git or GitHub tools.
+On — read local git status and diff before sending the prompt.
+Let model decide — expose git status/diff and GitHub repo/issue tools.</source>
+      <translation>Git/GitHub：
+關閉 — 不使用 git 或 GitHub 工具。
+開啟 — 在傳送提示詞前讀取本地 git 狀態和 diff。
+讓模型決定 — 提供 git status/diff 和 GitHub 儲存庫/issue 工具。</translation>
+    </message>
+    <message>
+      <source>Git/GitHub: </source>
+      <translation>Git/GitHub：</translation>
+    </message>
+    <message>
       <source>GitHub Copilot</source>
       <translation>GitHub Copilot</translation>
     </message>
@@ -709,6 +953,10 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     <message>
       <source>Go to:</source>
       <translation>前往：</translation>
+    </message>
+    <message>
+      <source>Handing off to </source>
+      <translation>正在交接給 </translation>
     </message>
     <message>
       <source>Heads up</source>
@@ -747,6 +995,10 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>按住錄製語音</translation>
     </message>
     <message>
+      <source>Hooks: </source>
+      <translation>事件掛鉤：</translation>
+    </message>
+    <message>
       <source>Hotkey...</source>
       <translation>快捷鍵...</translation>
     </message>
@@ -759,6 +1011,10 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>代理如何判斷任務已完成：測試通過、檔案已修改、PR 已創建、摘要已生成等。</translation>
     </message>
     <message>
+      <source>IMAGE MODEL</source>
+      <translation>圖像模型</translation>
+    </message>
+    <message>
       <source>INSTALLED + PLUGIN TOOLS</source>
       <translation>已安裝 + 插件工具</translation>
     </message>
@@ -767,16 +1023,32 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>圖示大小（像素）</translation>
     </message>
     <message>
+      <source>Image model</source>
+      <translation>圖像模型</translation>
+    </message>
+    <message>
+      <source>Image model uses a subscription login. You may need to sign in again after restart. For fewer login issues, use an API-key provider.</source>
+      <translation>圖像模型使用訂閱登入。重新啟動後你可能需要重新登入。想減少登入問題，請使用 API 密鑰提供者。</translation>
+    </message>
+    <message>
+      <source>Implementation</source>
+      <translation>實作</translation>
+    </message>
+    <message>
+      <source>Implementer</source>
+      <translation>實作者</translation>
+    </message>
+    <message>
       <source>Install Addon Archive</source>
-      <translation>安裝插件壓縮包</translation>
+      <translation>安裝附加元件壓縮檔</translation>
     </message>
     <message>
       <source>Install Addon Folder</source>
-      <translation>安裝插件檔案夾</translation>
+      <translation>安裝附加元件資料夾</translation>
     </message>
     <message>
       <source>Install archive</source>
-      <translation>安裝壓縮包</translation>
+      <translation>安裝壓縮檔</translation>
     </message>
     <message>
       <source>Install env</source>
@@ -784,27 +1056,31 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     </message>
     <message>
       <source>Install folder</source>
-      <translation>安裝檔案夾</translation>
+      <translation>安裝資料夾</translation>
     </message>
     <message>
       <source>Install or rebuild this addon's dependency environment</source>
-      <translation>安裝或重建此插件的依賴環境</translation>
+      <translation>安裝或重建此附加元件的依賴環境</translation>
+    </message>
+    <message>
+      <source>Install or rebuild this environment now?</source>
+      <translation>現在安裝或重建此環境嗎？</translation>
     </message>
     <message>
       <source>Invalid Agent Task</source>
       <translation>無效的代理任務</translation>
     </message>
     <message>
+      <source>Italian</source>
+      <translation>義大利語</translation>
+    </message>
+    <message>
       <source>Japanese</source>
       <translation>日語</translation>
     </message>
     <message>
-      <source>Image model</source>
-      <translation>圖像模型</translation>
-    </message>
-    <message>
-      <source>IMAGE MODEL</source>
-      <translation>圖像模型</translation>
+      <source>Joining briefing</source>
+      <translation>正在加入簡報</translation>
     </message>
     <message>
       <source>Key</source>
@@ -813,6 +1089,10 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     <message>
       <source>Keybinds</source>
       <translation>快捷鍵</translation>
+    </message>
+    <message>
+      <source>Keychain error: </source>
+      <translation>鑰匙串錯誤：</translation>
     </message>
     <message>
       <source>Korean</source>
@@ -829,6 +1109,14 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     <message>
       <source>Last chat</source>
       <translation>最近聊天</translation>
+    </message>
+    <message>
+      <source>Last tool:</source>
+      <translation>上一個工具：</translation>
+    </message>
+    <message>
+      <source>Latest thought</source>
+      <translation>最新想法</translation>
     </message>
     <message>
       <source>Legacy tool folder</source>
@@ -848,7 +1136,11 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     </message>
     <message>
       <source>Live Log</source>
-      <translation>實時記錄</translation>
+      <translation>即時記錄</translation>
+    </message>
+    <message>
+      <source>Live: </source>
+      <translation>實時：</translation>
     </message>
     <message>
       <source>Loading conversation...</source>
@@ -857,6 +1149,22 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     <message>
       <source>Local faster-whisper model. small is a good first upgrade for Chinese; medium/large-v3 are heavier.</source>
       <translation>本地 faster-whisper 模型。中文首選可升級到 small；medium/large-v3 更重。</translation>
+    </message>
+    <message>
+      <source>Logged in</source>
+      <translation>已登入</translation>
+    </message>
+    <message>
+      <source>Logged in - account </source>
+      <translation>已登入 · 帳號 </translation>
+    </message>
+    <message>
+      <source>Logged in as </source>
+      <translation>已登入為 </translation>
+    </message>
+    <message>
+      <source>Logged in • account </source>
+      <translation>已登入 • 帳戶 </translation>
     </message>
     <message>
       <source>Logs</source>
@@ -919,6 +1227,24 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>記憶：</translation>
     </message>
     <message>
+      <source>Memory:
+Off — do not use stored facts for this caller.
+On — fetch relevant stored facts before sending the prompt.
+Let model decide — expose a memory search tool during the answer.</source>
+      <translation>記憶：
+關閉 — 此呼叫不使用已儲存事實。
+開啟 — 在傳送提示詞前擷取相關已儲存事實。
+讓模型決定 — 在回答期間提供記憶搜尋工具。</translation>
+    </message>
+    <message>
+      <source>Memory: </source>
+      <translation>記憶：</translation>
+    </message>
+    <message>
+      <source>Message</source>
+      <translation>訊息</translation>
+    </message>
+    <message>
       <source>Message... (Enter to send, Shift+Enter for newline)</source>
       <translation>輸入消息...（Enter 發送，Shift+Enter 換行）</translation>
     </message>
@@ -927,16 +1253,36 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>模型</translation>
     </message>
     <message>
+      <source>Model Trace</source>
+      <translation>模型追蹤</translation>
+    </message>
+    <message>
+      <source>Model error; retrying</source>
+      <translation>模型錯誤；正在重試</translation>
+    </message>
+    <message>
+      <source>Model health</source>
+      <translation>模型健康狀態</translation>
+    </message>
+    <message>
       <source>Model routing</source>
       <translation>模型路由</translation>
     </message>
     <message>
-      <source>Model Trace</source>
-      <translation>模型軌跡</translation>
+      <source>Model tools: </source>
+      <translation>模型工具：</translation>
+    </message>
+    <message>
+      <source>Name</source>
+      <translation>名稱</translation>
     </message>
     <message>
       <source>Name:</source>
       <translation>名稱：</translation>
+    </message>
+    <message>
+      <source>Needs approval</source>
+      <translation>需要批准</translation>
     </message>
     <message>
       <source>Nested value chars</source>
@@ -959,8 +1305,16 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>沒有上次任務</translation>
     </message>
     <message>
+      <source>No activity yet.</source>
+      <translation>還沒有活動。</translation>
+    </message>
+    <message>
       <source>No addons loaded. Drop a folder with addon.toml into addons/.</source>
       <translation>未載入插件。將包含 addon.toml 的檔案夾放入 addons/。</translation>
+    </message>
+    <message>
+      <source>No agent task runs yet.</source>
+      <translation>還沒有代理任務執行記錄。</translation>
     </message>
     <message>
       <source>No conversations yet.
@@ -969,6 +1323,14 @@ Press Ctrl+Q to ask something.</source>
       <translation>還沒有對話。
 
 按 Ctrl+Q 提問。</translation>
+    </message>
+    <message>
+      <source>No current objective</source>
+      <translation>沒有目前目標</translation>
+    </message>
+    <message>
+      <source>No current objective.</source>
+      <translation>沒有目前目標。</translation>
     </message>
     <message>
       <source>No extra tools found. Install script tools under the legacy tool folder, or enable addons that add tools.</source>
@@ -986,15 +1348,27 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
     </message>
     <message>
       <source>No log output yet.</source>
-      <translation>暫無記錄輸出。</translation>
+      <translation>還沒有記錄輸出。</translation>
+    </message>
+    <message>
+      <source>No messages yet.</source>
+      <translation>還沒有訊息。</translation>
+    </message>
+    <message>
+      <source>No packages declared</source>
+      <translation>未宣告套件</translation>
     </message>
     <message>
       <source>No plugins found.</source>
-      <translation>未找到插件。</translation>
+      <translation>找不到附加元件。</translation>
     </message>
     <message>
       <source>No previous task found to copy.</source>
       <translation>沒有找到可複製的上次任務。</translation>
+    </message>
+    <message>
+      <source>No thought yet.</source>
+      <translation>還沒有想法。</translation>
     </message>
     <message>
       <source>None</source>
@@ -1033,44 +1407,16 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>預設關閉以避免雜亂。明確的 remember/note 命令仍會保存事實。</translation>
     </message>
     <message>
+      <source>Ollama (local)</source>
+      <translation>Ollama（本機）</translation>
+    </message>
+    <message>
       <source>On</source>
       <translation>開啟</translation>
     </message>
     <message>
       <source>On the ChatGPT provider, 'Let model decide' context tools are not run as live Wisp tool calls. Open documents can be injected up front when enabled, but browser/web and GitHub tool calls will not run live on that route.</source>
       <translation>使用 ChatGPT 提供者時，「讓模型決定」的上下文工具不會以即時 Wisp 工具呼叫執行。啟用時可預先注入已開啟文件，但瀏覽器/網頁與 GitHub 工具呼叫不會在此路由上即時執行。</translation>
-    </message>
-    <message>
-      <source>Auto screenshot needs an Image model. Pick one under Image model.</source>
-      <translation>自動截圖需要一個圖像模型。請在「圖像模型」下選擇一個。</translation>
-    </message>
-    <message>
-      <source>Copilot cannot read screenshots. Pick a different Image model.</source>
-      <translation>Copilot 無法讀取截圖。請選擇其他圖像模型。</translation>
-    </message>
-    <message>
-      <source>This Image model may not read screenshots. Pick a model with image support.</source>
-      <translation>這個圖像模型可能無法讀取截圖。請選擇支援圖像的模型。</translation>
-    </message>
-    <message>
-      <source>'Let model decide' screenshots do not work with ChatGPT or Copilot. Pick a different Chat model, or turn screenshots On instead.</source>
-      <translation>「讓模型決定」截圖不適用於 ChatGPT 或 Copilot。請選擇其他聊天模型，或改為開啟截圖。</translation>
-    </message>
-    <message>
-      <source>This Chat model may not read screenshots. Pick an image-capable Chat model, or use Image model with the same provider.</source>
-      <translation>這個聊天模型可能無法讀取截圖。請選擇支援圖像的聊天模型，或使用同一提供者的圖像模型。</translation>
-    </message>
-    <message>
-      <source>ChatGPT cannot use live context tools here. Use On to attach context up front, or choose another Chat model for Let model decide.</source>
-      <translation>ChatGPT 在這裡無法使用即時上下文工具。請用「開啟」預先附加上下文，或為「讓模型決定」選擇其他聊天模型。</translation>
-    </message>
-    <message>
-      <source>Image model uses a subscription login. You may need to sign in again after restart. For fewer login issues, use an API-key provider.</source>
-      <translation>圖像模型使用訂閱登入。重新啟動後你可能需要重新登入。想減少登入問題，請使用 API 密鑰提供者。</translation>
-    </message>
-    <message>
-      <source>Chat model uses a subscription login. You may need to sign in again after restart. For fewer login issues, use an API-key provider.</source>
-      <translation>聊天模型使用訂閱登入。重新啟動後你可能需要重新登入。想減少登入問題，請使用 API 密鑰提供者。</translation>
     </message>
     <message>
       <source>Open Agents Communication Window</source>
@@ -1082,15 +1428,15 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
     </message>
     <message>
       <source>Open Run Folder</source>
-      <translation>打開運行檔案夾</translation>
+      <translation>開啟執行資料夾</translation>
     </message>
     <message>
       <source>Open Scope Folder</source>
-      <translation>打開範圍檔案夾</translation>
+      <translation>開啟範圍資料夾</translation>
     </message>
     <message>
       <source>Open addons folder</source>
-      <translation>打開插件檔案夾</translation>
+      <translation>開啟附加元件資料夾</translation>
     </message>
     <message>
       <source>Open docs</source>
@@ -1105,16 +1451,30 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>打開文件：</translation>
     </message>
     <message>
+      <source>Open docs: </source>
+      <translation>打開文件：</translation>
+    </message>
+    <message>
       <source>Open documents</source>
       <translation>打開文件</translation>
     </message>
     <message>
+      <source>Open documents:
+Off — do not include document text.
+On — read supported open documents before sending the prompt.
+Let model decide — expose an open-document tool during the answer.</source>
+      <translation>開啟的文件：
+關閉 — 不包含文件文字。
+開啟 — 在傳送提示詞前讀取支援的開啟文件。
+讓模型決定 — 在回答期間提供開啟文件工具。</translation>
+    </message>
+    <message>
       <source>Open this addon's diagnostic log</source>
-      <translation>打開此插件的診斷記錄</translation>
+      <translation>開啟此附加元件的診斷記錄</translation>
     </message>
     <message>
       <source>Open this addon's settings</source>
-      <translation>打開此插件的設置</translation>
+      <translation>開啟此附加元件的設定</translation>
     </message>
     <message>
       <source>Opening browser… waiting for callback</source>
@@ -1133,16 +1493,28 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>其他快捷鍵</translation>
     </message>
     <message>
-      <source>Provider</source>
-      <translation>提供者</translation>
-    </message>
-    <message>
       <source>PROVIDER</source>
       <translation>提供商</translation>
     </message>
     <message>
+      <source>Packages:</source>
+      <translation>套件：</translation>
+    </message>
+    <message>
+      <source>Packages: </source>
+      <translation>套件：</translation>
+    </message>
+    <message>
       <source>Parallel work</source>
       <translation>並行工作</translation>
+    </message>
+    <message>
+      <source>Parsing repaired JSON</source>
+      <translation>正在解析修復後的 JSON</translation>
+    </message>
+    <message>
+      <source>Parsing response</source>
+      <translation>正在解析回應</translation>
     </message>
     <message>
       <source>Paste a GitHub Copilot-capable token first.</source>
@@ -1166,7 +1538,7 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
     </message>
     <message>
       <source>Paused after current turn</source>
-      <translation>當前輪次結束後暫停</translation>
+      <translation>目前回合後暫停</translation>
     </message>
     <message>
       <source>Permission Modes</source>
@@ -1177,8 +1549,24 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>需要權限</translation>
     </message>
     <message>
+      <source>Permissions: </source>
+      <translation>權限：</translation>
+    </message>
+    <message>
+      <source>Phase</source>
+      <translation>階段</translation>
+    </message>
+    <message>
       <source>Pick color</source>
       <translation>選取顏色</translation>
+    </message>
+    <message>
+      <source>Planner</source>
+      <translation>規劃員</translation>
+    </message>
+    <message>
+      <source>Planning</source>
+      <translation>規劃</translation>
     </message>
     <message>
       <source>Portuguese</source>
@@ -1213,6 +1601,10 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>提示詞</translation>
     </message>
     <message>
+      <source>Prompt </source>
+      <translation>提示詞 </translation>
+    </message>
+    <message>
       <source>Prompt &amp; Token Limits</source>
       <translation>提示詞與 Token 限制</translation>
     </message>
@@ -1223,6 +1615,18 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
     <message>
       <source>Prompts</source>
       <translation>提示詞</translation>
+    </message>
+    <message>
+      <source>Provider</source>
+      <translation>提供者</translation>
+    </message>
+    <message>
+      <source>Provider credentials</source>
+      <translation>提供者憑證</translation>
+    </message>
+    <message>
+      <source>Python: </source>
+      <translation>Python：</translation>
     </message>
     <message>
       <source>Quit</source>
@@ -1237,6 +1641,10 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>已讀詞顏色</translation>
     </message>
     <message>
+      <source>Read-only briefing</source>
+      <translation>唯讀簡報</translation>
+    </message>
+    <message>
       <source>Read-only max tokens</source>
       <translation>只讀最大 Token</translation>
     </message>
@@ -1245,12 +1653,20 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>推理強度</translation>
     </message>
     <message>
+      <source>Receiving response</source>
+      <translation>正在接收回應</translation>
+    </message>
+    <message>
+      <source>Receiving response (</source>
+      <translation>正在接收回應（</translation>
+    </message>
+    <message>
       <source>Recent Activity</source>
       <translation>最近活動</translation>
     </message>
     <message>
       <source>Recognition language for hold-to-talk. Auto-detect is useful if you switch languages often.</source>
-      <translation>按住說話的識別語言。如果經常切換語言，自動檢測很有用。</translation>
+      <translation>按住說話的識別語言。如果經常切換語言，自動偵測很有用。</translation>
     </message>
     <message>
       <source>Refresh</source>
@@ -1278,11 +1694,19 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
     </message>
     <message>
       <source>Remove Communication</source>
-      <translation>移除通信</translation>
+      <translation>移除通訊</translation>
     </message>
     <message>
       <source>Repair env</source>
       <translation>修復環境</translation>
+    </message>
+    <message>
+      <source>Repairing JSON</source>
+      <translation>正在修復 JSON</translation>
+    </message>
+    <message>
+      <source>Repairing response</source>
+      <translation>正在修復回應</translation>
     </message>
     <message>
       <source>Replace the current agents and communications with the defaults?</source>
@@ -1293,12 +1717,16 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>報告</translation>
     </message>
     <message>
+      <source>Researcher</source>
+      <translation>研究員</translation>
+    </message>
+    <message>
       <source>Reset All…</source>
       <translation>全部重置…</translation>
     </message>
     <message>
       <source>Reset Layout</source>
-      <translation>重置布局</translation>
+      <translation>重置佈局</translation>
     </message>
     <message>
       <source>Reset Page…</source>
@@ -1317,8 +1745,12 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>重置為預設？</translation>
     </message>
     <message>
+      <source>Responsibility</source>
+      <translation>責任</translation>
+    </message>
+    <message>
       <source>Restore every agent card to its default position and size</source>
-      <translation>將每個代理卡片恢復到預設位置和大小</translation>
+      <translation>將每個代理卡片還原到預設位置和大小</translation>
     </message>
     <message>
       <source>Retrieval max distance:</source>
@@ -1329,6 +1761,10 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>檢索 top-k：</translation>
     </message>
     <message>
+      <source>Retrieve additional context the user can see. Pass a URL to fetch a web page; omit it to read open local documents from supported apps (Word, Excel, PowerPoint, PDF, LibreOffice, Notepad, etc.).</source>
+      <translation>檢索使用者可見的額外上下文。傳入 URL 可擷取網頁；留空則讀取支援的應用中開啟的本地文件（Word、Excel、PowerPoint、PDF、LibreOffice、Notepad 等）。</translation>
+    </message>
+    <message>
       <source>Retry</source>
       <translation>重試</translation>
     </message>
@@ -1337,8 +1773,40 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>重試運行</translation>
     </message>
     <message>
+      <source>Retrying</source>
+      <translation>正在重試</translation>
+    </message>
+    <message>
+      <source>Return read-only git diff for the configured local repository.</source>
+      <translation>回傳已設定本地儲存庫的唯讀 git diff。</translation>
+    </message>
+    <message>
+      <source>Return read-only git status for the configured local repository.</source>
+      <translation>回傳已設定本地儲存庫的唯讀 git 狀態。</translation>
+    </message>
+    <message>
+      <source>Review</source>
+      <translation>審查</translation>
+    </message>
+    <message>
+      <source>Reviewer</source>
+      <translation>審查員</translation>
+    </message>
+    <message>
+      <source>Role</source>
+      <translation>角色</translation>
+    </message>
+    <message>
+      <source>Role:</source>
+      <translation>角色：</translation>
+    </message>
+    <message>
       <source>Run Log</source>
-      <translation>運行記錄</translation>
+      <translation>執行記錄</translation>
+    </message>
+    <message>
+      <source>Run folder:</source>
+      <translation>執行資料夾：</translation>
     </message>
     <message>
       <source>Run implementer agents in parallel (file leases prevent write conflicts)</source>
@@ -1350,11 +1818,15 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
     </message>
     <message>
       <source>Running...</source>
-      <translation>正在運行...</translation>
+      <translation>執行中...</translation>
     </message>
     <message>
       <source>Runtime</source>
       <translation>運行時</translation>
+    </message>
+    <message>
+      <source>Russian</source>
+      <translation>俄語</translation>
     </message>
     <message>
       <source>SPEECH TO TEXT</source>
@@ -1389,16 +1861,38 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>範圍過濾器</translation>
     </message>
     <message>
+      <source>Scopes: </source>
+      <translation>權限範圍：</translation>
+    </message>
+    <message>
       <source>Screenshot</source>
       <translation>截圖</translation>
+    </message>
+    <message>
+      <source>Screenshot of your screen:
+• Off — never capture.
+• On — capture at hotkey time and send it with the query.
+• Let model decide — expose a screenshot tool during the answer.</source>
+      <translation>螢幕截圖：
+• 關閉 — 永不截圖。
+• 開啟 — 在按下快捷鍵時截圖，並隨查詢一起傳送。
+• 讓模型決定 — 在回答期間提供截圖工具。</translation>
     </message>
     <message>
       <source>Screenshot:</source>
       <translation>截圖：</translation>
     </message>
     <message>
+      <source>Screenshot: </source>
+      <translation>截圖：</translation>
+    </message>
+    <message>
+      <source>Search the web for current information.</source>
+      <translation>搜尋網頁以取得最新資訊。</translation>
+    </message>
+    <message>
       <source>Select an agent or communication, or click an exchange in the bottom relationship map to edit it above.</source>
-      <translation>選取一個代理或通信，或點擊底部關係圖中的交換以在上方編輯。</translation>
+      <translation>選擇代理或通訊，或點擊底部關係圖中的交換以在上方編輯。</translation>
     </message>
     <message>
       <source>Selected conversation</source>
@@ -1414,7 +1908,7 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
     </message>
     <message>
       <source>Shared Board</source>
-      <translation>共享看板</translation>
+      <translation>共用看板</translation>
     </message>
     <message>
       <source>Shell</source>
@@ -1427,6 +1921,14 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
     <message>
       <source>Sign in</source>
       <translation>登錄</translation>
+    </message>
+    <message>
+      <source>Sign in opens GitHub in your browser and links this app to your account.</source>
+      <translation>登入會在瀏覽器中開啟 GitHub，並將此應用程式連結到你的帳號。</translation>
+    </message>
+    <message>
+      <source>Sign in or save provider API keys and custom endpoint details before assigning models.</source>
+      <translation>登入或儲存提供者 API 金鑰和自訂端點詳細資料，然後再指派模型。</translation>
     </message>
     <message>
       <source>Sign in with GitHub</source>
@@ -1457,6 +1959,10 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>語音識別語言</translation>
     </message>
     <message>
+      <source>Speech to Text</source>
+      <translation>語音轉文字</translation>
+    </message>
+    <message>
       <source>Start Agent Task</source>
       <translation>開始代理任務</translation>
     </message>
@@ -1481,12 +1987,32 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>正在啟動 GitHub 設備授權...</translation>
     </message>
     <message>
+      <source>Starting...</source>
+      <translation>正在啟動...</translation>
+    </message>
+    <message>
+      <source>Status update</source>
+      <translation>狀態更新</translation>
+    </message>
+    <message>
+      <source>Status:</source>
+      <translation>狀態：</translation>
+    </message>
+    <message>
+      <source>Still receiving response</source>
+      <translation>仍在接收回應</translation>
+    </message>
+    <message>
       <source>Stored in OS keychain</source>
       <translation>已存入系統鑰匙串</translation>
     </message>
     <message>
       <source>Stored in OS keychain. Token format looks like a fine-grained GitHub PAT.</source>
       <translation>已儲存到系統鑰匙串。令牌格式看起來像細粒度 GitHub PAT。</translation>
+    </message>
+    <message>
+      <source>Stored, but </source>
+      <translation>已儲存，但</translation>
     </message>
     <message>
       <source>Summary</source>
@@ -1518,7 +2044,7 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
     </message>
     <message>
       <source>TTS Provider</source>
-      <translation>朗讀提供商</translation>
+      <translation>TTS 提供者</translation>
     </message>
     <message>
       <source>TTS hold speed</source>
@@ -1533,8 +2059,16 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>任務</translation>
     </message>
     <message>
-      <source>Test TTS</source>
-      <translation>測試朗讀</translation>
+      <source>Task spec:</source>
+      <translation>任務規格：</translation>
+    </message>
+    <message>
+      <source>Test</source>
+      <translation>測試</translation>
+    </message>
+    <message>
+      <source>Test </source>
+      <translation>測試 </translation>
     </message>
     <message>
       <source>Test Chat model</source>
@@ -1549,8 +2083,28 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>測試記憶模型</translation>
     </message>
     <message>
+      <source>Test TTS</source>
+      <translation>測試朗讀</translation>
+    </message>
+    <message>
+      <source>Test custom</source>
+      <translation>測試自訂</translation>
+    </message>
+    <message>
+      <source>Test failed: </source>
+      <translation>測試失敗：</translation>
+    </message>
+    <message>
       <source>Test token / SDK</source>
       <translation>測試令牌 / SDK</translation>
+    </message>
+    <message>
+      <source>Tester</source>
+      <translation>測試員</translation>
+    </message>
+    <message>
+      <source>Testing</source>
+      <translation>測試</translation>
     </message>
     <message>
       <source>Text bubble color</source>
@@ -1589,11 +2143,11 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>主題</translation>
     </message>
     <message>
-      <source>These default to the context dropdowns on the hotkey â€” changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
+      <source>These default to the context dropdowns on the hotkey Ã¢â‚¬â€ changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
       <translation>這些工具預設跟隨該快捷鍵的上下文下拉設置。在這裡修改某一項時，只會覆蓋該工具本身。自動上下文（下拉框設為開啟）不受影響。</translation>
     </message>
     <message>
-      <source>These default to the context dropdowns on the hotkey Ã¢â‚¬â€ changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
+      <source>These default to the context dropdowns on the hotkey â€” changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
       <translation>這些工具預設跟隨該快捷鍵的上下文下拉設置。在這裡修改某一項時，只會覆蓋該工具本身。自動上下文（下拉框設為開啟）不受影響。</translation>
     </message>
     <message>
@@ -1605,12 +2159,24 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>這些工具預設跟隨該快捷鍵的上下文下拉設置。在這裡修改某一項時，只會覆蓋該工具本身。自動上下文（下拉框設為開啟）不受影響。</translation>
     </message>
     <message>
+      <source>Thinking</source>
+      <translation>思考中</translation>
+    </message>
+    <message>
+      <source>This Chat model may not read screenshots. Pick an image-capable Chat model, or use Image model with the same provider.</source>
+      <translation>這個聊天模型可能無法讀取截圖。請選擇支援圖像的聊天模型，或使用同一提供者的圖像模型。</translation>
+    </message>
+    <message>
+      <source>This Image model may not read screenshots. Pick a model with image support.</source>
+      <translation>這個圖像模型可能無法讀取截圖。請選擇支援圖像的模型。</translation>
+    </message>
+    <message>
       <source>This addon does not expose settings.</source>
-      <translation>此插件沒有提供設置。</translation>
+      <translation>此附加元件未提供設定。</translation>
     </message>
     <message>
       <source>This prompt is prepended to every LLM request as the system instruction.</source>
-      <translation>此提示詞會作為系統指令添加到每次 LLM 請求前。</translation>
+      <translation>此提示詞會作為系統指令加到每個 LLM 請求前。</translation>
     </message>
     <message>
       <source>Time limit</source>
@@ -1629,12 +2195,20 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>標題</translation>
     </message>
     <message>
+      <source>To</source>
+      <translation>傳送到</translation>
+    </message>
+    <message>
       <source>Token</source>
       <translation>令牌</translation>
     </message>
     <message>
       <source>Token format looks like a fine-grained GitHub PAT.</source>
       <translation>令牌格式看起來像細粒度 GitHub PAT。</translation>
+    </message>
+    <message>
+      <source>Tool Calling Keywords</source>
+      <translation>工具呼叫關鍵字</translation>
     </message>
     <message>
       <source>Tool document chars</source>
@@ -1657,12 +2231,28 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>工具</translation>
     </message>
     <message>
+      <source>Tools with &lt;b&gt;no keywords&lt;/b&gt; are always sent to the model.&lt;br&gt;Tools with keywords are only sent when the prompt contains at least one.&lt;br&gt;Separate multiple keywords with commas.</source>
+      <translation>沒有&lt;b&gt;關鍵字&lt;/b&gt;的工具會始終傳送給模型。&lt;br&gt;有關鍵字的工具只會在提示詞包含至少一個關鍵字時傳送。&lt;br&gt;多個關鍵字請用逗號分隔。</translation>
+    </message>
+    <message>
+      <source>Tools: </source>
+      <translation>工具：</translation>
+    </message>
+    <message>
       <source>Tried in order if the primary model fails or is unavailable.</source>
       <translation>主模型失敗或不可用時按順序嘗試。</translation>
     </message>
     <message>
+      <source>Trigger</source>
+      <translation>觸發條件</translation>
+    </message>
+    <message>
       <source>Turn limit</source>
       <translation>輪次限制</translation>
+    </message>
+    <message>
+      <source>Turn limit reached</source>
+      <translation>已達到回合上限</translation>
     </message>
     <message>
       <source>Type any model name...</source>
@@ -1671,6 +2261,10 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
     <message>
       <source>Type your prompt, press Enter…</source>
       <translation>輸入提示詞，然後按 Enter…</translation>
+    </message>
+    <message>
+      <source>Using </source>
+      <translation>正在使用 </translation>
     </message>
     <message>
       <source>VISION MODEL</source>
@@ -1693,12 +2287,24 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>語音（按住說話）</translation>
     </message>
     <message>
+      <source>Waiting</source>
+      <translation>等待中</translation>
+    </message>
+    <message>
+      <source>Waiting </source>
+      <translation>等待 </translation>
+    </message>
+    <message>
       <source>What should be exchanged: findings, files, decisions, blockers, tests, or final notes.</source>
-      <translation>要交換什麼：發現、檔案、決策、阻礙、測試或最終說明。</translation>
+      <translation>要交換的內容：發現、檔案、決策、阻礙、測試或最終備註。</translation>
     </message>
     <message>
       <source>When should this exchange happen?</source>
-      <translation>這次交換應在什麼時候發生？</translation>
+      <translation>此交換應該何時發生？</translation>
+    </message>
+    <message>
+      <source>Where Whisper runs. GPU (CUDA) is much faster, especially for large-v3, but needs an NVIDIA GPU with CUDA installed. Auto uses the GPU when present and falls back to CPU.</source>
+      <translation>Whisper 的運行位置。GPU (CUDA) 快得多，尤其是 large-v3，但需要已安裝 CUDA 的 NVIDIA GPU。自動模式有 GPU 時使用 GPU，否則回退到 CPU。</translation>
     </message>
     <message>
       <source>Whisper compute precision. Keep int8 for CPU unless you know you need another mode.</source>
@@ -1733,6 +2339,10 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>按住說話轉寫使用的 Whisper 模型設定。較大的模型可提升普通話/粵語語音準確率，但會佔用更多磁碟和 CPU。</translation>
     </message>
     <message>
+      <source>Wisp Addons (*.wisp *.zip)</source>
+      <translation>Wisp 附加元件 (*.wisp *.zip)</translation>
+    </message>
+    <message>
       <source>X Remove</source>
       <translation>X 移除</translation>
     </message>
@@ -1743,6 +2353,10 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
     <message>
       <source>Your settings were saved, but:</source>
       <translation>你的設定已保存，但：</translation>
+    </message>
+    <message>
+      <source>alias (optional)</source>
+      <translation>別名（選填）</translation>
     </message>
     <message>
       <source>approval-required: ask before every write</source>
@@ -1765,6 +2379,18 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>自動批准安全讀取</translation>
     </message>
     <message>
+      <source>average latency</source>
+      <translation>平均延遲</translation>
+    </message>
+    <message>
+      <source>avg</source>
+      <translation>平均</translation>
+    </message>
+    <message>
+      <source>calls</source>
+      <translation>呼叫</translation>
+    </message>
+    <message>
       <source>capture_screen</source>
       <translation>屏幕截圖</translation>
     </message>
@@ -1773,12 +2399,32 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>上下文因長度限制已被截斷</translation>
     </message>
     <message>
+      <source>current runtime</source>
+      <translation>目前執行環境</translation>
+    </message>
+    <message>
+      <source>declares Python/package dependencies.</source>
+      <translation>宣告了 Python/套件依賴。</translation>
+    </message>
+    <message>
+      <source>e.g. Please elaborate on that.</source>
+      <translation>例如：請詳細說明。</translation>
+    </message>
+    <message>
       <source>e.g. repo read:user user:email</source>
       <translation>例如：repo read:user user:email</translation>
     </message>
     <message>
       <source>enter API key</source>
       <translation>輸入 API 密鑰</translation>
+    </message>
+    <message>
+      <source>fallback</source>
+      <translation>回退</translation>
+    </message>
+    <message>
+      <source>fallbacks</source>
+      <translation>回退</translation>
     </message>
     <message>
       <source>get_context</source>
@@ -1811,6 +2457,14 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
     <message>
       <source>image</source>
       <translation>圖片</translation>
+    </message>
+    <message>
+      <source>invalid</source>
+      <translation>無效</translation>
+    </message>
+    <message>
+      <source>invalid JSON</source>
+      <translation>無效 JSON</translation>
     </message>
     <message>
       <source>leave empty to always include</source>
@@ -1865,6 +2519,14 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>read-only：僅檢查</translation>
     </message>
     <message>
+      <source>repair</source>
+      <translation>修復</translation>
+    </message>
+    <message>
+      <source>repairs</source>
+      <translation>修復</translation>
+    </message>
+    <message>
       <source>same as task</source>
       <translation>與任務相同</translation>
     </message>
@@ -1895,162 +2557,6 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
     <message>
       <source>xhigh</source>
       <translation>超高</translation>
-    </message>
-    <message>
-      <source>Hooks: </source>
-      <translation>鉤子：</translation>
-    </message>
-    <message>
-      <source>Model tools: </source>
-      <translation>模型工具：</translation>
-    </message>
-    <message>
-      <source>Permissions: </source>
-      <translation>權限：</translation>
-    </message>
-    <message>
-      <source>Packages: </source>
-      <translation>軟體包：</translation>
-    </message>
-    <message>
-      <source>Python: </source>
-      <translation>Python：</translation>
-    </message>
-    <message>
-      <source>Environment: </source>
-      <translation>環境：</translation>
-    </message>
-    <message>
-      <source>Browser/Web: </source>
-      <translation>瀏覽器/網頁：</translation>
-    </message>
-    <message>
-      <source>Open docs: </source>
-      <translation>打開文件：</translation>
-    </message>
-    <message>
-      <source>Git/GitHub: </source>
-      <translation>Git/GitHub：</translation>
-    </message>
-    <message>
-      <source>Memory: </source>
-      <translation>記憶：</translation>
-    </message>
-    <message>
-      <source>Screenshot: </source>
-      <translation>截圖：</translation>
-    </message>
-    <message>
-      <source>Context · </source>
-      <translation>上下文 · </translation>
-    </message>
-    <message>
-      <source>Conversation </source>
-      <translation>對話 </translation>
-    </message>
-    <message>
-      <source>Test </source>
-      <translation>測試 </translation>
-    </message>
-    <message>
-      <source>Error: </source>
-      <translation>錯誤：</translation>
-    </message>
-    <message>
-      <source>Keychain error: </source>
-      <translation>鑰匙串錯誤：</translation>
-    </message>
-    <message>
-      <source>Test failed: </source>
-      <translation>測試失敗：</translation>
-    </message>
-    <message>
-      <source>Live: </source>
-      <translation>實時：</translation>
-    </message>
-    <message>
-      <source>Error reading status: </source>
-      <translation>讀取狀態時發生錯誤：</translation>
-    </message>
-    <message>
-      <source>Logged in as </source>
-      <translation>已登入為 </translation>
-    </message>
-    <message>
-      <source>Logged in • account </source>
-      <translation>已登入 • 帳戶 </translation>
-    </message>
-    <message>
-      <source>Logged in</source>
-      <translation>已登入</translation>
-    </message>
-    <message>
-      <source>Scopes: </source>
-      <translation>權限範圍：</translation>
-    </message>
-    <message>
-      <source>Stored, but </source>
-      <translation>已儲存，但</translation>
-    </message>
-    <message>
-      <source> Settings</source>
-      <translation> 設置</translation>
-    </message>
-    <message>
-      <source> Logs</source>
-      <translation> 記錄</translation>
-    </message>
-    <message>
-      <source>Provider credentials</source>
-      <translation>提供者憑證</translation>
-    </message>
-    <message>
-      <source>Sign in or save provider API keys and custom endpoint details before assigning models.</source>
-      <translation>登入或儲存提供者 API 金鑰和自訂端點詳細資料，然後再指派模型。</translation>
-    </message>
-    <message>
-      <source>Sign in opens GitHub in your browser and links this app to your account.</source>
-      <translation>登入會在瀏覽器中開啟 GitHub，並將此應用程式連結到你的帳號。</translation>
-    </message>
-    <message>
-      <source>API Keys</source>
-      <translation>API 金鑰</translation>
-    </message>
-    <message>
-      <source>Add a row for each provider you want to use. Alias is optional - useful when you have multiple keys for the same provider. Custom endpoints are configured below.</source>
-      <translation>為每個要使用的提供者新增一列。別名為選填，當同一提供者有多個金鑰時很有用。自訂端點在下方設定。</translation>
-    </message>
-    <message>
-      <source>Alias</source>
-      <translation>別名</translation>
-    </message>
-    <message>
-      <source>alias (optional)</source>
-      <translation>別名（選填）</translation>
-    </message>
-    <message>
-      <source>Custom provider</source>
-      <translation>自訂提供者</translation>
-    </message>
-    <message>
-      <source>Any OpenAI-compatible endpoint, including Ollama and LM Studio. Select Custom in a model row below after setting the base URL.</source>
-      <translation>任何相容 OpenAI 的端點，包括 Ollama 和 LM Studio。設定基礎 URL 後，在下方模型列中選擇 Custom。</translation>
-    </message>
-    <message>
-      <source>API key</source>
-      <translation>API 金鑰</translation>
-    </message>
-    <message>
-      <source>Test custom</source>
-      <translation>測試自訂</translation>
-    </message>
-    <message>
-      <source>Test</source>
-      <translation>測試</translation>
-    </message>
-    <message>
-      <source>Logged in - account </source>
-      <translation>已登入 · 帳號 </translation>
     </message>
   </context>
 </TS>

@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import base64
 import json
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-import base64
+from dataclasses import dataclass, field
+from pathlib import Path
 from unittest.mock import patch
 
 from core.agent.runner import (
-    AgentCancelled,
     AgentPermissions,
     AgentRunControl,
     AgentTaskRunner,
@@ -201,7 +200,10 @@ class AgentToolboxTests(unittest.TestCase):
                 log=logs.append,
             )
 
-            with patch("core.agent.toolbox.subprocess.run", side_effect=AssertionError("git should not spawn")):
+            with (
+                patch.object(tools, "_find_git_root", return_value=None),
+                patch("core.agent.toolbox.subprocess.run", side_effect=AssertionError("git should not spawn")),
+            ):
                 status = tools.git_status()
                 diff = tools.git_diff()
 

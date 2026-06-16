@@ -20,6 +20,7 @@ _REMEMBER_RE = re.compile(
         |make\s+(?:a\s+)?note\s+(?:that\s+|of\s+)?
         |make\s+(?:a\s+)?note\s*[:\-]\s*
         |store\s+(?:this|that)\s*[:\-\s]+
+        |(?:please\s+)?remember\s+(?=\S)
     )""",
     re.IGNORECASE | re.VERBOSE,
 )

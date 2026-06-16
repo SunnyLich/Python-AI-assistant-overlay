@@ -66,6 +66,14 @@ _CATEGORIES = ("project_context", "general")
 _active_project_lock = threading.Lock()
 _active_project_id: Optional[str] = None
 
+# Sentinel: "scope to whatever project is currently active" (vs. an explicit
+# None which forces a global/general fact).
+_USE_ACTIVE_PROJECT = object()
+
+# Sentinel for update_fact: "leave the project binding as-is" (vs. an explicit
+# "" which moves the fact to General).
+_UNCHANGED = object()
+
 
 def set_active_project(project_id: Optional[str]) -> None:
     """Set the project scope used by subsequent save/retrieve calls."""
@@ -286,8 +294,15 @@ def add_fact_manual_lightweight(
     return True
 
 
-def update_fact_lightweight(fact_id: str, new_text: str, new_category: Optional[str] = None) -> bool:
-    """Update a JSON-backed fact without initializing Chroma."""
+def update_fact_lightweight(
+    fact_id: str, new_text: str, new_category: Optional[str] = None, project=_UNCHANGED,
+) -> bool:
+    """Update a JSON-backed fact without initializing Chroma.
+
+    Passing *project* (including "" for General) moves the fact's scope and
+    derives its category; the explicit *new_category* path is kept for callers
+    that only relabel.
+    """
     with _FALLBACK_LOCK:
         facts = _fallback_read_all_unlocked()
         updated = False
@@ -295,7 +310,11 @@ def update_fact_lightweight(fact_id: str, new_text: str, new_category: Optional[
             if str(fact.get("id")) == str(fact_id):
                 fact["text"] = _normalize_fact_text(new_text)
                 fact["last_seen"] = _now_iso()
-                if new_category in _CATEGORIES:
+                if project is not _UNCHANGED:
+                    proj = (project or "").strip()
+                    fact["project"] = proj
+                    fact["category"] = "project_context" if proj else "general"
+                elif new_category in _CATEGORIES:
                     fact["category"] = new_category
                 updated = True
                 break
@@ -534,22 +553,32 @@ class MemoryManager:
     # Long-term memory -” explicit writes
     # ------------------------------------------------------------------
 
-    def add_explicit_fact(self, text: str, project: Optional[str] = None) -> None:
+    def add_explicit_fact(self, text: str, project: Optional[str] = _USE_ACTIVE_PROJECT) -> None:
         """
         Immediately commit a user-stated fact to LTM.
         Called when the user's message starts with "remember that -¦".
+
+        Scope follows the conversation context: when *project* is left at its
+        sentinel default, the fact is filed under the currently-active project
+        (or globally if none is active). Pass an explicit value to override.
         """
-        category = _infer_category(text)
+        if project is _USE_ACTIVE_PROJECT:
+            project = get_active_project()
+        category = "project_context" if project else _infer_category(text)
         with self._ltm_lock:
             self._upsert_fact(text.strip(), category, source="explicit", project=project)
-        print(f"[memory] Explicit fact stored ({category}): {text!r}")
+        print(f"[memory] Explicit fact stored ({category}, project={project!r}): {text!r}")
 
-    def save_memory(self, text: str, scope: str = "general") -> dict:
+    def save_memory(self, text: str, scope: Optional[str] = None) -> dict:
         """
-        Model-facing memory write. ``scope`` is "general" (a durable fact that
-        applies everywhere) or "project" (scoped to the currently-active
-        project). When "project" is requested but no project is active, the
-        fact is stored globally so nothing is silently dropped.
+        Model-facing memory write. ``scope`` decides project vs general:
+
+        * unset / "project"  -> scoped to the currently-active project (the
+          conversation's project), or global if no project is active.
+        * "general"          -> promoted to global, applying everywhere.
+
+        Defaulting to the active project means the model only has to decide one
+        thing: whether a fact is universal enough to promote to general.
 
         Returns a small status dict for the tool layer to surface to the model.
         """
@@ -559,8 +588,10 @@ class MemoryManager:
         if not _is_memory_worthy_fact(text, source="explicit"):
             return {"ok": False, "reason": "not durable enough to store"}
 
-        scope = (scope or "general").strip().lower()
-        project = get_active_project() if scope == "project" else None
+        scope = (scope or "").strip().lower()
+        # General is an explicit promotion; everything else follows the active
+        # project context (the conversation the user is working in).
+        project = None if scope == "general" else get_active_project()
         category = "project_context" if project else "general"
         with self._ltm_lock:
             stored = self._upsert_fact(text, category, source="explicit", project=project)
@@ -952,11 +983,17 @@ class MemoryManager:
         fact_id: str,
         new_text: str,
         new_category: Optional[str] = None,
+        project=_UNCHANGED,
     ) -> None:
-        """Update text and/or category of a fact (viewer action)."""
+        """Update text, scope, and/or category of a fact (viewer action).
+
+        Passing *project* ("" = General, else a project id) moves the fact's
+        retrieval scope and derives its category; *new_category* alone only
+        relabels without touching scope.
+        """
         with self._ltm_lock:
             if not self._chroma_ok or self._collection is None:
-                self._fallback_update(fact_id, new_text, new_category)
+                self._fallback_update(fact_id, new_text, new_category, project)
                 return
             try:
                 existing = self._collection.get(
@@ -967,7 +1004,11 @@ class MemoryManager:
                     return
                 meta = dict(existing["metadatas"][0])
                 meta["last_seen"] = _now_iso()
-                if new_category and new_category in _CATEGORIES:
+                if project is not _UNCHANGED:
+                    proj = (project or "").strip()
+                    meta["project"] = proj
+                    meta["category"] = "project_context" if proj else "general"
+                elif new_category and new_category in _CATEGORIES:
                     meta["category"] = new_category
                 self._collection.update(
                     ids=[fact_id],
@@ -978,12 +1019,19 @@ class MemoryManager:
             except Exception as exc:
                 print(f"[memory] update_fact error: {exc}")
 
-    def add_fact_manual(self, text: str, category: str) -> None:
-        """Add a fact directly from the viewer (manual entry)."""
-        if category not in _CATEGORIES:
+    def add_fact_manual(self, text: str, category: str = "general", project: Optional[str] = None) -> None:
+        """Add a fact directly from the viewer (manual entry).
+
+        A non-empty *project* scopes the fact and forces the project_context
+        category; otherwise the explicit *category* is used.
+        """
+        project = (project or "").strip() or None
+        if project:
+            category = "project_context"
+        elif category not in _CATEGORIES:
             category = "general"
         with self._ltm_lock:
-            self._upsert_fact(text.strip(), category, source="manual")
+            self._upsert_fact(text.strip(), category, source="manual", project=project)
 
     def prune_low_value_facts(self) -> int:
         """
@@ -1043,9 +1091,9 @@ class MemoryManager:
         delete_fact_lightweight(fact_id)
 
     def _fallback_update(
-        self, fact_id: str, new_text: str, new_category: Optional[str]
+        self, fact_id: str, new_text: str, new_category: Optional[str], project=_UNCHANGED,
     ) -> None:
-        update_fact_lightweight(fact_id, new_text, new_category)
+        update_fact_lightweight(fact_id, new_text, new_category, project)
 
     # ------------------------------------------------------------------
     # Blocking LLM call for memory operations

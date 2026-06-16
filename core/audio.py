@@ -7,14 +7,19 @@ Two responsibilities:
   2. Streaming TTS playback: plays PCM chunks from core.tts as they arrive.
 """
 from __future__ import annotations
+
 import os
+import queue
 import random
 import threading
-import queue
+
 import numpy as np
+
 import config
+from core import audio_state
 from core import tts as tts_module
 from core.system import macos_safety
+from core.system import main_thread as _main_thread
 
 
 def _macos_audio_enabled() -> bool:
@@ -111,9 +116,6 @@ if _macos_audio_enabled():
     _load_sounddevice_if_allowed()
     _load_soundfile_if_allowed()
 
-_tts_speed_boost = False
-_tts_speed_lock = threading.Lock()
-
 # Tracks the currently-playing TTS stream so stop() can abort it from any thread.
 _playback_lock = threading.Lock()
 _current_stop_event: threading.Event | None = None
@@ -135,17 +137,14 @@ def stop() -> None:
 
 
 def set_tts_speed_boost(enabled: bool) -> None:
-    """Called by the UI while the user holds the speech bubble."""
-    global _tts_speed_boost
-    with _tts_speed_lock:
-        _tts_speed_boost = enabled
+    audio_state.set_tts_speed_boost(enabled)
 
 
 def _current_tts_rate() -> float:
-    with _tts_speed_lock:
-        boosted = _tts_speed_boost
-    rate = config.TTS_HOLD_PLAYBACK_RATE if boosted else config.TTS_PLAYBACK_RATE
-    return max(0.25, min(4.0, float(rate)))
+    return audio_state.current_tts_rate(
+        playback_rate=config.TTS_PLAYBACK_RATE,
+        hold_playback_rate=config.TTS_HOLD_PLAYBACK_RATE,
+    )
 
 
 def _speed_adjust_pcm(chunk: bytes, dtype: str, rate: float) -> bytes:
@@ -252,10 +251,11 @@ def _play_clip(data: np.ndarray, samplerate: int):
 
 # Every native PortAudio handle (filler clip, TTS output stream) must be opened
 # and torn down on the GUI main thread; doing it on a worker thread segfaults
-# inside CoreAudio while Qt's Cocoa run loop owns the process. set_main_thread_runner
-# is re-exported so existing callers (main.py) register the runner the same way;
-# stt.py and the macOS capture paths share the same runner via core.system.main_thread.
-from core.system.main_thread import run_on_main as _run_on_main, set_main_thread_runner  # noqa: F401
+# inside CoreAudio while Qt's Cocoa run loop owns the process.
+# set_main_thread_runner is re-exported so existing callers register the runner
+# the same way; stt.py and macOS capture paths share the same runner.
+_run_on_main = _main_thread.run_on_main
+set_main_thread_runner = _main_thread.set_main_thread_runner
 
 
 def play_tts_stream(text: str, on_done: callable | None = None):

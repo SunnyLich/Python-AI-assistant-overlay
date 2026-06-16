@@ -16,16 +16,27 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QLabel, QTextEdit, QPushButton, QFrame, QApplication, QTextBrowser,
     QSizePolicy, QStackedWidget, QSplitter, QComboBox, QInputDialog,
+    QMenu, QMessageBox,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer
-from PySide6.QtGui import QFont, QPixmap, QShortcut, QKeySequence
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QLinearGradient,
+    QPainter,
+    QPen,
+    QPixmap,
+    QShortcut,
+    QKeySequence,
+)
 from core.assistant_text import ThoughtStreamParser, merge_segment_iterables, split_tagged_text
 from core.conversation_store.store import GENERAL_PROJECT_ID as _GENERAL_PROJECT_ID
 from ui.i18n import t
 from ui.shared.window_utils import enable_standard_window_controls, fit_window_to_screen
 
-_W          = 680
-_H          = 520
+_W          = 840
+_H          = 640
 _BG         = "#1c1c24"
 _SIDEBAR_BG = "#13131a"
 _TITLE_BG   = "#16161f"
@@ -39,6 +50,8 @@ _SEL_BG     = "rgba(160,160,255,18)"
 _REVERT_DELAY_MS = 3000   # how long bold words stay highlighted after TTS finishes
 _CHAT_RENDER_CHAR_LIMIT = 24_000
 _CONTEXT_TOOLTIP_CHAR_LIMIT = 4_000
+_SIDEBAR_MENU_W = 32
+_SIDEBAR_FADE_W = 34
 
 
 def _truncate_for_display(text: str, limit: int, label: str = "display") -> str:
@@ -113,6 +126,97 @@ class _MessageTextView(QTextBrowser):
         super().resizeEvent(event)
         if event.size().width() != event.oldSize().width():
             self._sync_height()
+
+
+class _ConversationTitleButton(QPushButton):
+    """Paints a sidebar title with a right-edge fade under the overlaid menu."""
+
+    def __init__(self, title: str, *, active: bool, latest: bool) -> None:
+        super().__init__("")
+        self._title = title
+        self._active = active
+        self._latest = latest
+        self.setCheckable(True)
+        self.setChecked(active)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setToolTip(title)
+        self.setAccessibleName(title)
+        self.setStyleSheet("QPushButton { background: transparent; border: none; }")
+
+    def set_sidebar_state(self, *, active: bool, latest: bool) -> None:
+        self._active = active
+        self._latest = latest
+        self.setChecked(active)
+        self.update()
+
+    def paintEvent(self, event):  # noqa: N802 - Qt override
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        rect = self.rect()
+        bg = QColor(160, 160, 255, 18) if self._active or self.isChecked() else QColor(0, 0, 0, 0)
+        if self.underMouse() and not (self._active or self.isChecked()):
+            bg = QColor(255, 255, 255, 10)
+        if bg.alpha():
+            painter.fillRect(rect, bg)
+
+        text_rect = rect.adjusted(10, 0, -(_SIDEBAR_MENU_W + 10), 0)
+        font = QFont("Segoe UI", 9)
+        painter.setFont(font)
+        color = QColor(_ACCENT if self._latest else _TEXT)
+        painter.setPen(QPen(color))
+
+        metrics = QFontMetrics(font)
+        available = max(0, text_rect.width() - _SIDEBAR_FADE_W)
+        title = metrics.elidedText(self._title, Qt.TextElideMode.ElideRight, available)
+        painter.drawText(
+            text_rect,
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            title,
+        )
+
+        if metrics.horizontalAdvance(self._title) > available:
+            fade_left = max(text_rect.left(), text_rect.right() - _SIDEBAR_FADE_W)
+            gradient = QLinearGradient(fade_left, 0, text_rect.right(), 0)
+            fade_color = QColor(31, 31, 45) if self._active or self.isChecked() else QColor(_SIDEBAR_BG)
+            if self.underMouse() and not (self._active or self.isChecked()):
+                fade_color = QColor(36, 36, 46)
+            clear = QColor(fade_color)
+            clear.setAlpha(0)
+            gradient.setColorAt(0.0, clear)
+            gradient.setColorAt(0.72, fade_color)
+            gradient.setColorAt(1.0, fade_color)
+            painter.fillRect(fade_left, rect.top(), text_rect.right() - fade_left + 1, rect.height(), gradient)
+
+        painter.end()
+
+
+class _ConversationSidebarRow(QWidget):
+    """Sidebar row with a full-width title and an overlaid options button."""
+
+    def __init__(self, title_btn: QPushButton, menu_btn: QPushButton) -> None:
+        super().__init__()
+        self.setFixedHeight(52)
+        self.setStyleSheet("background: transparent;")
+        self._title_btn = title_btn
+        self._menu_btn = menu_btn
+        self._title_btn.setParent(self)
+        self._menu_btn.setParent(self)
+        self._layout_children()
+
+    def resizeEvent(self, event):  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        self._layout_children()
+
+    def _layout_children(self) -> None:
+        self._title_btn.setGeometry(self.rect())
+        self._menu_btn.setGeometry(
+            max(0, self.width() - _SIDEBAR_MENU_W - 4),
+            0,
+            _SIDEBAR_MENU_W,
+            self.height(),
+        )
+        self._menu_btn.raise_()
 
 
 def _merge_display_segments(segments: list[tuple[str, bool]], text: str, is_thought: bool) -> list[tuple[str, bool]]:
@@ -227,6 +331,8 @@ class ChatWindow(QWidget):
         on_project_change=None,
         on_new_project=None,
         persist_fn=None,
+        active_idx: int | None = None,
+        on_select=None,
     ):
         """
         Args:
@@ -243,10 +349,15 @@ class ChatWindow(QWidget):
             on_new_project: Callable(name) -> project dict, creating + persisting
                            a project; returns the new project.
             persist_fn:    Callable() invoked after a reply lands to save chats.
+            active_idx:    Index of the conversation to select on open (the one
+                           hotkey/voice prompts currently continue).
+            on_select:     Callable(idx) invoked when the user selects or starts a
+                           conversation, so the app can retarget hotkey prompts.
         """
         super().__init__()
         self._conversations = conversations  # live reference -” NOT a copy
         self._send_fn = send_fn
+        self._on_select = on_select
         self._projects = list(projects or [])
         if not any(p.get("id") == _GENERAL_PROJECT_ID for p in self._projects):
             self._projects.insert(0, {"id": _GENERAL_PROJECT_ID, "name": t("General")})
@@ -260,7 +371,11 @@ class ChatWindow(QWidget):
         self._current_ai_reply_text = ""
         self._current_ai_segments: list[tuple[str, bool]] = []
         self._current_ai_parser: ThoughtStreamParser | None = None
-        self._active_idx = max(0, len(conversations) - 1)
+        self._conversation_menu: QMenu | None = None
+        if active_idx is not None and 0 <= active_idx < len(conversations):
+            self._active_idx = active_idx
+        else:
+            self._active_idx = max(0, len(conversations) - 1)
         self._built_pages: set[int] = set()
 
         self._signals = _StreamSignals()
@@ -435,31 +550,164 @@ class ChatWindow(QWidget):
             )
             self._sidebar_layout.addWidget(lbl)
         else:
-            # Newest conversation at the top
-            for i, conv in enumerate(reversed(self._conversations)):
-                real_idx = len(self._conversations) - 1 - i
-                btn = self._make_sidebar_btn(real_idx, conv)
-                self._sidebar_layout.addWidget(btn)
-                self._sidebar_btns.append((real_idx, btn))
+            # Pinned conversations float to the top; within each group the
+            # newest is first. sort() is stable so it preserves recency order.
+            order = list(range(len(self._conversations) - 1, -1, -1))
+            order.sort(key=lambda ix: not self._conversations[ix].get("pinned"))
+            for real_idx in order:
+                row, title_btn = self._make_sidebar_row(real_idx, self._conversations[real_idx])
+                self._sidebar_layout.addWidget(row)
+                self._sidebar_btns.append((real_idx, title_btn))
         self._sidebar_layout.addStretch()
 
-    def _make_sidebar_btn(self, idx: int, conv: dict) -> QPushButton:
+    def _conversation_title(self, idx: int, conv: dict) -> str:
+        override = str(conv.get("title_override") or "").strip()
+        if override:
+            return override
         first_user = next((m for m in conv["messages"] if m["role"] == "user"), None)
         raw = first_user["content"] if first_user else f"{t('Conversation')} {idx+1}"
         has_image = bool(first_user and first_user.get("image_base64"))
         prefix = f"[{t('image')}] " if has_image else ""
-        title = (prefix + raw.strip().replace("\n", " "))
-        if len(title) > 42:
-            title = title[:42] + "..."
+        return prefix + str(raw).strip().replace("\n", " ")
+
+    def _make_sidebar_row(self, idx: int, conv: dict) -> tuple[QWidget, QPushButton]:
+        title = self._conversation_title(idx, conv)
+        if conv.get("pinned"):
+            title = "📌 " + title
         is_latest = (idx == len(self._conversations) - 1)
         is_active = (idx == self._active_idx)
-        btn = QPushButton(title)
-        btn.setCheckable(True)
-        btn.setChecked(is_active)
-        btn.setFixedHeight(52)
-        btn.setStyleSheet(self._btn_style(is_active, is_latest))
+
+        btn = _ConversationTitleButton(title, active=is_active, latest=is_latest)
         btn.clicked.connect(lambda _checked, ix=idx: self._switch(ix))
-        return btn
+
+        menu_btn = QPushButton("⋮")
+        menu_btn.setFixedSize(_SIDEBAR_MENU_W, 52)
+        menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        menu_btn.setToolTip(t("Conversation options"))
+        menu_btn.setAccessibleName(t("Conversation options"))
+        menu_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: {_HINT}; border: none;"
+            " font-family: 'Segoe UI Symbol', 'Segoe UI'; font-size: 16pt;"
+            " font-weight: 700; padding: 0; margin: 0; }"
+            f"QPushButton:hover {{ background: rgba(255,255,255,12); color: {_TEXT}; }}"
+        )
+        menu_btn.clicked.connect(
+            lambda _checked, ix=idx, button=menu_btn: self._open_conversation_menu(ix, button)
+        )
+        row = _ConversationSidebarRow(btn, menu_btn)
+        return row, btn
+
+    def _open_conversation_menu(self, idx: int, anchor: QWidget | None = None) -> None:
+        if not (0 <= idx < len(self._conversations)):
+            return
+        conv = self._conversations[idx]
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {_TITLE_BG}; color: {_TEXT};"
+            f" border: 1px solid {_BORDER}; }}"
+            f"QMenu::item:selected {{ background: {_SEL_BG}; }}"
+        )
+        pin_label = t("Unpin") if conv.get("pinned") else t("Pin")
+        menu.addAction(pin_label, lambda: self._toggle_pin(idx))
+        menu.addAction(t("Rename"), lambda: self._rename_conversation(idx))
+
+        project_menu = menu.addMenu(t("Add to project"))
+        for proj in self._projects:
+            pid = proj.get("id")
+            name = proj.get("name", "General")
+            act = project_menu.addAction(name, lambda p=pid: self._assign_project(idx, p))
+            act.setCheckable(True)
+            act.setChecked(conv.get("project_id", _GENERAL_PROJECT_ID) == pid)
+
+        menu.addSeparator()
+        menu.addAction(t("Delete"), lambda: self._delete_conversation(idx))
+        # Drop the menu just below the ⋮ button that opened it.
+        pos = (
+            anchor.mapToGlobal(anchor.rect().bottomLeft())
+            if anchor is not None
+            else self.mapToGlobal(self.rect().center())
+        )
+        self._conversation_menu = menu
+        menu.aboutToHide.connect(lambda: setattr(self, "_conversation_menu", None))
+        menu.popup(pos)
+
+    def _toggle_pin(self, idx: int) -> None:
+        if not (0 <= idx < len(self._conversations)):
+            return
+        conv = self._conversations[idx]
+        conv["pinned"] = not conv.get("pinned")
+        self._rebuild_sidebar()
+        self._persist()
+
+    def _rename_conversation(self, idx: int) -> None:
+        if not (0 <= idx < len(self._conversations)):
+            return
+        conv = self._conversations[idx]
+        current = self._conversation_title(idx, conv)
+        name, ok = QInputDialog.getText(
+            self, t("Rename conversation"), t("Title:"), text=current
+        )
+        if not ok:
+            return
+        conv["title_override"] = name.strip()
+        self._rebuild_sidebar()
+        self._persist()
+
+    def _assign_project(self, idx: int, project_id: str) -> None:
+        if not (0 <= idx < len(self._conversations)):
+            return
+        self._conversations[idx]["project_id"] = project_id
+        self._rebuild_sidebar()
+        self._persist()
+
+    def _delete_conversation(self, idx: int) -> None:
+        if not (0 <= idx < len(self._conversations)):
+            return
+        if self._streaming and idx == self._active_idx:
+            return  # don't delete the conversation mid-stream
+        if QMessageBox.question(
+            self, t("Delete conversation"),
+            t("Delete this conversation? This cannot be undone."),
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        del self._conversations[idx]
+        if self._active_idx >= idx:
+            self._active_idx = max(0, self._active_idx - 1)
+        self._rebuild_stack()
+        self._rebuild_sidebar()
+        if self._conversations:
+            self._switch(min(self._active_idx, len(self._conversations) - 1))
+        else:
+            self._input_frame.setEnabled(False)
+        self._persist()
+
+    def _rebuild_stack(self) -> None:
+        """Tear down and rebuild all stack pages 1:1 with _conversations."""
+        while self._stack.count():
+            w = self._stack.widget(0)
+            self._stack.removeWidget(w)
+            w.deleteLater()
+        self._built_pages = set()
+        self._has_placeholder = not self._conversations
+        if self._conversations:
+            for i, conv in enumerate(self._conversations):
+                if i == self._active_idx:
+                    self._stack.addWidget(self._make_page(i, conv))
+                else:
+                    self._stack.addWidget(self._make_page_placeholder())
+        else:
+            ph = QLabel(t("No conversations yet.\n\nPress Ctrl+Q to ask something."))
+            ph.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            ph.setStyleSheet(f"color: {_HINT}; background: {_BG};")
+            self._stack.addWidget(ph)
+        self._stack.setCurrentIndex(max(0, min(self._active_idx, self._stack.count() - 1)))
+
+    def _persist(self) -> None:
+        if self._persist_fn:
+            try:
+                self._persist_fn()
+            except Exception:
+                pass
 
     def _btn_style(self, active: bool, latest: bool) -> str:
         bg = _SEL_BG if active else "transparent"
@@ -480,8 +728,29 @@ class ChatWindow(QWidget):
         self._input_frame.setEnabled(bool(self._conversations))
         for real_idx, btn in self._sidebar_btns:
             is_sel = (real_idx == idx)
-            btn.setChecked(is_sel)
-            btn.setStyleSheet(self._btn_style(is_sel, real_idx == len(self._conversations) - 1))
+            if isinstance(btn, _ConversationTitleButton):
+                btn.set_sidebar_state(
+                    active=is_sel,
+                    latest=real_idx == len(self._conversations) - 1,
+                )
+            else:
+                btn.setChecked(is_sel)
+                btn.setStyleSheet(self._btn_style(is_sel, real_idx == len(self._conversations) - 1))
+        if self._on_select and 0 <= idx < len(self._conversations):
+            self._on_select(idx)
+
+    def sync_conversation(self, idx: int) -> None:
+        """Rebuild and show a conversation a hotkey/voice prompt just appended to.
+
+        Called when a prompt continued an existing thread rather than starting a
+        new one, so the open window reflects the added turns and follows along.
+        """
+        if not (0 <= idx < len(self._conversations)):
+            return
+        # Force the page to rebuild with the appended turns, then show it.
+        self._built_pages.discard(idx)
+        self._rebuild_sidebar()
+        self._switch(idx)
 
     # ------------------------------------------------------------------ Right panel
 

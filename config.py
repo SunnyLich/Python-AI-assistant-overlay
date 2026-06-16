@@ -10,6 +10,7 @@ from core.system.env_utils import (
 from core.system.paths import FILLER_AUDIO_DIR as DEFAULT_FILLER_AUDIO_DIR
 from core.system.paths import USER_FILLER_AUDIO_DIR as DEFAULT_USER_FILLER_AUDIO_DIR
 from core.system.paths import REPO_ROOT, MODEL_TOOLS_DIR
+from core.settings_model import AppSettings
 
 _ENV_FILE = REPO_ROOT / ".env"
 load_dotenv(_ENV_FILE)
@@ -34,6 +35,7 @@ _CALLER_DEFAULTS: list[dict] = [
         "label": "General",
         "paste_back": False,
         "custom_key": "s",
+        "custom_label": "",
         "context_ambient": True,
         "context_documents": True,
         "context_tools": False,
@@ -54,6 +56,7 @@ _CALLER_DEFAULTS: list[dict] = [
         "label": "Rewrite & Paste",
         "paste_back": True,
         "custom_key": "s",
+        "custom_label": "",
         "context_ambient": True,
         "context_documents": False,
         "context_tools": False,
@@ -174,6 +177,7 @@ def _load_caller_rows() -> list[dict]:
             "label":      os.getenv(f"CALLER_{n}_LABEL",      default.get("label", "")),
             "paste_back": env_bool(f"CALLER_{n}_PASTE_BACK", bool(default.get("paste_back", False))),
             "custom_key": os.getenv(f"CALLER_{n}_CUSTOM_KEY", default.get("custom_key", "s")),
+            "custom_label": os.getenv(f"CALLER_{n}_CUSTOM_LABEL", default.get("custom_label", "")),
             "context_ambient": env_bool(f"CALLER_{n}_CONTEXT_AMBIENT", bool(default.get("context_ambient", True))),
             "context_documents": documents_mode == "auto",
             "context_tools": any(m == "model" for m in (documents_mode, browser_mode, github_mode, memory_mode)),
@@ -218,6 +222,7 @@ def _load_config() -> None:
     global TTS_PLAYBACK_RATE, TTS_HOLD_PLAYBACK_RATE
     global MEMORY_LLM_PROVIDER, MEMORY_LLM_MODEL, MEMORY_LLM_FALLBACKS, MEMORY_AUTO_CONSOLIDATE
     global MEMORY_CONSOLIDATION_INTERVAL, MEMORY_TOP_K, MEMORY_RELEVANCE_MAX_DISTANCE, MEMORY_STM_TOKEN_BUDGET
+    global SETTINGS
     global SYSTEM_PROMPT_UTILITY
 
     # --- API Keys ---
@@ -382,6 +387,7 @@ def _load_config() -> None:
     SYSTEM_PROMPT_UTILITY = SYSTEM_PROMPT_UTILITY.replace(
         _LEGACY_TOOL_PROMPT_SENTENCE, ""
     ).strip()
+    SETTINGS = AppSettings.from_config(globals())
 
 
 _load_config()
@@ -401,6 +407,11 @@ def get_system_prompt() -> str:
     if not language_instruction:
         return SYSTEM_PROMPT_UTILITY
     return f"{SYSTEM_PROMPT_UTILITY}\n\n{language_instruction}"
+
+
+def get_settings() -> AppSettings:
+    """Return an immutable typed snapshot of the current runtime settings."""
+    return SETTINGS
 
 
 def reload() -> None:

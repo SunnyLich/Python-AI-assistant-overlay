@@ -1,6 +1,7 @@
 # Building The Windows EXE
 
-This project now includes a PyInstaller build path.
+This project includes a PyInstaller build path for the supervisor runtime
+(`macos_py.supervisor.app`).
 
 From PowerShell in the project root:
 
@@ -11,6 +12,9 @@ From PowerShell in the project root:
 The script uses the project `.venv` by default. If `.venv` does not exist, it
 creates it automatically, then checks dependencies and installs anything that is
 missing or out of date — no prompts. Already-satisfied packages are skipped.
+Builds must use Python `3.12.13`, matching `.python-version`; the script stops
+with a clear message if the selected `.venv` or global Python is a different
+minor version.
 
 (`-Yes` is still accepted for backward compatibility but no longer does anything,
 since auto-install is now the default.)
@@ -34,6 +38,8 @@ Notes:
 
 - API keys are not bundled. Users should enter them in Settings so they are saved to the OS keychain.
 - `.env.example` is bundled as a template, but your local `.env` is not included.
+- The packaged executable starts the same supervisor worker runtime as the
+  launchers, not the legacy single-process `main.py` path.
 - Addon dependency environments in packaged builds require `uv`. Place `uv.exe`
   at `bin\uv.exe` or `tools\uv.exe` before building and PyInstaller will bundle
   it into `dist\Wisp\bin\uv.exe`.

@@ -9,7 +9,7 @@
 Press `Ctrl+Q`. Wisp reads what's on your screen, thinks out loud, and answers in under two seconds — spoken aloud, word by word, right where you're working. No switching apps. No copy-pasting. No waiting.
 
 [![Platform](https://img.shields.io/badge/platform-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-555?style=flat-square)](#install)
-[![Python](https://img.shields.io/badge/python-3.12%2B-3572A5?style=flat-square)](#install)
+[![Python](https://img.shields.io/badge/python-3.12.13-3572A5?style=flat-square)](#install)
 [![License](https://img.shields.io/badge/license-MIT-9F7AEA?style=flat-square)](LICENSE)
 
 </div>
@@ -28,7 +28,7 @@ The first time, it installs everything Wisp needs and then starts the app. On
 macOS the launcher uses `requirements-macos.lock`; Windows and Linux use
 `requirements.txt`. Every time after, it just launches. That's the whole setup.
 
-> Requires **Python 3.12** (pinned in `.python-version`). The launcher finds it
+> Requires **Python 3.12.13** (pinned in `.python-version`). The launcher finds it
 > automatically — install via [pyenv](https://github.com/pyenv/pyenv)
 > (`pyenv install 3.12.13`) on macOS, or from [python.org](https://www.python.org/downloads/release/python-31213/) on Windows.
 
@@ -95,7 +95,7 @@ Wisp: "That's a CAPTCHA verification step — click the checkbox
 
 ## Install
 
-**Requirements:** Python 3.12+, Windows 10/11, macOS, or Linux (X11)
+**Requirements:** Python 3.12.13, Windows 10/11, macOS, or Linux (X11)
 
 ```bash
 git clone https://github.com/SunnyLich/Python-AI-assistant-overlay.git
@@ -125,6 +125,33 @@ Run the macOS Python test gate with:
 
 ```bash
 bash scripts/run_macos_tests.command
+```
+
+### Contributor setup
+
+If you want to develop Wisp, install the runtime dependencies plus developer
+tools (`pytest`, Ruff, and MyPy) with the setup script for your platform:
+
+```powershell
+.\scripts\setup_dev.ps1       # Windows PowerShell
+```
+
+```bash
+bash scripts/setup_dev.sh     # macOS / Linux
+```
+
+Then run checks from the repo root:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m ruff check core\context_hotkey.py core\llm_clients\messages.py macos_py\supervisor\tool_modes.py ui\agent\combo_helpers.py ui\settings_panel\helpers.py tests\test_context_hotkey_snapshot.py
+.\.venv\Scripts\python.exe -m mypy core\settings_model.py core\llm_clients\logging_utils.py macos_py\supervisor\tool_modes.py ui\agent\combo_helpers.py --follow-imports=skip
+```
+
+```bash
+.venv/bin/python -m pytest
+.venv/bin/python -m ruff check core/context_hotkey.py core/llm_clients/messages.py macos_py/supervisor/tool_modes.py ui/agent/combo_helpers.py ui/settings_panel/helpers.py tests/test_context_hotkey_snapshot.py
+.venv/bin/python -m mypy core/settings_model.py core/llm_clients/logging_utils.py macos_py/supervisor/tool_modes.py ui/agent/combo_helpers.py --follow-imports=skip
 ```
 
 ---

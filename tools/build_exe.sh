@@ -21,6 +21,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 VENV_DIR="$ROOT/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
+WANT="$(cat "$ROOT/.python-version" 2>/dev/null || printf "3.12.13")"
+WANT_MM="${WANT%.*}"
 
 SPEC_NAME="WispLinux.spec"
 APP_NAME="Wisp"
@@ -33,6 +35,20 @@ ICON_SOURCE_PNG="$ROOT/assets/doll/idle.png"
 
 cd "$ROOT"
 
+py_minor() {
+    "$1" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true
+}
+
+find_expected_python() {
+    for cmd in "python$WANT_MM" python3 python; do
+        if command -v "$cmd" >/dev/null 2>&1 && [[ "$(py_minor "$cmd")" == "$WANT_MM" ]]; then
+            printf '%s\n' "$cmd"
+            return 0
+        fi
+    done
+    return 1
+}
+
 confirm() {
     local prompt="$1"
     if $YES; then return 0; fi
@@ -43,16 +59,32 @@ confirm() {
 if ! $USE_GLOBAL_PYTHON; then
     if [[ ! -x "$VENV_PYTHON" ]]; then
         if confirm "Project virtual environment not found at $VENV_DIR. Create it now?"; then
-            python3 -m venv "$VENV_DIR"
+            CREATE_PYTHON="$(find_expected_python || true)"
+            if [[ -z "$CREATE_PYTHON" ]]; then
+                echo "Could not find Python $WANT to create the project virtual environment." >&2
+                exit 1
+            fi
+            "$CREATE_PYTHON" -m venv "$VENV_DIR"
         else
             echo "Build cancelled: project .venv is required unless you pass --use-global-python." >&2
             exit 1
         fi
     fi
     PYTHON="$VENV_PYTHON"
+    HAVE_MM="$(py_minor "$PYTHON")"
+    if [[ "$HAVE_MM" != "$WANT_MM" ]]; then
+        echo "$PYTHON is Python $HAVE_MM, but Wisp packaging is pinned to Python $WANT." >&2
+        echo "Rebuild .venv with scripts/setup_dev.sh or rerun the launcher with Python $WANT installed." >&2
+        exit 1
+    fi
 else
     echo "Using global Python because --use-global-python was provided."
     PYTHON="python3"
+    HAVE_MM="$(py_minor "$PYTHON")"
+    if [[ "$HAVE_MM" != "$WANT_MM" ]]; then
+        echo "$PYTHON is Python $HAVE_MM, but Wisp packaging is pinned to Python $WANT." >&2
+        exit 1
+    fi
 fi
 
 if [[ ! -f "$ICON_PATH" ]]; then

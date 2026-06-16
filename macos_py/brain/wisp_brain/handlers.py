@@ -1198,6 +1198,8 @@ def brain_query(
     include_active_document: bool = False,
     active_document_text: str = "",
     context_priority: str = "",
+    history: list[dict] | None = None,
+    memory_project: str | None = None,
 ) -> dict[str, Any]:
     """Assemble context and stream an LLM reply, mirroring App._query_and_speak.
 
@@ -1207,6 +1209,24 @@ def brain_query(
     request's id; the full text is the final response result.
     """
     from core.query_pipeline import ContextInputs, build_context
+
+    if memory_enabled:
+        try:
+            # Scope memory (retrieval + saves) to the conversation's project for
+            # this query. Memory lives in this brain process, so the supervisor
+            # passes the active project per call.
+            from core.memory_store import store
+            store.set_active_project(memory_project)
+        except Exception as exc:
+            _log(f"memory project scope skipped: {type(exc).__name__}: {exc}")
+        try:
+            from core.memory_store import store
+            from core.memory_store.commands import extract_remember_fact
+            fact = extract_remember_fact(intent_prompt)
+            if fact:
+                store.get_manager().add_explicit_fact(fact)
+        except Exception as exc:  # memory should not block answering
+            _log(f"explicit remember skipped: {type(exc).__name__}: {exc}")
 
     if memory_enabled and not memory_context:
         try:
@@ -1244,6 +1264,7 @@ def brain_query(
         allow_screenshot_tool,
         screenshot_tool_b64,
         pinned_tools=pinned_tools,
+        history=history,
     ):
         if ctx.cancelled:
             break
@@ -1331,6 +1352,7 @@ def _stream_query_reply(
     allow_screenshot_tool: bool,
     screenshot_tool_b64: str | None = None,
     pinned_tools: list[str] | None = None,
+    history: list[dict] | None = None,
 ) -> Iterator[str]:
     """Token stream for ``brain.query``: real provider, or deterministic offline.
 
@@ -1361,6 +1383,7 @@ def _stream_query_reply(
         pinned_tools=pinned_tools,
         allow_screenshot_tool=allow_screenshot_tool,
         screenshot_tool_b64=screenshot_tool_b64,
+        history=history,
     )
 
 
@@ -1405,23 +1428,41 @@ def brain_chat(
     messages: list[dict[str, Any]] | None = None,
     memory_context: str = "",
     memory_enabled: bool = True,
+    memory_project: str | None = None,
 ) -> dict[str, Any]:
     """Stream a multi-turn chat reply from the existing chat LLM path."""
     turns = _normalize_chat_messages(messages or [])
     if not turns:
         raise ValueError("messages must include at least one user turn")
 
-    if memory_enabled and not memory_context:
-        last_user = next(
-            (str(m.get("content") or "") for m in reversed(turns) if m.get("role") == "user"),
-            "",
-        )
-        if last_user:
-            try:
-                from core.memory_store import store
-                memory_context = store.get_manager().retrieve_relevant(last_user) or ""
-            except Exception as exc:  # memory should not block chat
-                _log(f"chat memory retrieval skipped: {type(exc).__name__}: {exc}")
+    if memory_enabled:
+        try:
+            from core.memory_store import store
+            store.set_active_project(memory_project)
+        except Exception as exc:
+            _log(f"chat memory project scope skipped: {type(exc).__name__}: {exc}")
+
+    last_user = next(
+        (str(m.get("content") or "") for m in reversed(turns) if m.get("role") == "user"),
+        "",
+    )
+
+    if memory_enabled and last_user:
+        try:
+            from core.memory_store import store
+            from core.memory_store.commands import extract_remember_fact
+            fact = extract_remember_fact(last_user)
+            if fact:
+                store.get_manager().add_explicit_fact(fact)
+        except Exception as exc:  # memory should not block chat
+            _log(f"chat explicit remember skipped: {type(exc).__name__}: {exc}")
+
+    if memory_enabled and not memory_context and last_user:
+        try:
+            from core.memory_store import store
+            memory_context = store.get_manager().retrieve_relevant(last_user) or ""
+        except Exception as exc:  # memory should not block chat
+            _log(f"chat memory retrieval skipped: {type(exc).__name__}: {exc}")
 
     parts: list[str] = []
     for chunk in _stream_chat_reply(turns, memory_context):

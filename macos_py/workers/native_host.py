@@ -163,6 +163,8 @@ class _DirectHotkeys:
                 on_snip=lambda: emit_hotkey("snip"),
                 on_voice_start=lambda: emit_hotkey("voice_start"),
                 on_voice_stop=lambda: emit_hotkey("voice_stop"),
+                on_dictate_start=lambda: emit_hotkey("dictate_start"),
+                on_dictate_stop=lambda: emit_hotkey("dictate_stop"),
                 extra_hotkeys=extra_hotkeys,
             )
             started = bool(self.listener.start())
@@ -1088,6 +1090,22 @@ def open_privacy_settings(pane: str = "Privacy") -> dict[str, Any]:
     return {"ok": result.returncode == 0, "url": target}
 
 
+def native_config_reload() -> dict[str, Any]:
+    """Reload .env-backed config in the native process after Settings → Apply.
+
+    The native worker is long-lived and owns global hotkey registration. Without
+    this its in-process ``config`` (HOTKEY_*, CALLER_ROWS, context limits) stays
+    frozen at app-start values, so re-registering hotkeys after a settings change
+    re-binds the OLD keys — a changed hotkey only takes effect after a restart.
+    Mirrors audio.config.reload / brain.config.reload.
+    """
+    import config
+
+    config.reload()
+    print("[native] config reloaded", flush=True)
+    return {"ok": True}
+
+
 def hotkeys_start(addon_hotkeys: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Start global hotkeys in the native process.
 
@@ -1121,6 +1139,7 @@ atexit.register(hotkeys_stop)
 
 HANDLERS = {
     "native.permissions.snapshot": permissions_snapshot,
+    "native.config.reload": native_config_reload,
     "native.hotkeys.start": hotkeys_start,
     "native.hotkeys.stop": hotkeys_stop,
     "native.context.snapshot": context_snapshot,

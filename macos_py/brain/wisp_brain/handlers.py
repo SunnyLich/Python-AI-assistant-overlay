@@ -959,13 +959,20 @@ def brain_transcribe(pcm_path: str = "", language: str | None = None) -> dict[st
         )
         _log(f"loaded STT model {config.STT_MODEL!r}")
     model = _STT_MODEL
+    from core.stt_postprocess import clean_transcript
+
+    selected_language = language or config.STT_LANGUAGE or None
+    _log(f"transcribing {pcm_path!r} with language={selected_language!r}")
     segments, _info = model.transcribe(
         data,
         beam_size=1,
-        language=language or config.STT_LANGUAGE or None,
+        language=selected_language,
         vad_filter=True,
     )
-    text = " ".join(seg.text.strip() for seg in segments).strip()
+    raw_text = " ".join(seg.text.strip() for seg in segments).strip()
+    text = clean_transcript(raw_text)
+    if raw_text and not text:
+        _log(f"discarded repeated-token transcript for {pcm_path!r}: {raw_text!r}")
     _log(f"transcribed {pcm_path!r}: {text!r}")
     return {"text": text, "duration": len(data) / 16_000}
 
@@ -1190,6 +1197,7 @@ def brain_query(
     screenshot_tool_b64: str | None = None,
     include_active_document: bool = False,
     active_document_text: str = "",
+    context_priority: str = "",
 ) -> dict[str, Any]:
     """Assemble context and stream an LLM reply, mirroring App._query_and_speak.
 
@@ -1221,6 +1229,7 @@ def brain_query(
             screenshot_b64=screenshot_b64,
             ambient_text=ambient_text,
             active_document_text=active_document,
+            priority_context=context_priority,
         )
     )
     built = _apply_frontloaded_tools(built, frontload_tools)
@@ -1460,8 +1469,14 @@ def _stream_chat_reply(messages: list[dict[str, str]], memory_context: str) -> I
 
 
 @handler("brain.memory.add")
-def brain_memory_add(text: str = "", category: str | None = None) -> dict[str, Any]:
-    """Add a durable memory fact through the existing memory store."""
+def brain_memory_add(
+    text: str = "", category: str | None = None, scope: str | None = None
+) -> dict[str, Any]:
+    """Add a durable memory fact through the existing memory store.
+
+    ``scope`` ("general"/"project") routes through the project-scoped
+    save_memory API; an explicit ``category`` keeps the legacy manual path.
+    """
     fact = text.strip()
     if not fact:
         raise ValueError("text is required")
@@ -1469,6 +1484,10 @@ def brain_memory_add(text: str = "", category: str | None = None) -> dict[str, A
     from core.memory_store import store
 
     manager = store.get_manager()
+    if scope:
+        result = manager.save_memory(fact, scope=scope)
+        return {"ok": bool(result.get("ok")), "scope": result.get("scope"),
+                "project": result.get("project"), "text": fact}
     if category:
         manager.add_fact_manual(fact, category)
         used_category = category

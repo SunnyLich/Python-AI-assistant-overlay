@@ -27,6 +27,7 @@ a = Analysis(
     binaries=LITEPARSE_BINARIES + UV_BINARIES,
     datas=[
         (str(ROOT / "assets"), "assets"),
+        (str(ROOT / "ui" / "locales"), "ui/locales"),
         (str(ROOT / ".env.example"), "."),
     ] + LITEPARSE_DATAS,
     hiddenimports=[

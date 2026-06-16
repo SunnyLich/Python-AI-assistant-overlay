@@ -48,9 +48,12 @@ def audio_config_reload() -> dict[str, Any]:
     """
     import config
     from core import tts
+    from core.macos_helper import handlers as stt_handlers
 
     config.reload()
     tts.reset_connections()
+    stt_handlers.stt_reset_model()
+    stt_handlers.stt_prewarm()
     provider = config.TTS_PROVIDER.lower()
     prewarm = "skipped"
     try:
@@ -96,6 +99,12 @@ def record_stop_transcribe() -> dict[str, Any]:
     text = stt_handlers.stt_stop_and_transcribe()
     _event("audio.transcribed", {"text": text})
     return {"text": text}
+
+
+def stt_is_ready() -> dict[str, Any]:
+    from core.macos_helper import handlers as stt_handlers
+
+    return stt_handlers.stt_is_ready()
 
 
 def _write_empty_wav(path: Path, *, sample_rate: int = 22_050) -> dict[str, Any]:
@@ -234,6 +243,7 @@ HANDLERS = {
     "audio.prewarm": audio_prewarm,
     "audio.record.start": record_start,
     "audio.record.stop_transcribe": record_stop_transcribe,
+    "audio.stt.is_ready": stt_is_ready,
     "audio.tts.synthesize": tts_synthesize,
     "audio.play_file": play_file,
     "audio.stop": audio_stop,

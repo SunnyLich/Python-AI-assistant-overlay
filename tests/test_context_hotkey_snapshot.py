@@ -61,6 +61,48 @@ def test_browser_context_text_reads_page_by_saved_hwnd(monkeypatch):
     assert "Rendered page text" in text
 
 
+def test_context_priority_source_prefers_active_browser():
+    pytest.importorskip("PySide6")
+    import main
+
+    snapshot = SimpleNamespace(
+        active_window=SimpleNamespace(
+            url="https://example.test/page",
+            process_name="chrome.exe",
+        )
+    )
+
+    assert (
+        main.App._context_priority_source(
+            snapshot,
+            "[Browser/Web]\nPage text",
+            "Document text",
+        )
+        == "Browser/Web"
+    )
+
+
+def test_context_priority_source_prefers_document_when_browser_is_background():
+    pytest.importorskip("PySide6")
+    import main
+
+    snapshot = SimpleNamespace(
+        active_window=SimpleNamespace(
+            url="",
+            process_name="notepad.exe",
+        )
+    )
+
+    assert (
+        main.App._context_priority_source(
+            snapshot,
+            "[Browser/Web]\nPage text",
+            "Document text",
+        )
+        == "Active document"
+    )
+
+
 def test_context_target_replaces_wisp_foreground_with_external_window(monkeypatch):
     pytest.importorskip("PySide6")
     import main

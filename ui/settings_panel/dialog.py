@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QLineEdit, QTextEdit, QComboBox, QCheckBox,
     QPushButton, QTabWidget, QWidget, QFrame, QGroupBox, QMessageBox,
-    QScrollArea, QSizePolicy, QCompleter,
+    QScrollArea, QSizePolicy, QCompleter, QToolTip,
 )
 from PySide6.QtCore import Qt, QTimer, QObject, Signal
 from PySide6.QtGui import QFont
@@ -26,11 +26,13 @@ from core.system.env_utils import (
 import ui.settings_panel.env as settings_env
 from ui.settings_panel.hotkey_capture import HotkeyCaptureEdit
 from ui.settings_panel.helpers import parse_fallback_rows
+from ui.i18n import LANGUAGE_OPTIONS, localize_widget_tree, t
 from ui.shared.window_utils import enable_standard_window_controls, fit_window_to_screen
 
 ENV_PATH = settings_env.ENV_PATH
 _settings_log = logging.getLogger("wisp.settings")
 _settings_dialog: "SettingsDialog | None" = None
+_settings_open_pending = False
 
 
 class _NoScrollCombo(QComboBox):
@@ -45,6 +47,30 @@ class _NoScrollCombo(QComboBox):
             super().wheelEvent(event)
         else:
             event.ignore()
+
+
+class _WarningHeaderLabel(QLabel):
+    """Header label that keeps warning help visible while hovered."""
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__(text)
+        self.setMouseTracking(True)
+
+    def enterEvent(self, event):  # noqa: N802 - Qt override
+        tip = self.toolTip()
+        if tip:
+            QToolTip.showText(
+                self.mapToGlobal(self.rect().bottomLeft()),
+                tip,
+                self,
+                self.rect(),
+                2_147_000_000,
+            )
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):  # noqa: N802 - Qt override
+        QToolTip.hideText()
+        super().leaveEvent(event)
 
 
 def _context_mode_combo(value: str, *, allow_auto: bool = True) -> _NoScrollCombo:
@@ -67,6 +93,70 @@ def _expanding_form_layout(parent: QWidget | None = None) -> QFormLayout:
 # Sentinel data value for the "Custom / enter manually…" model combo entry.
 _CUSTOM_MODEL_SENTINEL = "__custom__"
 _CUSTOM_MODEL_LABEL = "Custom / enter manually…"
+
+_ASSISTANT_LANGUAGE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("System default", ""),
+    ("Match user language", "match_user"),
+    ("English", "English"),
+    ("Chinese", "Chinese"),
+    ("Spanish", "Spanish"),
+    ("French", "French"),
+    ("German", "German"),
+    ("Japanese", "Japanese"),
+    ("Korean", "Korean"),
+    ("Portuguese", "Portuguese"),
+    ("Hindi", "Hindi"),
+)
+
+_STT_LANGUAGE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("Auto-detect", ""),
+    ("English", "en"),
+    ("Chinese (Mandarin)", "zh"),
+    ("Cantonese", "yue"),
+    ("Spanish", "es"),
+    ("French", "fr"),
+    ("German", "de"),
+    ("Japanese", "ja"),
+    ("Korean", "ko"),
+    ("Portuguese", "pt"),
+    ("Hindi", "hi"),
+    ("Italian", "it"),
+    ("Russian", "ru"),
+    ("Arabic", "ar"),
+)
+
+_STT_MODEL_OPTIONS: tuple[tuple[str, str, str], ...] = (
+    ("tiny", "tiny", "Whisper model option: tiny"),
+    ("base", "base", "Whisper model option: base"),
+    ("small", "small", "Whisper model option: small"),
+    ("medium", "medium", "Whisper model option: medium"),
+    ("large-v3", "large-v3", "Whisper model option: large-v3"),
+)
+
+_STT_COMPUTE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("int8", "int8"),
+    ("int8_float16", "int8_float16"),
+    ("float16", "float16"),
+    ("float32", "float32"),
+)
+
+_STT_BEAM_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("1 (fastest)", "1"),
+    ("3", "3"),
+    ("5 (recommended)", "5"),
+    ("8 (most accurate)", "8"),
+)
+
+_STT_DEVICE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("Auto (GPU if available)", "auto"),
+    ("CPU", "cpu"),
+    ("GPU (CUDA)", "cuda"),
+)
+
+_DICTATE_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("Paste raw transcript", "raw"),
+    ("Light LLM cleanup", "llm"),
+)
 
 
 class _ModelFetchSignals(QObject):
@@ -103,6 +193,7 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None, on_apply=None):
         super().__init__(parent)
         self._on_apply = on_apply  # callable() fired after a successful apply
+        self._disposing = False
         self.setWindowTitle("Settings")
         self.setMinimumWidth(480)
         self.setModal(False)
@@ -120,6 +211,8 @@ class SettingsDialog(QDialog):
             "LLM": [], "VISION_LLM": [], "MEMORY_LLM": []
         }
         self._model_section_layouts: dict[str, "QVBoxLayout"] = {}
+        self._warning_headers: dict[str, QLabel] = {}
+        self._warning_header_base_texts: dict[str, str] = {}
         self._fallback_rows: dict = {}
         self._pending_test_results: list[tuple[str, int, bool, str]] = []
         self._pending_test_results_lock = threading.Lock()
@@ -136,8 +229,10 @@ class SettingsDialog(QDialog):
         self._status_result_timer = QTimer(self)
         self._status_result_timer.setInterval(100)
         self._status_result_timer.timeout.connect(self._drain_status_results)
+        self.finished.connect(self._dispose_after_finished)
         self._build_ui()
         self._load_values()
+        localize_widget_tree(self)
         self._schedule_open_status_refresh()
         fit_window_to_screen(self, preferred_width=620, preferred_height=620)
 
@@ -179,7 +274,7 @@ class SettingsDialog(QDialog):
             label = _PROVIDER_LABELS.get(provider, provider)
             if _store(key_name, value, label):
                 row["key"].clear()
-                row["key"].setPlaceholderText("stored in keychain")
+                row["key"].setPlaceholderText(t("stored in keychain"))
 
         # TTS and custom keys still live in self._fields
         for name, label in [
@@ -194,7 +289,7 @@ class SettingsDialog(QDialog):
                 continue
             if _store(name, value, label):
                 self._fields[name].clear()  # type: ignore[attr-defined]
-                self._fields[name].setPlaceholderText(f"{label} key stored in OS keychain")  # type: ignore[attr-defined]
+                self._fields[name].setPlaceholderText(t(f"{label} key stored in OS keychain"))  # type: ignore[attr-defined]
 
         if failures:
             QMessageBox.warning(
@@ -225,6 +320,20 @@ class SettingsDialog(QDialog):
     def showEvent(self, event):                 # noqa: N802
         super().showEvent(event)
         fit_window_to_screen(self, preferred_width=620, preferred_height=620)
+
+    def hideEvent(self, event):                 # noqa: N802
+        self._cancel_async_ui_updates()
+        super().hideEvent(event)
+
+    def closeEvent(self, event):                # noqa: N802
+        self._cancel_async_ui_updates()
+        super().closeEvent(event)
+
+    def _dispose_after_finished(self, _result: int) -> None:
+        self._disposing = True
+        self._cancel_async_ui_updates()
+        _clear_settings_dialog(self)
+        self.deleteLater()
 
     @staticmethod
     def _dialog_style(dark: bool) -> str:
@@ -279,6 +388,16 @@ class SettingsDialog(QDialog):
         QLabel#sectionHeader {{
             color: {c["text_dim"]}; font-size: 8pt; font-weight: 700;
             letter-spacing: 0.5px; padding: 0px;
+        }}
+        QLabel#areaHeader {{
+            color: {c["text"]}; font-size: 11pt; font-weight: 700;
+            letter-spacing: 0px; padding: 0px;
+        }}
+        QLabel#areaSubheader {{
+            color: {c["text_dim"]}; font-size: 9pt; padding: 0px;
+        }}
+        QFrame#areaAccentLine {{
+            background: {c["accent"]}; border: none; border-radius: 2px;
         }}
         QScrollArea {{
             background: {c["bg"]};
@@ -380,13 +499,15 @@ class SettingsDialog(QDialog):
         btn_row.addWidget(reset_btn)
         btn_row.addWidget(self._status_lbl)
         btn_row.addStretch()
-        apply_btn  = QPushButton("Apply")
-        cancel_btn = QPushButton("Cancel")
-        apply_btn.setDefault(True)
+        apply_btn = QPushButton("Apply")
+        confirm_btn = QPushButton("Confirm")
+        apply_btn.setObjectName("settingsApplyButton")
+        confirm_btn.setObjectName("settingsConfirmButton")
+        confirm_btn.setDefault(True)
         apply_btn.clicked.connect(self._apply)
-        cancel_btn.clicked.connect(self.reject)
-        btn_row.addWidget(cancel_btn)
+        confirm_btn.clicked.connect(self._confirm)
         btn_row.addWidget(apply_btn)
+        btn_row.addWidget(confirm_btn)
         root.addLayout(btn_row)
 
     def _tab_llm(self) -> QWidget:
@@ -397,6 +518,11 @@ class SettingsDialog(QDialog):
         outer = QVBoxLayout(w)
         outer.setContentsMargins(12, 12, 12, 12)
         outer.setSpacing(12)
+
+        credentials_group, credentials_layout = self._area_group(
+            "Provider credentials",
+            "Sign in or save provider API keys and custom endpoint details before assigning models.",
+        )
 
         # ── AUTHENTICATION card ───────────────────────────────────────────
         auth_card, auth_cv = self._card("Authentication")
@@ -464,13 +590,14 @@ class SettingsDialog(QDialog):
             cp_btns[0], cp_btns[1], cp_btns[2]
         )
         auth_cv.addWidget(copilot_row)
-        outer.addWidget(auth_card)
+        credentials_layout.addWidget(auth_card)
 
         # ── API KEYS card ─────────────────────────────────────────────────
         api_keys_card, api_keys_cv = self._card("API Keys")
         note = QLabel(
             "<small>Add a row for each provider you want to use. "
-            "Alias is optional — useful when you have multiple keys for the same provider.</small>"
+            "Alias is optional — useful when you have multiple keys for the same provider. "
+            "Custom endpoints are configured below.</small>"
         )
         note.setWordWrap(True)
         api_keys_cv.addWidget(note)
@@ -498,7 +625,55 @@ class SettingsDialog(QDialog):
         akw.addStretch()
         api_keys_cv.addLayout(akw)
         add_key_btn.clicked.connect(lambda: self._add_api_key_row())
-        outer.addWidget(api_keys_card)
+        credentials_layout.addWidget(api_keys_card)
+
+        # ── CUSTOM PROVIDER card ──────────────────────────────────────────
+        self._fields["CUSTOM_BASE_URL"] = QLineEdit()
+        self._fields["CUSTOM_BASE_URL"].setPlaceholderText("https://api.example.com/v1")
+        self._fields["CUSTOM_API_KEY"] = self._password()
+        self._fields["CUSTOM_API_KEY"].setPlaceholderText("Stored in OS keychain")
+        self._custom_test_status_lbl = QLabel()
+        self._custom_test_status_lbl.setWordWrap(True)
+
+        custom_card, custom_cv = self._card("Custom provider")
+        custom_note = QLabel(
+            "<small>Any OpenAI-compatible endpoint, including Ollama and LM Studio. "
+            "Select <b>Custom</b> in a model row below after setting the base URL.</small>"
+        )
+        custom_note.setWordWrap(True)
+        custom_cv.addWidget(custom_note)
+
+        presets_btn = QPushButton("Presets ▾")
+        presets_btn.clicked.connect(self._show_custom_presets_menu)
+        base_url_row = QWidget()
+        bur_h = QHBoxLayout(base_url_row)
+        bur_h.setContentsMargins(0, 0, 0, 0)
+        bur_h.setSpacing(6)
+        bur_h.addWidget(self._fields["CUSTOM_BASE_URL"])
+        bur_h.addWidget(presets_btn)
+
+        custom_f_w = QWidget()
+        custom_f = _expanding_form_layout(custom_f_w)
+        custom_f.setContentsMargins(0, 0, 0, 0)
+        custom_f.setSpacing(8)
+        custom_f.addRow("Base URL", base_url_row)
+        custom_f.addRow("API key", self._fields["CUSTOM_API_KEY"])
+        custom_cv.addWidget(custom_f_w)
+
+        test_custom_row = QWidget()
+        tcrh = QHBoxLayout(test_custom_row)
+        tcrh.setContentsMargins(0, 0, 0, 0)
+        tcrh.setSpacing(10)
+        tcrh.addWidget(self._button_row(("Test custom", self._test_custom_connection)))
+        tcrh.addWidget(self._custom_test_status_lbl, 1)
+        custom_cv.addWidget(test_custom_row)
+        credentials_layout.addWidget(custom_card)
+        outer.addWidget(credentials_group)
+
+        model_group, model_layout = self._area_group(
+            "Model routing",
+            "Choose which saved credential and model powers each purpose.",
+        )
 
         # ── MODEL SECTIONS ─────────────────────────────────────────────────
         section_configs = [
@@ -515,8 +690,9 @@ class SettingsDialog(QDialog):
             hdr_h = QHBoxLayout(hdr_w)
             hdr_h.setContentsMargins(0, 0, 0, 4)
             hdr_h.setSpacing(0)
-            title_lbl = QLabel(section_title.upper())
+            title_lbl = _WarningHeaderLabel(section_title.upper())
             title_lbl.setObjectName("sectionHeader")
+            self._register_warning_header(section_key, title_lbl)
             apply_btn = QPushButton("Apply to all")
             apply_btn.clicked.connect(
                 lambda checked, sk=section_key: self._apply_model_section_to_all(sk)
@@ -531,7 +707,7 @@ class SettingsDialog(QDialog):
             mch_h = QHBoxLayout(mch_w)
             mch_h.setContentsMargins(0, 0, 0, 0)
             mch_h.setSpacing(8)
-            lk = QLabel("<small><b>API Key</b></small>")
+            lk = QLabel("<small><b>Provider</b></small>")
             lm = QLabel("<small><b>Model</b></small>")
             mch_h.addWidget(lk, 2)
             mch_h.addWidget(lm, 3)
@@ -570,49 +746,9 @@ class SettingsDialog(QDialog):
             add_row_btn.clicked.connect(
                 lambda checked, sk=section_key: self._add_model_section_row(sk)
             )
-            outer.addWidget(card)
+            model_layout.addWidget(card)
 
-        # ── CUSTOM PROVIDER card ──────────────────────────────────────────
-        self._fields["CUSTOM_BASE_URL"] = QLineEdit()
-        self._fields["CUSTOM_BASE_URL"].setPlaceholderText("https://api.example.com/v1")
-        self._fields["CUSTOM_API_KEY"] = self._password()
-        self._fields["CUSTOM_API_KEY"].setPlaceholderText("Stored in OS keychain")
-        self._custom_test_status_lbl = QLabel()
-        self._custom_test_status_lbl.setWordWrap(True)
-
-        custom_card, custom_cv = self._card("Custom provider")
-        custom_note = QLabel(
-            "<small>Any OpenAI-compatible endpoint — Ollama, LM Studio, and more. "
-            "Add a <b>custom</b> row in the API Keys table above, then select it in a model section.</small>"
-        )
-        custom_note.setWordWrap(True)
-        custom_cv.addWidget(custom_note)
-
-        presets_btn = QPushButton("Presets ▾")
-        presets_btn.clicked.connect(self._show_custom_presets_menu)
-        base_url_row = QWidget()
-        bur_h = QHBoxLayout(base_url_row)
-        bur_h.setContentsMargins(0, 0, 0, 0)
-        bur_h.setSpacing(6)
-        bur_h.addWidget(self._fields["CUSTOM_BASE_URL"])
-        bur_h.addWidget(presets_btn)
-
-        custom_f_w = QWidget()
-        custom_f = _expanding_form_layout(custom_f_w)
-        custom_f.setContentsMargins(0, 0, 0, 0)
-        custom_f.setSpacing(8)
-        custom_f.addRow("Base URL", base_url_row)
-        custom_f.addRow("API key", self._fields["CUSTOM_API_KEY"])
-        custom_cv.addWidget(custom_f_w)
-
-        test_custom_row = QWidget()
-        tcrh = QHBoxLayout(test_custom_row)
-        tcrh.setContentsMargins(0, 0, 0, 0)
-        tcrh.setSpacing(10)
-        tcrh.addWidget(self._button_row(("Test custom", self._test_custom_connection)))
-        tcrh.addWidget(self._custom_test_status_lbl, 1)
-        custom_cv.addWidget(test_custom_row)
-        outer.addWidget(custom_card)
+        outer.addWidget(model_group)
 
         outer.addStretch()
         scroll.setWidget(w)
@@ -634,7 +770,7 @@ class SettingsDialog(QDialog):
         provider_combo = self._combo(
             ["groq", "openai", "anthropic", "google", "deepseek",
              "openrouter", "mistral", "xai", "together", "cerebras",
-             "ollama", "custom"],
+             "ollama"],
             provider,
         )
         provider_combo.setMinimumWidth(120)
@@ -680,6 +816,8 @@ class SettingsDialog(QDialog):
         options: list[tuple[str, str]] = []
         for row in self._api_key_rows:
             provider = _get(row["provider"])
+            if provider == "custom":
+                continue
             alias = row["alias"].text().strip()
             label = _PROVIDER_LABELS.get(provider, provider)
             display = f"{label} ({alias})" if alias else label
@@ -687,6 +825,7 @@ class SettingsDialog(QDialog):
         # OAuth/keychain providers — always available regardless of API key rows
         options.append((_PROVIDER_LABELS.get("chatgpt", "Codex (ChatGPT)") + " [OAuth]", "chatgpt"))
         options.append((_PROVIDER_LABELS.get("copilot", "GitHub Copilot") + " [OAuth]", "copilot"))
+        options.append((_PROVIDER_LABELS.get("custom", "Custom (OpenAI-compatible)"), "custom"))
         return options
 
     def _refresh_model_api_key_combos(self) -> None:
@@ -782,8 +921,11 @@ class SettingsDialog(QDialog):
             self._fill_model_combo(
                 row_info, _PROVIDER_MODELS.get(p, []), p, self._model_value(row_info)
             )
+            self._schedule_warning_marker_refresh()
 
         api_key_combo.currentIndexChanged.connect(lambda _: _on_key_change())
+        model_combo.currentIndexChanged.connect(lambda _: self._schedule_warning_marker_refresh())
+        model_edit.textChanged.connect(lambda _: self._schedule_warning_marker_refresh())
         refresh_btn.clicked.connect(lambda: self._refresh_models_for_row(row_info))
         remove_btn.clicked.connect(
             lambda: self._remove_model_section_row(section_key, row_info)
@@ -905,6 +1047,10 @@ class SettingsDialog(QDialog):
                 self._add_model_section_row(sk, provider, model)
 
     def _effective_secret_value_from_provider(self, provider: str) -> str:
+        if provider == "custom":
+            field = self._fields.get("CUSTOM_API_KEY")
+            typed = _get(field).strip() if field is not None else ""
+            return typed or secret_store.get_keychain_secret("CUSTOM_API_KEY") or ""
         key_name = _PROVIDER_KEY_NAMES.get(provider, "")
         if not key_name:
             return ""
@@ -989,18 +1135,18 @@ class SettingsDialog(QDialog):
             if tokens:
                 aid = tokens.get("account_id") or ""
                 label = "Logged in" + (f" \u2022 account {aid[:8]}\u2026" if aid else "")
-                self._chatgpt_status_lbl.setText(label)
+                self._chatgpt_status_lbl.setText(t(label))
                 self._chatgpt_status_lbl.setStyleSheet("color: #80c080;")
             else:
-                self._chatgpt_status_lbl.setText("Not logged in")
+                self._chatgpt_status_lbl.setText(t("Not logged in"))
                 self._chatgpt_status_lbl.setStyleSheet("color: palette(placeholder-text);")
         except Exception as exc:
-            self._chatgpt_status_lbl.setText(f"Error reading status: {exc}")
+            self._chatgpt_status_lbl.setText(t(f"Error reading status: {exc}"))
             self._chatgpt_status_lbl.setStyleSheet("color: #c04040;")
 
     def _chatgpt_login_browser(self) -> None:
         from core.auth import chatgpt as chatgpt_auth
-        self._chatgpt_status_lbl.setText("Opening browser\u2026 waiting for callback")
+        self._chatgpt_status_lbl.setText(t("Opening browser\u2026 waiting for callback"))
         self._chatgpt_status_lbl.setStyleSheet("color: #c0c040;")
         self._start_auth_poll()
 
@@ -1027,7 +1173,7 @@ class SettingsDialog(QDialog):
             msg = self._auth_poll_error
             self._auth_poll_error = None  # clear so we don't re-trigger
             self._auth_poll_timer.stop()
-            self._chatgpt_status_lbl.setText(f"Error: {msg}")
+            self._chatgpt_status_lbl.setText(t(f"Error: {msg}"))
             self._chatgpt_status_lbl.setStyleSheet("color: #c04040;")
             return
         # Check if tokens have appeared in the keychain
@@ -1043,7 +1189,7 @@ class SettingsDialog(QDialog):
         self._auth_poll_ticks += 1
         if self._auth_poll_ticks >= 300:
             self._auth_poll_timer.stop()
-            self._chatgpt_status_lbl.setText("Timed out waiting for login")
+            self._chatgpt_status_lbl.setText(t("Timed out waiting for login"))
             self._chatgpt_status_lbl.setStyleSheet("color: #c04040;")
 
     def _chatgpt_logout(self) -> None:
@@ -1064,13 +1210,13 @@ class SettingsDialog(QDialog):
                 label = "Logged in" + (f" as {login}" if login else "")
                 if scopes:
                     label += f"\nScopes: {scopes}"
-                self._github_status_lbl.setText(label)
+                self._github_status_lbl.setText(t(label))
                 self._github_status_lbl.setStyleSheet("color: #80c080;")
             else:
-                self._github_status_lbl.setText("Not logged in")
+                self._github_status_lbl.setText(t("Not logged in"))
                 self._github_status_lbl.setStyleSheet("color: palette(placeholder-text);")
         except Exception as exc:
-            self._github_status_lbl.setText(f"Error reading status: {exc}")
+            self._github_status_lbl.setText(t(f"Error reading status: {exc}"))
             self._github_status_lbl.setStyleSheet("color: #c04040;")
 
     def _github_login_device(self) -> None:
@@ -1082,13 +1228,13 @@ class SettingsDialog(QDialog):
         cfg.GITHUB_CLIENT_ID = override_client_id or getattr(cfg, "GITHUB_DEFAULT_CLIENT_ID", "")
         cfg.GITHUB_OAUTH_SCOPES = _get(self._fields["GITHUB_OAUTH_SCOPES"]).strip()
         if not github_auth.has_configured_client_id():
-            self._github_status_lbl.setText(
+            self._github_status_lbl.setText(t(
                 "This build does not include a GitHub OAuth app client ID yet."
-            )
+            ))
             self._github_status_lbl.setStyleSheet("color: #c04040;")
             return
 
-        self._github_status_lbl.setText("Starting GitHub device auth...")
+        self._github_status_lbl.setText(t("Starting GitHub device auth..."))
         self._github_status_lbl.setStyleSheet("color: #c0c040;")
         self._start_github_auth_poll()
 
@@ -1122,11 +1268,11 @@ class SettingsDialog(QDialog):
             if msg.startswith("__device_code__"):
                 body = msg[len("__device_code__"):]
                 url, _, code = body.partition("\n")
-                self._github_status_lbl.setText(f"Go to: {url}\nEnter code: {code}")
+                self._github_status_lbl.setText(f"{t('Go to:')} {url}\n{t('Enter code:')} {code}")
                 self._github_status_lbl.setStyleSheet("color: #80a0ff;")
                 return
             self._github_auth_poll_timer.stop()
-            self._github_status_lbl.setText(f"Error: {msg}")
+            self._github_status_lbl.setText(t(f"Error: {msg}"))
             self._github_status_lbl.setStyleSheet("color: #c04040;")
             return
         try:
@@ -1140,7 +1286,7 @@ class SettingsDialog(QDialog):
         self._github_auth_poll_ticks += 1
         if self._github_auth_poll_ticks >= 900:
             self._github_auth_poll_timer.stop()
-            self._github_status_lbl.setText("Timed out waiting for GitHub login")
+            self._github_status_lbl.setText(t("Timed out waiting for GitHub login"))
             self._github_status_lbl.setStyleSheet("color: #c04040;")
 
     def _github_logout(self) -> None:
@@ -1155,12 +1301,12 @@ class SettingsDialog(QDialog):
         try:
             from core.auth import copilot_auth
             stored, message = copilot_auth.token_status()
-            self._copilot_status_lbl.setText(message)
+            self._copilot_status_lbl.setText(t(message))
             self._copilot_status_lbl.setStyleSheet(
                 "color: #80c080;" if stored else "color: palette(placeholder-text);"
             )
         except Exception as exc:
-            self._copilot_status_lbl.setText(f"Keychain error: {exc}")
+            self._copilot_status_lbl.setText(t(f"Keychain error: {exc}"))
             self._copilot_status_lbl.setStyleSheet("color: #c04040;")
 
     def _copilot_save_token(self) -> None:
@@ -1170,7 +1316,7 @@ class SettingsDialog(QDialog):
             self._copilot_token_edit.clear()
             self._refresh_copilot_status()
         except Exception as exc:
-            self._copilot_status_lbl.setText(str(exc))
+            self._copilot_status_lbl.setText(t(str(exc)))
             self._copilot_status_lbl.setStyleSheet("color: #c04040;")
             QMessageBox.warning(self, "GitHub Copilot token", str(exc))
 
@@ -1181,7 +1327,7 @@ class SettingsDialog(QDialog):
             self._copilot_token_edit.clear()
             self._refresh_copilot_status()
         except Exception as exc:
-            self._copilot_status_lbl.setText(str(exc))
+            self._copilot_status_lbl.setText(t(str(exc)))
             self._copilot_status_lbl.setStyleSheet("color: #c04040;")
             QMessageBox.warning(self, "GitHub Copilot token", str(exc))
 
@@ -1189,12 +1335,12 @@ class SettingsDialog(QDialog):
         try:
             from core.auth import copilot_client
             ok, message = copilot_client.test_copilot_token()
-            self._copilot_status_lbl.setText(message)
+            self._copilot_status_lbl.setText(t(message))
             self._copilot_status_lbl.setStyleSheet(
                 "color: #80c080;" if ok else "color: #c04040;"
             )
         except Exception as exc:
-            self._copilot_status_lbl.setText(f"Test failed: {exc}")
+            self._copilot_status_lbl.setText(t(f"Test failed: {exc}"))
             self._copilot_status_lbl.setStyleSheet("color: #c04040;")
 
     def _tab_tts(self) -> QWidget:
@@ -1216,6 +1362,74 @@ class SettingsDialog(QDialog):
         pf.addRow("TTS Provider", self._fields["TTS_PROVIDER"])
         provider_cv.addWidget(pf_w)
         outer.addWidget(provider_card)
+
+        # ── SPEECH-TO-TEXT card ──────────────────────────────────────────
+        stt_card, stt_cv = self._card("Speech to Text")
+        stt_note = QLabel(
+            "<small>Whisper model settings for hold-to-talk transcription. "
+            "Larger models improve Mandarin/Cantonese speech accuracy but use more disk and CPU.</small>"
+        )
+        stt_note.setWordWrap(True)
+        stt_cv.addWidget(stt_note)
+
+        stt_model = _NoScrollCombo()
+        stt_model.setProperty("allow_custom_saved_value", True)
+        for label, model, translation_key in _STT_MODEL_OPTIONS:
+            stt_model.addItem(label, model)
+            stt_model.setItemData(stt_model.count() - 1, translation_key, 0x0100 + 1)
+        stt_model.setToolTip(
+            "Local faster-whisper model. small is a good first upgrade for Chinese; "
+            "medium/large-v3 are heavier."
+        )
+        self._fields["STT_MODEL"] = stt_model
+
+        stt_compute = _NoScrollCombo()
+        for label, value in _STT_COMPUTE_OPTIONS:
+            stt_compute.addItem(label, value)
+        stt_compute.setToolTip("Whisper compute precision. Keep int8 for CPU unless you know you need another mode.")
+        self._fields["STT_COMPUTE_TYPE"] = stt_compute
+
+        stt_language = _NoScrollCombo()
+        for label, value in _STT_LANGUAGE_OPTIONS:
+            stt_language.addItem(label, value)
+        stt_language.setToolTip(
+            "Recognition language for hold-to-talk. Auto-detect is useful if you switch languages often."
+        )
+        self._fields["STT_LANGUAGE"] = stt_language
+        # Cantonese (yue) only exists in large-v3; rebuild the language list
+        # whenever the model changes so it can't be paired with a model that
+        # can't decode it.
+        stt_model.currentIndexChanged.connect(lambda *_: self._rebuild_stt_languages())
+
+        stt_beam = _NoScrollCombo()
+        for label, value in _STT_BEAM_OPTIONS:
+            stt_beam.addItem(label, value)
+        stt_beam.setToolTip(
+            "Decoding beam width. 5 (Whisper's default) is noticeably more accurate than greedy (1) "
+            "for a small speed cost; raise it for tricky audio."
+        )
+        self._fields["STT_BEAM_SIZE"] = stt_beam
+
+        stt_device = _NoScrollCombo()
+        for label, value in _STT_DEVICE_OPTIONS:
+            stt_device.addItem(label, value)
+        stt_device.setToolTip(
+            "Where Whisper runs. GPU (CUDA) is much faster, especially for large-v3, but needs an "
+            "NVIDIA GPU with CUDA installed. Auto uses the GPU when present and falls back to CPU."
+        )
+        self._fields["STT_DEVICE"] = stt_device
+
+        stt_fw = QWidget()
+        stt_f = _expanding_form_layout(stt_fw)
+        stt_f.setContentsMargins(0, 0, 0, 0)
+        stt_f.setSpacing(8)
+        stt_f.addRow("Whisper model", self._fields["STT_MODEL"])
+        stt_f.addRow("Device", self._fields["STT_DEVICE"])
+        stt_f.addRow("Compute type", self._fields["STT_COMPUTE_TYPE"])
+        stt_f.addRow("Speech language", self._fields["STT_LANGUAGE"])
+        stt_f.addRow("Beam size", self._fields["STT_BEAM_SIZE"])
+        stt_cv.addWidget(stt_fw)
+        outer.addWidget(stt_card)
 
         # ── API KEYS card ─────────────────────────────────────────────────
         keys_card, keys_cv = self._card("API Keys")
@@ -1356,6 +1570,46 @@ class SettingsDialog(QDialog):
         )
         outer_layout.addWidget(voice_card)
 
+        # ── DICTATION (PUSH-TO-TALK) card ─────────────────────────────────
+        dictate_card, dictate_cv = self._card("Dictation (hold to type)")
+        dictate_note = QLabel(
+            "<small>Hold the key, speak, release — the transcript is typed straight into "
+            "whatever text field has focus (no assistant). Leave the hotkey empty to disable.</small>"
+        )
+        dictate_note.setWordWrap(True)
+        dictate_cv.addWidget(dictate_note)
+
+        dictate_hdr = QWidget()
+        dictate_hdr_h = QHBoxLayout(dictate_hdr)
+        dictate_hdr_h.setContentsMargins(0, 2, 0, 2)
+        dictate_hdr_h.setSpacing(8)
+        dictate_hotkey_edit = HotkeyCaptureEdit()
+        dictate_hotkey_edit.setFixedWidth(120)
+        dictate_hotkey_edit.setPlaceholderText("Hotkey...")
+        self._fields["HOTKEY_DICTATE"] = dictate_hotkey_edit
+        dictate_hdr_h.addWidget(dictate_hotkey_edit)
+        dictate_lbl = QLabel("Hold to dictate into focused field")
+        dictate_lbl.setStyleSheet("font-style: italic; color: palette(placeholder-text);")
+        dictate_hdr_h.addWidget(dictate_lbl)
+        dictate_hdr_h.addStretch()
+        dictate_cv.addWidget(dictate_hdr)
+
+        dictate_mode = _NoScrollCombo()
+        for label, value in _DICTATE_MODE_OPTIONS:
+            dictate_mode.addItem(label, value)
+        dictate_mode.setToolTip(
+            "Raw pastes exactly what Whisper heard (fast, fully local). LLM cleanup runs the "
+            "transcript through your configured model for punctuation/filler cleanup before pasting."
+        )
+        self._fields["DICTATE_MODE"] = dictate_mode
+        dictate_form = QWidget()
+        dictate_f = _expanding_form_layout(dictate_form)
+        dictate_f.setContentsMargins(0, 0, 0, 0)
+        dictate_f.setSpacing(8)
+        dictate_f.addRow("Dictated text", self._fields["DICTATE_MODE"])
+        dictate_cv.addWidget(dictate_form)
+        outer_layout.addWidget(dictate_card)
+
         # ── OTHER HOTKEYS card ────────────────────────────────────────────
         other_card, other_cv = self._card("Other Hotkeys")
         self._keybinds_layout = other_cv
@@ -1485,6 +1739,14 @@ class SettingsDialog(QDialog):
             "context_memory_mode": memory_combo,
             "context_screenshot": screenshot_combo,
         }
+        for combo in (
+            docs_combo,
+            browser_combo,
+            github_combo,
+            memory_combo,
+            screenshot_combo,
+        ):
+            combo.currentIndexChanged.connect(lambda _: self._schedule_warning_marker_refresh())
         return context_row, controls
 
     def _open_tool_access_dialog(self, blk: dict, method_label: str) -> None:
@@ -1509,6 +1771,7 @@ class SettingsDialog(QDialog):
         )
         if dlg.exec():
             blk["tool_overrides"] = dlg.selected_overrides()
+            self._schedule_warning_marker_refresh()
 
     def _add_caller_block(
         self,
@@ -1646,6 +1909,7 @@ class SettingsDialog(QDialog):
 
         self._callers_vlayout.addWidget(frame)
         self._caller_blocks.append(blk)
+        self._schedule_warning_marker_refresh()
 
     def _add_caller_intent_row(
         self,
@@ -1716,10 +1980,6 @@ class SettingsDialog(QDialog):
         f = _expanding_form_layout(fw)
         f.setSpacing(8)
         f.setContentsMargins(0, 0, 0, 0)
-
-        note_lbl = QLabel("<small>Memory model is configured in the <b>LLM</b> tab → Memory model section.</small>")
-        note_lbl.setWordWrap(True)
-        f.addRow("", note_lbl)
 
         mem_auto = QCheckBox("Automatically extract long-term facts from conversation")
         mem_auto.setToolTip("Off by default to avoid clutter. Explicit remember/note commands still save facts.")
@@ -1869,6 +2129,18 @@ class SettingsDialog(QDialog):
         self._fields["CHAT_AUTO_ELABORATE"] = QCheckBox("Auto-elaborate when opening chat")
         self._fields["CHAT_ELABORATE_PROMPT"] = QLineEdit()
         self._fields["CHAT_ELABORATE_PROMPT"].setPlaceholderText("e.g. Please elaborate on that.")
+        app_language = _NoScrollCombo()
+        for label, value in LANGUAGE_OPTIONS:
+            app_language.addItem(label, value)
+        app_language.setToolTip("Language used for the app's menus, dialogs, and controls.")
+        self._fields["APP_LANGUAGE"] = app_language
+        assistant_language = _NoScrollCombo()
+        for label, value in _ASSISTANT_LANGUAGE_OPTIONS:
+            assistant_language.addItem(label, value)
+        assistant_language.setToolTip(
+            "Preferred response language. System default leaves the prompt unchanged."
+        )
+        self._fields["ASSISTANT_LANGUAGE"] = assistant_language
 
         self._fields["ICON_SIZE"] = QLineEdit()
         self._fields["ICON_SIZE"].setPlaceholderText("e.g. 80")
@@ -1915,6 +2187,8 @@ class SettingsDialog(QDialog):
         f.addRow("", self._fields["ICON_AUTO_HIDE"])
         f.addRow("", self._fields["CHAT_AUTO_ELABORATE"])
         f.addRow("Elaborate prompt", self._fields["CHAT_ELABORATE_PROMPT"])
+        f.addRow("App language", self._fields["APP_LANGUAGE"])
+        f.addRow("Assistant language", self._fields["ASSISTANT_LANGUAGE"])
         f.addRow(_sep(), _sep())
         f.addRow("Icon size (px)", self._fields["ICON_SIZE"])
         f.addRow("Text bubble width (px)", self._fields["BUBBLE_WIDTH"])
@@ -2094,10 +2368,126 @@ class SettingsDialog(QDialog):
         cv.setContentsMargins(16, 12, 16, 16)
         cv.setSpacing(10)
         if title:
-            hdr = QLabel(title.upper())
+            hdr = _WarningHeaderLabel(title.upper())
             hdr.setObjectName("sectionHeader")
             cv.addWidget(hdr)
+            self._register_warning_header(title, hdr)
         return card, cv
+
+    def _register_warning_header(self, key: str, label: QLabel) -> None:
+        if not hasattr(self, "_warning_headers"):
+            self._warning_headers = {}
+            self._warning_header_base_texts = {}
+        self._warning_headers[key] = label
+        self._warning_header_base_texts[key] = label.text()
+
+    def _set_warning_markers(self, warnings_by_target: dict[str, list[str]]) -> None:
+        if not hasattr(self, "_warning_headers"):
+            return
+        for key, label in self._warning_headers.items():
+            base = self._warning_header_base_texts.get(key, label.text())
+            target_warnings = warnings_by_target.get(key, [])
+            if target_warnings:
+                label.setText(f"⚠ {t(base)}")
+                label.setToolTip("\n\n".join(t(warning) for warning in target_warnings))
+            else:
+                label.setText(t(base))
+                label.setToolTip("")
+
+    def _warning_values_from_current_ui(self) -> dict[str, str]:
+        def _section_vals(sk: str) -> tuple[str, str]:
+            rows = getattr(self, "_model_section_rows", {}).get(sk, [])
+            if not rows:
+                return "", ""
+            primary = rows[0]
+            return (
+                str(primary["api_key_combo"].currentData() or ""),
+                self._model_value(primary),
+            )
+
+        llm_p, llm_m = _section_vals("LLM")
+        vis_p, vis_m = _section_vals("VISION_LLM")
+        return {
+            "LLM_PROVIDER": llm_p,
+            "LLM_MODEL": llm_m,
+            "VISION_LLM_PROVIDER": vis_p,
+            "VISION_LLM_MODEL": vis_m,
+        }
+
+    def _refresh_capability_warning_markers(self) -> None:
+        _warnings, warnings_by_target = self._capability_warnings_for_values(
+            self._warning_values_from_current_ui()
+        )
+        self._set_warning_markers(warnings_by_target)
+
+    def _schedule_warning_marker_refresh(self) -> None:
+        if getattr(self, "_disposing", False):
+            return
+        QTimer.singleShot(0, self._refresh_capability_warning_markers)
+
+    def _area_heading(self, title: str, subtitle: str) -> QWidget:
+        """Return a compact section label with an accent rail."""
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 4, 0, 0)
+        h.setSpacing(10)
+
+        rail = QFrame()
+        rail.setObjectName("areaAccentLine")
+        rail.setFixedWidth(4)
+        rail.setMinimumHeight(34)
+
+        text_w = QWidget()
+        text_v = QVBoxLayout(text_w)
+        text_v.setContentsMargins(0, 0, 0, 0)
+        text_v.setSpacing(2)
+        title_lbl = _WarningHeaderLabel(title)
+        title_lbl.setObjectName("areaHeader")
+        subtitle_lbl = QLabel(subtitle)
+        subtitle_lbl.setObjectName("areaSubheader")
+        subtitle_lbl.setWordWrap(True)
+        text_v.addWidget(title_lbl)
+        text_v.addWidget(subtitle_lbl)
+
+        h.addWidget(rail)
+        h.addWidget(text_w, 1)
+        return w
+
+    def _area_group(self, title: str, subtitle: str) -> tuple[QWidget, QVBoxLayout]:
+        """Return a section group whose accent rail spans all contained cards."""
+        w = QWidget()
+        w.setObjectName("settingsAreaGroup")
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 4, 0, 0)
+        h.setSpacing(10)
+
+        rail = QFrame()
+        rail.setObjectName("areaAccentLine")
+        rail.setFixedWidth(4)
+        rail.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+
+        content_w = QWidget()
+        content_v = QVBoxLayout(content_w)
+        content_v.setContentsMargins(0, 0, 0, 0)
+        content_v.setSpacing(12)
+
+        title_lbl = _WarningHeaderLabel(title)
+        title_lbl.setObjectName("areaHeader")
+        self._register_warning_header(title, title_lbl)
+        subtitle_lbl = QLabel(subtitle)
+        subtitle_lbl.setObjectName("areaSubheader")
+        subtitle_lbl.setWordWrap(True)
+        content_v.addWidget(title_lbl)
+        content_v.addWidget(subtitle_lbl)
+
+        body_v = QVBoxLayout()
+        body_v.setContentsMargins(0, 0, 0, 0)
+        body_v.setSpacing(12)
+        content_v.addLayout(body_v)
+
+        h.addWidget(rail)
+        h.addWidget(content_w, 1)
+        return w, body_v
 
     def _provider_model_row(
         self,
@@ -2305,10 +2695,16 @@ class SettingsDialog(QDialog):
                 continue
             self._fields[name].clear()  # type: ignore[attr-defined]
             status = "stored in OS keychain" if self._secret_configured_fast(name) else "not configured"
-            self._fields[name].setPlaceholderText(status)  # type: ignore[attr-defined]
+            self._fields[name].setPlaceholderText(t(status))  # type: ignore[attr-defined]
 
         _set(self._fields["TTS_PROVIDER"], self._env.get("TTS_PROVIDER", cfg.TTS_PROVIDER))
         _set(self._fields["CARTESIA_VOICE_ID"], self._env.get("CARTESIA_VOICE_ID", ""))
+        _set(self._fields["STT_MODEL"], self._env.get("STT_MODEL", cfg.STT_MODEL))
+        self._rebuild_stt_languages()  # drop yue if the loaded model isn't large-v3
+        _set(self._fields["STT_COMPUTE_TYPE"], self._env.get("STT_COMPUTE_TYPE", cfg.STT_COMPUTE_TYPE))
+        _set(self._fields["STT_LANGUAGE"], self._env.get("STT_LANGUAGE", cfg.STT_LANGUAGE))
+        _set(self._fields["STT_BEAM_SIZE"], self._env.get("STT_BEAM_SIZE", str(cfg.STT_BEAM_SIZE)))
+        _set(self._fields["STT_DEVICE"], self._env.get("STT_DEVICE", cfg.STT_DEVICE))
         _set(self._fields["HOTKEY_ADD_CONTEXT"],   self._env.get("HOTKEY_ADD_CONTEXT",   cfg.HOTKEY_ADD_CONTEXT))
         _set(self._fields["HOTKEY_CLEAR_CONTEXT"], self._env.get("HOTKEY_CLEAR_CONTEXT", cfg.HOTKEY_CLEAR_CONTEXT))
         _set(self._fields["HOTKEY_SNIP"],          self._env.get("HOTKEY_SNIP",          cfg.HOTKEY_SNIP))
@@ -2401,6 +2797,8 @@ class SettingsDialog(QDialog):
         # Voice (push-to-talk) block
         vc = dict(getattr(cfg, "VOICE_CALLER", {}) or {})
         _set(self._fields["HOTKEY_VOICE"], self._env.get("HOTKEY_VOICE", vc.get("hotkey", cfg.HOTKEY_VOICE)))
+        _set(self._fields["HOTKEY_DICTATE"], self._env.get("HOTKEY_DICTATE", cfg.HOTKEY_DICTATE))
+        _set(self._fields["DICTATE_MODE"], self._env.get("DICTATE_MODE", cfg.DICTATE_MODE))
         vb = self._voice_block
         vb["context_ambient"].setChecked(
             self._env.get("VOICE_CONTEXT_AMBIENT", str(vc.get("context_ambient", True))).lower() == "true"
@@ -2462,6 +2860,14 @@ class SettingsDialog(QDialog):
         self._fields["CHAT_AUTO_ELABORATE"].setChecked(auto_elab)  # type: ignore
         _set(self._fields["CHAT_ELABORATE_PROMPT"],
              self._env.get("CHAT_ELABORATE_PROMPT", cfg.CHAT_ELABORATE_PROMPT))
+        _set(
+            self._fields["APP_LANGUAGE"],
+            self._env.get("APP_LANGUAGE", getattr(cfg, "APP_LANGUAGE", "")),
+        )
+        _set(
+            self._fields["ASSISTANT_LANGUAGE"],
+            self._env.get("ASSISTANT_LANGUAGE", getattr(cfg, "ASSISTANT_LANGUAGE", "")),
+        )
 
         _set(self._fields["ICON_SIZE"],    self._env.get("ICON_SIZE", self._env.get("DOLL_SIZE", str(cfg.ICON_SIZE))))
         _set(self._fields["BUBBLE_WIDTH"], self._env.get("BUBBLE_WIDTH", str(cfg.BUBBLE_WIDTH)))
@@ -2483,6 +2889,7 @@ class SettingsDialog(QDialog):
 
         util_val = self._env.get("SYSTEM_PROMPT_UTILITY", cfg.SYSTEM_PROMPT_UTILITY)
         self._fields["SYSTEM_PROMPT_UTILITY"].setPlainText(util_val)  # type: ignore
+        self._refresh_capability_warning_markers()
 
     def _effective_secret_value(self, name: str) -> str:
         typed = _get(self._fields[name]).strip()
@@ -2501,11 +2908,11 @@ class SettingsDialog(QDialog):
             color = "#80c080"
         else:
             color = "#c04040"
-        label.setText(message)
+        label.setText(t(message))
         label.setStyleSheet(f"color: {color};")
 
     def _set_test_pending(self, label: QLabel, message: str = "Testing...") -> None:
-        label.setText(message)
+        label.setText(t(message))
         label.setStyleSheet("color: #c0c040;")
 
     def _set_status_label(self, label: QLabel, ok, message: str) -> None:
@@ -2515,14 +2922,37 @@ class SettingsDialog(QDialog):
             color = "#80c080"
         else:
             color = "#c04040"
-        label.setText(message)
+        label.setText(t(message))
         label.setStyleSheet(f"color: {color};")
 
     def _queue_status_result(self, token: int, attr: str, ok, message: str) -> None:
         with self._pending_status_results_lock:
             self._pending_status_results.append((token, attr, ok, message))
 
+    def _cancel_status_refresh(self) -> None:
+        self._status_refresh_token += 1
+        self._status_refresh_running = False
+        with self._pending_status_results_lock:
+            self._pending_status_results.clear()
+        if self._status_result_timer.isActive():
+            self._status_result_timer.stop()
+
+    def _cancel_async_ui_updates(self) -> None:
+        self._cancel_status_refresh()
+        self._running_test_tokens.clear()
+        self._latest_test_token.clear()
+        with self._pending_test_results_lock:
+            self._pending_test_results.clear()
+        if self._test_result_timer.isActive():
+            self._test_result_timer.stop()
+        for timer_name in ("_auth_poll_timer", "_github_auth_poll_timer"):
+            timer = getattr(self, timer_name, None)
+            if timer is not None and timer.isActive():
+                timer.stop()
+
     def _schedule_open_status_refresh(self) -> None:
+        if getattr(self, "_disposing", False):
+            return
         self._status_refresh_token += 1
         token = self._status_refresh_token
         self._status_refresh_running = True
@@ -2577,6 +3007,9 @@ class SettingsDialog(QDialog):
         threading.Thread(target=_worker, daemon=True, name="settings-status-refresh").start()
 
     def _drain_status_results(self) -> None:
+        if getattr(self, "_disposing", False):
+            self._cancel_status_refresh()
+            return
         with self._pending_status_results_lock:
             pending = list(self._pending_status_results)
             self._pending_status_results.clear()
@@ -2593,6 +3026,8 @@ class SettingsDialog(QDialog):
             self._status_result_timer.stop()
 
     def _start_async_test(self, test_key: str, status_label: QLabel, runner) -> None:
+        if getattr(self, "_disposing", False):
+            return
         token = self._latest_test_token.get(test_key, 0) + 1
         self._latest_test_token[test_key] = token
         self._running_test_tokens.add((test_key, token))
@@ -2611,6 +3046,9 @@ class SettingsDialog(QDialog):
             self._test_result_timer.start()
 
     def _drain_test_results(self) -> None:
+        if getattr(self, "_disposing", False):
+            self._cancel_async_ui_updates()
+            return
         with self._pending_test_results_lock:
             pending = list(self._pending_test_results)
             self._pending_test_results.clear()
@@ -2734,8 +3172,149 @@ class SettingsDialog(QDialog):
             ),
         )
 
-    def _apply(self):
-        """Save settings, apply changes live, then close the dialog."""
+    @staticmethod
+    def _reset_stt_model_in_background() -> None:
+        if os.environ.get("WISP_MACOS_PY_UI_HOST") == "1":
+            # In the split worker app, the UI process must not import core.stt:
+            # that pulls in NumPy/faster-whisper and can stall Qt while Python is
+            # starting other threads. The supervisor's settings-applied flow
+            # resets STT in the audio worker instead.
+            return
+
+        def _worker():
+            try:
+                from core import stt as _stt
+                _stt.reset_model()
+            except Exception as exc:  # noqa: BLE001 - settings save should never hang on STT reset
+                _settings_log.warning("STT model reset skipped/failed: %s", exc)
+
+        threading.Thread(target=_worker, daemon=True, name="settings-stt-reset").start()
+
+    def _rebuild_stt_languages(self) -> None:
+        """Cantonese (yue) is only supported by large-v3; omit it from the
+        language list for smaller models so it can't be selected into a
+        combination that produces nothing usable."""
+        combo = self._fields.get("STT_LANGUAGE")
+        model_combo = self._fields.get("STT_MODEL")
+        if combo is None or model_combo is None:
+            return
+        supports_yue = _get(model_combo) == "large-v3"
+        current = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        for label, value in _STT_LANGUAGE_OPTIONS:
+            if value == "yue" and not supports_yue:
+                continue
+            combo.addItem(label, value)
+        idx = combo.findData(current)
+        if idx < 0:
+            idx = combo.findData("")  # fall back to auto-detect
+        combo.setCurrentIndex(max(0, idx))
+        combo.blockSignals(False)
+
+    def _stt_fields_changed(self, old_env: dict[str, str]) -> bool:
+        import config as cfg
+
+        return any(
+            _get(self._fields[key]) != old_env.get(key, str(getattr(cfg, key, "")))
+            for key in ("STT_MODEL", "STT_COMPUTE_TYPE", "STT_LANGUAGE", "STT_BEAM_SIZE", "STT_DEVICE")
+        )
+
+    @staticmethod
+    def _block_uses_live_tools(blk: dict) -> bool:
+        return any(
+            str(blk[key].currentData()) == "model"  # type: ignore[attr-defined]
+            for key in (
+                "context_documents_mode",
+                "context_browser_mode",
+                "context_github_mode",
+                "context_memory_mode",
+            )
+        ) or any(
+            mode in {"on", "model"}
+            for mode in (blk.get("tool_overrides") or {}).values()
+        )
+
+    @staticmethod
+    def _block_uses_screenshot(blk: dict, mode: str) -> bool:
+        return str(blk["context_screenshot"].currentData()) == mode  # type: ignore[attr-defined]
+
+    def _capability_warnings_for_values(self, vals: dict[str, str]) -> tuple[list[str], dict[str, list[str]]]:
+        warnings: list[str] = []
+        warnings_by_target: dict[str, list[str]] = {}
+
+        def add_warning(targets: list[str], warning: str) -> None:
+            warnings.append(warning)
+            for target in targets:
+                warnings_by_target.setdefault(target, []).append(warning)
+
+        try:
+            from core.llm_clients.client import (
+                screenshot_capability_warnings,
+                tool_capability_warnings,
+                subscription_auth_warnings,
+            )
+
+            vb = self._voice_block
+            all_blocks = [*self._caller_blocks, vb]
+            screenshot_modes = [
+                str(blk["context_screenshot"].currentData())  # type: ignore[attr-defined]
+                for blk in all_blocks
+            ]
+            screenshot_warnings = screenshot_capability_warnings(
+                screenshot_modes,
+                llm_provider=vals.get("LLM_PROVIDER", ""),
+                llm_model=vals.get("LLM_MODEL", ""),
+                vision_provider=vals.get("VISION_LLM_PROVIDER", ""),
+                vision_model=vals.get("VISION_LLM_MODEL", ""),
+            )
+            screenshot_targets: set[str] = set()
+            if any(self._block_uses_screenshot(blk, "auto") for blk in all_blocks):
+                screenshot_targets.add("VISION_LLM")
+            if any(self._block_uses_screenshot(blk, "model") for blk in all_blocks):
+                screenshot_targets.add("LLM")
+            if any(self._block_uses_screenshot(blk, mode) for blk in self._caller_blocks for mode in ("auto", "model")):
+                screenshot_targets.add("Caller Hotkeys")
+            if any(self._block_uses_screenshot(vb, mode) for mode in ("auto", "model")):
+                screenshot_targets.add("Voice (hold to talk)")
+            for warning in screenshot_warnings:
+                add_warning(sorted(screenshot_targets) or ["LLM"], warning)
+
+            llm_provider = vals.get("LLM_PROVIDER", "")
+            vision_provider = vals.get("VISION_LLM_PROVIDER", "")
+            auth_targets: list[str] = []
+            if llm_provider.strip().lower() in {"chatgpt", "copilot"}:
+                auth_targets.extend(["Provider credentials", "Authentication", "LLM"])
+            if vision_provider.strip().lower() in {"chatgpt", "copilot"}:
+                auth_targets.extend(["Provider credentials", "Authentication", "VISION_LLM"])
+            for warning in subscription_auth_warnings(
+                llm_provider=llm_provider,
+                vision_provider=vision_provider,
+            ):
+                add_warning(list(dict.fromkeys(auth_targets)) or ["Authentication"], warning)
+
+            caller_tools = any(self._block_uses_live_tools(blk) for blk in self._caller_blocks)
+            voice_tools = self._block_uses_live_tools(vb)
+            tool_warnings = tool_capability_warnings(
+                caller_tools or voice_tools,
+                llm_provider=llm_provider,
+            )
+            tool_targets = ["LLM"]
+            if caller_tools:
+                tool_targets.append("Caller Hotkeys")
+            if voice_tools:
+                tool_targets.append("Voice (hold to talk)")
+            for warning in tool_warnings:
+                add_warning(tool_targets, warning)
+        except Exception:
+            return [], {}
+
+        return warnings, warnings_by_target
+
+    def _apply_settings(self) -> bool:
+        """Save settings and apply changes live. Returns True on success."""
+        old_env = dict(self._env)
+        stt_changed = self._stt_fields_changed(old_env)
         if self._do_save():
             import config
             from core.llm_clients import client as _llm
@@ -2744,8 +3323,11 @@ class SettingsDialog(QDialog):
             config.reload()
             _llm.reset_clients()
             _tts.reset_connections()
+            if stt_changed:
+                self._reset_stt_model_in_background()
             apply_app_theme()
             self._apply_dialog_theme()
+            localize_widget_tree(self)
             # Silently (re)bake voice-matched filler clips for the now-current
             # TTS settings. No-ops when the cache already matches the voice id
             # or when TTS is disabled. Background thread so Apply stays snappy
@@ -2757,6 +3339,18 @@ class SettingsDialog(QDialog):
                 pass
             if self._on_apply:
                 self._on_apply()
+            self._env = _read_env()
+            self._refresh_capability_warning_markers()
+            return True
+        return False
+
+    def _apply(self):
+        """Save settings and keep the dialog open."""
+        self._apply_settings()
+
+    def _confirm(self):
+        """Save settings, apply changes live, then close the dialog."""
+        if self._apply_settings():
             self.accept()
 
     @staticmethod
@@ -2773,12 +3367,14 @@ class SettingsDialog(QDialog):
             },
             "TTS / Voice": {
                 "TTS_PROVIDER", "CARTESIA_VOICE_ID",
+                "STT_MODEL", "STT_COMPUTE_TYPE", "STT_LANGUAGE", "STT_BEAM_SIZE", "STT_DEVICE",
             },
             "Prompts": {
                 "SYSTEM_PROMPT_UTILITY",
             },
             "Keybinds": {
                 "HOTKEY_ADD_CONTEXT", "HOTKEY_CLEAR_CONTEXT", "HOTKEY_SNIP", "HOTKEY_VOICE",
+                "HOTKEY_DICTATE", "DICTATE_MODE",
                 "SNIP_CONTEXT_AMBIENT", "SNIP_CONTEXT_DOCUMENTS", "SNIP_CONTEXT_TOOLS",
                 "CONTEXT_BROWSER_MAX_CHARS", "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS",
                 "CONTEXT_TOOL_DOCUMENT_MAX_CHARS", "TOOL_PLUGIN_DIR", "TOOL_GIT_ROOT",
@@ -2788,7 +3384,7 @@ class SettingsDialog(QDialog):
                 "THEME_MODE", "DARK_MODE", "ICON_AUTO_HIDE", "DOLL_AUTO_HIDE",
                 "THEME_DARK_BG", "THEME_DARK_SURFACE", "THEME_DARK_TEXT", "THEME_DARK_ACCENT",
                 "THEME_LIGHT_BG", "THEME_LIGHT_SURFACE", "THEME_LIGHT_TEXT", "THEME_LIGHT_ACCENT",
-                "CHAT_AUTO_ELABORATE", "CHAT_ELABORATE_PROMPT",
+                "CHAT_AUTO_ELABORATE", "CHAT_ELABORATE_PROMPT", "APP_LANGUAGE", "ASSISTANT_LANGUAGE",
                 "ICON_SIZE", "DOLL_SIZE", "ICON_BACKSTOP_MS", "DOLL_ICON_BACKSTOP_MS",
                 "BUBBLE_WIDTH", "BUBBLE_LINES", "BUBBLE_COLOR", "BUBBLE_TEXT_COLOR",
                 "BUBBLE_READ_WORD_COLOR", "BUBBLE_HIDE_DELAY_MS",
@@ -2808,7 +3404,7 @@ class SettingsDialog(QDialog):
             )
         return keys
 
-    def _reload_after_page_reset(self) -> None:
+    def _reload_after_page_reset(self, page_name: str = "") -> None:
         try:
             import config
             from core.llm_clients import client as _llm
@@ -2824,6 +3420,9 @@ class SettingsDialog(QDialog):
             _settings_log.error("Live reload after page reset failed: %s", exc)
         self._env = _read_env()
         self._load_values()
+        localize_widget_tree(self)
+        if page_name == "TTS / Voice":
+            self._reset_stt_model_in_background()
         if self._on_apply:
             self._on_apply()
 
@@ -2869,7 +3468,7 @@ class SettingsDialog(QDialog):
                 for key in remove_keys:
                     os.environ.pop(key, None)
                 _write_env({}, remove_keys=remove_keys)
-            self._reload_after_page_reset()
+            self._reload_after_page_reset(page)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Reset page failed", str(exc))
             return
@@ -2960,12 +3559,14 @@ class SettingsDialog(QDialog):
             config.reload()
             _llm.reset_clients()
             _tts.reset_connections()
+            self._reset_stt_model_in_background()
             apply_app_theme()
             self._apply_dialog_theme()
         except Exception as exc:  # noqa: BLE001 — reset already happened on disk
             _settings_log.error("Live reload after reset failed: %s", exc)
         self._env = _read_env()
         self._load_values()
+        localize_widget_tree(self)
         for refresh in (
             getattr(self, "_refresh_chatgpt_status", None),
             getattr(self, "_refresh_github_status", None),
@@ -3043,6 +3644,11 @@ class SettingsDialog(QDialog):
             "MEMORY_LLM_FALLBACKS": mem_f,
             "TTS_PROVIDER":      _get(self._fields["TTS_PROVIDER"]),
             "CARTESIA_VOICE_ID": _get(self._fields["CARTESIA_VOICE_ID"]),
+            "STT_MODEL":         _get(self._fields["STT_MODEL"]),
+            "STT_COMPUTE_TYPE":  _get(self._fields["STT_COMPUTE_TYPE"]),
+            "STT_LANGUAGE":      _get(self._fields["STT_LANGUAGE"]),
+            "STT_BEAM_SIZE":     _get(self._fields["STT_BEAM_SIZE"]),
+            "STT_DEVICE":        _get(self._fields["STT_DEVICE"]),
             "HOTKEY_ADD_CONTEXT":  _get(self._fields["HOTKEY_ADD_CONTEXT"]),
             "HOTKEY_CLEAR_CONTEXT": _get(self._fields["HOTKEY_CLEAR_CONTEXT"]),
             "HOTKEY_SNIP":         _get(self._fields["HOTKEY_SNIP"]),
@@ -3066,6 +3672,8 @@ class SettingsDialog(QDialog):
             "ICON_AUTO_HIDE":    str(self._fields["ICON_AUTO_HIDE"].isChecked()),  # type: ignore
             "CHAT_AUTO_ELABORATE": str(self._fields["CHAT_AUTO_ELABORATE"].isChecked()),  # type: ignore
             "CHAT_ELABORATE_PROMPT": _get(self._fields["CHAT_ELABORATE_PROMPT"]),
+            "APP_LANGUAGE": _get(self._fields["APP_LANGUAGE"]),
+            "ASSISTANT_LANGUAGE": _get(self._fields["ASSISTANT_LANGUAGE"]),
             "ICON_SIZE":    _get(self._fields["ICON_SIZE"]),
             "BUBBLE_WIDTH": _get(self._fields["BUBBLE_WIDTH"]),
             "BUBBLE_LINES": _get(self._fields["BUBBLE_LINES"]),
@@ -3085,6 +3693,8 @@ class SettingsDialog(QDialog):
         vb = self._voice_block
         vals.update({
             "HOTKEY_VOICE": _get(self._fields["HOTKEY_VOICE"]),
+            "HOTKEY_DICTATE": _get(self._fields["HOTKEY_DICTATE"]),
+            "DICTATE_MODE": _get(self._fields["DICTATE_MODE"]),
             "VOICE_CONTEXT_AMBIENT": str(vb["context_ambient"].isChecked()),
             "VOICE_CONTEXT_DOCUMENTS_MODE": str(vb["context_documents_mode"].currentData()),
             "VOICE_CONTEXT_BROWSER_MODE": str(vb["context_browser_mode"].currentData()),
@@ -3096,7 +3706,7 @@ class SettingsDialog(QDialog):
         # Key conflict check (caller hotkeys + special hotkeys)
         all_keys = (
             [_get(blk["hotkey"]).strip().lower() for blk in self._caller_blocks]
-            + [_get(self._fields[k]).strip().lower() for k in ("HOTKEY_ADD_CONTEXT", "HOTKEY_CLEAR_CONTEXT", "HOTKEY_SNIP", "HOTKEY_VOICE")]
+            + [_get(self._fields[k]).strip().lower() for k in ("HOTKEY_ADD_CONTEXT", "HOTKEY_CLEAR_CONTEXT", "HOTKEY_SNIP", "HOTKEY_VOICE", "HOTKEY_DICTATE")]
         )
         non_empty = [k for k in all_keys if k]
         if len(non_empty) != len(set(non_empty)):
@@ -3141,52 +3751,14 @@ class SettingsDialog(QDialog):
 
         # Honor the user's choices, but warn if their model setup probably can't
         # serve them (screenshot → vision; tools → tool-calling provider).
-        warnings: list[str] = []
-        try:
-            from core.llm_clients.client import (
-                screenshot_capability_warnings,
-                tool_capability_warnings,
-                subscription_auth_warnings,
-            )
-            warnings += screenshot_capability_warnings(
-                [blk["context_screenshot"].currentData() for blk in self._caller_blocks]  # type: ignore
-                + [vb["context_screenshot"].currentData()],
-                llm_provider=vals.get("LLM_PROVIDER", ""),
-                llm_model=vals.get("LLM_MODEL", ""),
-                vision_provider=vals.get("VISION_LLM_PROVIDER", ""),
-                vision_model=vals.get("VISION_LLM_MODEL", ""),
-            )
-            warnings += subscription_auth_warnings(
-                llm_provider=vals.get("LLM_PROVIDER", ""),
-                vision_provider=vals.get("VISION_LLM_PROVIDER", ""),
-            )
-            live_tool_modes = []
-            tools_overridden = False
-            for blk in [*self._caller_blocks, vb]:
-                live_tool_modes.extend(
-                    [
-                        str(blk["context_documents_mode"].currentData()),  # type: ignore[attr-defined]
-                        str(blk["context_browser_mode"].currentData()),  # type: ignore[attr-defined]
-                        str(blk["context_github_mode"].currentData()),  # type: ignore[attr-defined]
-                        str(blk["context_memory_mode"].currentData()),  # type: ignore[attr-defined]
-                    ]
-                )
-                if any(
-                    mode in {"on", "model"}
-                    for mode in (blk.get("tool_overrides") or {}).values()
-                ):
-                    tools_overridden = True
-            warnings += tool_capability_warnings(
-                tools_overridden or any(mode == "model" for mode in live_tool_modes),
-                llm_provider=vals.get("LLM_PROVIDER", ""),
-            )
-        except Exception:
-            warnings = []
+        warnings, warnings_by_target = self._capability_warnings_for_values(vals)
+        self._set_warning_markers(warnings_by_target)
         if warnings:
+            translated_warnings = [t(warning) for warning in warnings]
             QMessageBox.warning(
                 self,
-                "Heads up",
-                "Your settings were saved, but:\n\n• " + "\n\n• ".join(warnings),
+                t("Heads up"),
+                t("Your settings were saved, but:") + "\n\n• " + "\n\n• ".join(translated_warnings),
             )
         return True
 
@@ -3374,6 +3946,9 @@ def _set(widget, value: str):
             idx = widget.findText(value)
             if idx >= 0:
                 widget.setCurrentIndex(idx)
+            elif widget.property("allow_custom_saved_value") and value:
+                widget.addItem(value, value)
+                widget.setCurrentIndex(widget.count() - 1)
             elif widget.isEditable():
                 widget.setCurrentText(value)
     elif isinstance(widget, QLineEdit):
@@ -3437,24 +4012,59 @@ def _short_test_error(message: str, route_name: str) -> str:
     return " ".join(text.split())
 
 
-def open_settings(parent=None, on_apply=None):
+def _dialog_is_usable(dialog: "SettingsDialog | None") -> bool:
+    if dialog is None or getattr(dialog, "_disposing", False):
+        return False
+    try:
+        import shiboken6
+
+        return bool(shiboken6.isValid(dialog))
+    except Exception:
+        try:
+            dialog.objectName()
+            return True
+        except RuntimeError:
+            return False
+
+
+def _clear_settings_dialog(_obj=None) -> None:
     global _settings_dialog
+    if _obj is None or _settings_dialog is None or _obj is _settings_dialog:
+        _settings_dialog = None
+
+
+def _open_settings_now(parent=None, on_apply=None):
+    global _settings_dialog, _settings_open_pending
+    _settings_open_pending = False
     # Never parent the settings window to the floating icon overlay: that overlay
     # is a Qt.Tool window (an NSPanel on macOS, a no-taskbar tool window on
     # Windows), and attaching a normal child window to it crashes Cocoa on show()
     # and misbehaves on Windows. Only Linux keeps the parent. Elsewhere the dialog
     # is top-level and grabs focus itself via raise_()/activateWindow() below.
     dialog_parent = parent if sys.platform.startswith("linux") else None
+    if not _dialog_is_usable(_settings_dialog):
+        _settings_dialog = None
+    elif not _settings_dialog.isVisible():
+        _settings_dialog._disposing = True
+        _settings_dialog.deleteLater()
+        _settings_dialog = None
+
     if _settings_dialog is None:
         _settings_dialog = SettingsDialog(dialog_parent, on_apply=on_apply)
+        _settings_dialog.destroyed.connect(_clear_settings_dialog)
     else:
         _settings_dialog._on_apply = on_apply
-        _settings_dialog._env = _read_env()
-        _settings_dialog._load_values()
-        _settings_dialog._schedule_open_status_refresh()
 
     if _settings_dialog.isMinimized():
         _settings_dialog.showNormal()
     _settings_dialog.show()
     _settings_dialog.raise_()
     _settings_dialog.activateWindow()
+
+
+def open_settings(parent=None, on_apply=None):
+    global _settings_open_pending
+    if _settings_open_pending:
+        return
+    _settings_open_pending = True
+    QTimer.singleShot(50, lambda: _open_settings_now(parent=parent, on_apply=on_apply))

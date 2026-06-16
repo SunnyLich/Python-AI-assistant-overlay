@@ -79,6 +79,65 @@ class ConfigEnvTests(unittest.TestCase):
             for name, value in previous.items():
                 setattr(config, name, value)
 
+    def test_assistant_language_is_appended_to_system_prompt(self):
+        previous = {
+            "ASSISTANT_LANGUAGE": config.ASSISTANT_LANGUAGE,
+            "SYSTEM_PROMPT_UTILITY": config.SYSTEM_PROMPT_UTILITY,
+        }
+        try:
+            with patch("config.load_dotenv"), patch.dict(
+                os.environ,
+                {
+                    "ASSISTANT_LANGUAGE": "Chinese",
+                    "SYSTEM_PROMPT_UTILITY": "Base prompt.",
+                },
+                clear=False,
+            ):
+                config.reload()
+
+            prompt = config.get_system_prompt()
+            self.assertIn("Base prompt.", prompt)
+            self.assertIn("Respond in Chinese", prompt)
+        finally:
+            for name, value in previous.items():
+                setattr(config, name, value)
+
+    def test_app_language_loads_from_env(self):
+        previous = {"APP_LANGUAGE": config.APP_LANGUAGE}
+        try:
+            with patch("config.load_dotenv"), patch.dict(
+                os.environ,
+                {"APP_LANGUAGE": "zh"},
+                clear=False,
+            ):
+                config.reload()
+
+            self.assertEqual(config.APP_LANGUAGE, "zh")
+        finally:
+            for name, value in previous.items():
+                setattr(config, name, value)
+
+    def test_assistant_language_can_match_user(self):
+        previous = {
+            "ASSISTANT_LANGUAGE": config.ASSISTANT_LANGUAGE,
+            "SYSTEM_PROMPT_UTILITY": config.SYSTEM_PROMPT_UTILITY,
+        }
+        try:
+            with patch("config.load_dotenv"), patch.dict(
+                os.environ,
+                {
+                    "ASSISTANT_LANGUAGE": "match_user",
+                    "SYSTEM_PROMPT_UTILITY": "Base prompt.",
+                },
+                clear=False,
+            ):
+                config.reload()
+
+            self.assertIn("same language as the user's latest request", config.get_system_prompt())
+        finally:
+            for name, value in previous.items():
+                setattr(config, name, value)
+
     def test_reload_refreshes_secret_cache(self):
         with patch("config.load_dotenv"), patch.object(config.secret_store, "refresh_cache") as refresh:
             config.reload()

@@ -18,6 +18,7 @@ import config
 from core.system.main_thread import run_on_main
 from core.system import macos_safety
 from core import macos_helper
+from core.stt_postprocess import clean_transcript
 
 # sounddevice is imported lazily (inside start_recording) so that when the macOS
 # helper owns the mic, or safe mode disables in-process recording, this
@@ -47,13 +48,26 @@ def _get_model():
     with _model_lock:
         if _model is None:
             from faster_whisper import WhisperModel
-            _model = WhisperModel(
-                config.STT_MODEL,
-                device="cpu",
-                compute_type=config.STT_COMPUTE_TYPE,
+            from core.stt_device import resolve_device, resolve_compute_type, build_model
+            _log = lambda m: print(f"[stt] {m}")
+            device = resolve_device(config.STT_DEVICE, log=_log)
+            compute_type = resolve_compute_type(device, config.STT_COMPUTE_TYPE, log=_log)
+            _model, compute_type = build_model(
+                WhisperModel, config.STT_MODEL, device, compute_type, log=_log
             )
-            print(f"[stt] Model '{config.STT_MODEL}' loaded.")
+            print(f"[stt] Model '{config.STT_MODEL}' loaded on {device} ({compute_type}).")
     return _model
+
+
+def reset_model() -> None:
+    """Drop the cached Whisper model so the next transcription uses current config."""
+    global _model
+    if macos_helper.is_enabled():
+        from core.macos_helper import stt_client
+        stt_client.reset_model()
+        return
+    with _model_lock:
+        _model = None
 
 
 def prewarm():
@@ -165,13 +179,28 @@ def stop_and_transcribe() -> str:
     if len(audio) < SAMPLE_RATE * 0.3:
         return ""
 
+    # Whisper hallucinates fluent text from near-silent audio, so reject a dead
+    # or far-too-quiet mic; boost quiet-but-real speech to a normal level.
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    if peak < 0.01:
+        print(f"[stt] skipped: input level too low (peak={peak:.4f}) — check microphone")
+        return ""
+    if peak < 0.3:
+        audio = audio * (0.3 / peak)
+
     model = _get_model()
+    language = config.STT_LANGUAGE or None
+    beam_size = config.STT_BEAM_SIZE
+    print(f"[stt] Transcribing with language={language!r} beam_size={beam_size}")
     segments, _info = model.transcribe(
         audio,
-        beam_size=1,
-        language=config.STT_LANGUAGE or None,  # None = auto-detect
+        beam_size=beam_size,
+        language=language,                     # None = auto-detect
         vad_filter=True,                        # skip silent regions
     )
-    text = " ".join(seg.text.strip() for seg in segments).strip()
+    raw_text = " ".join(seg.text.strip() for seg in segments).strip()
+    text = clean_transcript(raw_text)
+    if raw_text and not text:
+        print(f"[stt] Discarded repeated-token transcript: {raw_text!r}")
     print(f"[stt] Transcribed: {text!r}")
     return text

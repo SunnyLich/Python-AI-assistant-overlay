@@ -17,6 +17,7 @@ from core.system.paths import DOLL_ASSETS_DIR
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QSystemTrayIcon, QMenu
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QEvent, QPoint
 from PySide6.QtGui import QPixmap, QIcon, QAction
+from ui.i18n import localize_widget_tree, t
 
 
 ASSETS_DIR = str(DOLL_ASSETS_DIR)
@@ -254,6 +255,7 @@ class IconOverlay(QMainWindow):
         menu.addAction(settings_action)
         menu.addSeparator()
         menu.addAction(quit_action)
+        localize_widget_tree(menu)
         return menu
 
     def _set_icon_pixmap(self, state: str):
@@ -406,7 +408,9 @@ class IconOverlay(QMainWindow):
         """Keep the toggle action label in step with the icon's current visibility."""
         if hasattr(self, "_icon_toggle_action") and hasattr(self, "_icon_label"):
             visible = self._icon_label.isVisible()
-            self._icon_toggle_action.setText("Hide icon" if visible else "Show icon")
+            original = "Hide icon" if visible else "Show icon"
+            self._icon_toggle_action.setProperty("_wisp_i18n_text", original)
+            self._icon_toggle_action.setText(t(original))
 
     @staticmethod
     def _icon_backstop_ms() -> int:

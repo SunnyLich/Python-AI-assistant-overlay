@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.system.env_utils import TOOL_OVERRIDE_MODES
+from ui.i18n import t
 from ui.shared.window_utils import enable_standard_window_controls
 
 # Tool name → the context dropdown label(s) that govern it ("a / b" when two).
@@ -88,7 +89,7 @@ class ToolAccessDialog(QDialog):
         governed_modes: dict[str, str] | None = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle(f"Allowed tools — {method_label}")
+        self.setWindowTitle(f"{t('Allowed tools')} — {t(method_label)}")
         self.setModal(True)
         self.setMinimumWidth(480)
         enable_standard_window_controls(self)
@@ -136,7 +137,7 @@ class ToolAccessDialog(QDialog):
                 for part in governs.split(" / ")
                 if part in governed_modes
             ]
-            note = " · ".join(states) if states else governs
+            note = " · ".join(t(state) for state in states) if states else t(governs)
             self._add_tool_row(layout, name, note, overrides.get(name, default), default)
 
         layout.addWidget(_separator())
@@ -190,7 +191,7 @@ class ToolAccessDialog(QDialog):
         tv = QVBoxLayout(text_col)
         tv.setContentsMargins(0, 0, 0, 0)
         tv.setSpacing(1)
-        tv.addWidget(QLabel(f"<b>{name}</b>"))
+        tv.addWidget(QLabel(f"<b>{t(name)}</b>"))
         if note:
             note_lbl = QLabel(f"<small>{note}</small>")
             note_lbl.setWordWrap(True)

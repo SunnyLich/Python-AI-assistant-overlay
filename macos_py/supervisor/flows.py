@@ -14,6 +14,22 @@ from typing import Any, Callable, Protocol
 
 log = logging.getLogger("wisp.macos_py.flows")
 _INTERACTIVE_LLM_TIMEOUT_SECONDS = 120.0
+_BROWSER_APP_NAMES = {
+    "browser",
+    "chrome",
+    "chrome.exe",
+    "google chrome",
+    "firefox",
+    "firefox.exe",
+    "safari",
+    "brave",
+    "brave browser",
+    "brave.exe",
+    "msedge.exe",
+    "microsoft edge",
+    "opera",
+    "vivaldi",
+}
 
 
 class WorkerLike(Protocol):
@@ -76,6 +92,11 @@ class FlowController:
         self._voice_context: dict[str, Any] = {}
         self._voice_screenshot_b64: str | None = None
         self._voice_active = False
+        self._voice_state = "idle"
+        # Dictation push-to-talk (paste transcript into the focused field).
+        self._dictate_state = "idle"
+        self._dictate_target_pid = 0
+        self._dictate_focus_token = 0
         self._generation = itertools.count(1)
         self._current_generation = 0
         self._context_buffer: list[str] = []
@@ -149,20 +170,36 @@ class FlowController:
 
     def _on_native_hotkey(self, data: dict[str, Any], _req_id: Any = None) -> None:
         kind = (data or {}).get("kind")
-        log.info("hotkey received: kind=%s", kind)
         if kind == "caller":
+            log.info("hotkey received: kind=%s", kind)
             self._schedule(self.begin_caller, int((data or {}).get("index") or 0))
         elif kind == "snip":
+            log.info("hotkey received: kind=%s", kind)
             self._schedule(self.begin_snip)
         elif kind == "add_context":
+            log.info("hotkey received: kind=%s", kind)
             self._schedule(self.add_context)
         elif kind == "clear_context":
+            log.info("hotkey received: kind=%s", kind)
             self._schedule(self.clear_context)
         elif kind == "voice_start":
-            self._schedule(self.voice_start)
+            if self._claim_voice_start():
+                log.info("hotkey received: kind=%s", kind)
+                self._schedule(self.voice_start)
         elif kind == "voice_stop":
-            self._schedule(self.voice_stop)
+            if self._claim_voice_stop():
+                log.info("hotkey received: kind=%s", kind)
+                self._schedule(self.voice_stop)
+        elif kind == "dictate_start":
+            if self._claim_dictate_start():
+                log.info("hotkey received: kind=%s", kind)
+                self._schedule(self.dictate_start)
+        elif kind == "dictate_stop":
+            if self._claim_dictate_stop():
+                log.info("hotkey received: kind=%s", kind)
+                self._schedule(self.dictate_stop)
         elif kind == "addon":
+            log.info("hotkey received: kind=%s", kind)
             self._schedule(self.plugin_run_hotkey, data or {})
 
     def _on_summon_caller(self, data: dict[str, Any], _req_id: Any = None) -> None:
@@ -445,41 +482,155 @@ class FlowController:
 
     def voice_start(self) -> None:
         self._reload_supervisor_config_if_changed()
-        if self._voice_active:
-            return
-        self._voice_active = True
+        self._ensure_voice_start_claimed()
         self._new_generation()
         caller = self._voice_caller()
-        self._safe_call(self.audio, "audio.stop", timeout=5.0)
+        self._voice_context = {}
+        self._voice_screenshot_b64 = None
+        self._fire(self.audio, "audio.stop")
+        self._fire(self.ui, "ui.overlay.state", {"state": "listening"})
+        self._fire(self.ui, "ui.reply.listening")
+        self.audio.call("audio.record.start", timeout=20.0)
+        if not self._mark_voice_recording():
+            return
         # include_browser=False keeps a slow page fetch off the record-start
         # path; _brain_query_params fetches it lazily at query time instead.
         self._voice_context = self._context_snapshot(caller, include_browser=False)
-        self.audio.call("audio.record.start", timeout=20.0)
-        self._safe_call(self.ui, "ui.overlay.state", {"state": "listening"}, timeout=30.0)
-        self._safe_call(self.ui, "ui.reply.listening", timeout=30.0)
         # Capture AFTER recording starts so the screenshot overlaps the speech
         # instead of delaying the record start.
-        self._voice_screenshot_b64 = None
         if caller.get("context_screenshot") == "auto":
             self._voice_screenshot_b64 = self._capture_fullscreen_b64()
 
     def voice_stop(self) -> None:
-        if not self._voice_active:
+        if not self._ensure_voice_stop_claimed():
             return
-        self._voice_active = False
-        result = self.audio.call("audio.record.stop_transcribe", timeout=180.0)
-        text = str((result or {}).get("text") or "").strip()
-        if not text:
-            self._set_idle()
-            return
-        pending = PendingInvocation(
-            caller_idx=0,
-            caller=self._voice_caller(),
-            context=self._voice_context,
-            screenshot_b64=self._voice_screenshot_b64,
+        self._fire(self.ui, "ui.overlay.state", {"state": "thinking"})
+        # The first transcription after launch blocks on the (slow) model load /
+        # warmup. Tell the user that's what's happening instead of leaving them
+        # staring at the generic "thinking" dots wondering why it's slow.
+        if self._stt_warming():
+            self._fire(self.ui, "ui.reply.notice",
+                       {"text": "Warming up speech model — the first transcription is slower…"})
+        else:
+            self._fire(self.ui, "ui.reply.thinking")
+        try:
+            result = self.audio.call("audio.record.stop_transcribe", timeout=180.0)
+            text = str((result or {}).get("text") or "").strip()
+            if not text:
+                self._fire(self.ui, "ui.reply.reset")
+                self._set_idle()
+                return
+            pending = PendingInvocation(
+                caller_idx=0,
+                caller=self._voice_caller(),
+                context=self._voice_context,
+                screenshot_b64=self._voice_screenshot_b64,
+            )
+            self._voice_screenshot_b64 = None
+            self._safe_call(self.ui, "ui.reply.transcript", {"text": text}, timeout=30.0)
+            self._mark_voice_idle()
+            self._query(text, pending, preserve_reply_bubble=True)
+        finally:
+            self._mark_voice_idle()
+
+    def dictate_start(self) -> None:
+        """Push-to-talk dictation: capture the focused text field (so the result
+        can be pasted back in place), then start recording."""
+        self._reload_supervisor_config_if_changed()
+        # Capture focus now, while the user's app is still frontmost. paste_back=True
+        # makes the snapshot grab the focused text element / window handle.
+        context = self._context_snapshot(
+            {"paste_back": True, "context_clipboard": False}, include_browser=False
         )
-        self._voice_screenshot_b64 = None
-        self._query(text, pending)
+        active_app = context.get("active_app") if isinstance(context.get("active_app"), dict) else {}
+        if str(context.get("platform") or "") == "darwin":
+            self._dictate_target_pid = int(active_app.get("pid") or 0)
+        else:
+            self._dictate_target_pid = int(active_app.get("window_id") or active_app.get("pid") or 0)
+        self._dictate_focus_token = int(context.get("focus_token") or 0)
+        self._fire(self.audio, "audio.stop")
+        self._fire(self.ui, "ui.overlay.state", {"state": "listening"})
+        self._fire(self.ui, "ui.reply.listening")
+        try:
+            self.audio.call("audio.record.start", timeout=20.0)
+        except Exception as exc:  # noqa: BLE001 — surface mic/worker failure in the UI
+            log.exception("dictation record start failed")
+            self._notice(f"Couldn't start dictation: {self._friendly_error(exc)}")
+            self._mark_dictate_idle()
+            self._set_idle()
+
+    def dictate_stop(self) -> None:
+        """Stop dictation, transcribe, optionally LLM-clean, and paste into the
+        text field that was focused when recording started."""
+        try:
+            if self._stt_warming():
+                self._fire(self.ui, "ui.reply.notice",
+                           {"text": "Warming up speech model — the first transcription is slower…"})
+            try:
+                result = self.audio.call("audio.record.stop_transcribe", timeout=180.0)
+            except Exception as exc:  # noqa: BLE001 — surface transcribe failure in the UI
+                log.exception("dictation transcribe failed")
+                self._notice(f"Dictation failed: {self._friendly_error(exc)}")
+                self._set_idle()
+                return
+            text = str((result or {}).get("text") or "").strip()
+            if not text:
+                self._fire(self.ui, "ui.reply.reset")
+                self._set_idle()
+                return
+            import config
+            if str(getattr(config, "DICTATE_MODE", "raw")).lower() == "llm":
+                text = self._dictation_cleanup(text)
+            self._paste_dictation(text)
+        finally:
+            self._mark_dictate_idle()
+
+    def _dictation_cleanup(self, text: str) -> str:
+        """Run the raw transcript through the LLM for punctuation/cleanup. Any
+        failure falls back to the raw text so dictation always pastes something."""
+        try:
+            result = self._brain_call_with_events(
+                "brain.rewrite",
+                {
+                    "selected_text": text,
+                    "intent_prompt": (
+                        "This is a raw speech-to-text dictation. Fix punctuation, "
+                        "capitalization, and obvious transcription slips, and remove "
+                        "filler words. Output ONLY the cleaned text, nothing else."
+                    ),
+                },
+                timeout=_INTERACTIVE_LLM_TIMEOUT_SECONDS,
+                on_event=lambda *_a, **_k: None,
+            )
+            return str((result or {}).get("text") or "").strip() or text
+        except Exception:  # noqa: BLE001 — never block a paste on cleanup
+            log.exception("dictation LLM cleanup failed; pasting raw transcript")
+            return text
+
+    def _paste_dictation(self, text: str) -> None:
+        paste = self.native.call(
+            "native.paste_text",
+            {
+                "text": text,
+                "target_pid": self._dictate_target_pid,
+                "focus_token": self._dictate_focus_token,
+            },
+            timeout=30.0,
+        )
+        paste = paste if isinstance(paste, dict) else {}
+        log.info("dictation paste: target_pid=%s result=%s", self._dictate_target_pid, paste)
+        self._fire(self.ui, "ui.reply.reset")
+        self._set_idle()
+        if paste.get("ok"):
+            return  # silent success — the pasted text is the confirmation
+        if paste.get("clipboard_ok"):
+            self._native_notify(
+                "Wisp — dictation on clipboard",
+                f"Couldn't focus the field. Press {self._paste_shortcut()} to paste.",
+            )
+        else:
+            log.error("dictation paste failed: %s", paste.get("error") or paste)
+            self._native_notify("Wisp — dictation failed", "Couldn't paste the text. See native.stderr.log.")
 
     def reload_settings(self) -> None:
         import config
@@ -492,8 +643,17 @@ class FlowController:
         # reload config + drop cached TTS connections here — prewarm alone leaves
         # the old provider/voice in effect until restart.
         self._safe_call(self.audio, "audio.config.reload", timeout=30.0)
+        # The native worker is a separate long-lived process; reload its config
+        # before re-registering hotkeys or it re-binds the OLD keys (a changed
+        # hotkey would only take effect after an app restart).
+        self._safe_call(self.native, "native.config.reload", timeout=10.0)
         self._safe_call(self.native, "native.hotkeys.stop", timeout=10.0)
-        result = self._safe_call(self.native, "native.hotkeys.start", timeout=10.0) or {}
+        result = self._safe_call(
+            self.native,
+            "native.hotkeys.start",
+            {"addon_hotkeys": self._addon_hotkeys()},
+            timeout=10.0,
+        ) or {}
         if isinstance(result, dict) and not result.get("started"):
             self._notice("Global hotkeys did not start. Click the Wisp icon to summon it.")
 
@@ -911,13 +1071,20 @@ class FlowController:
 
     # -- core flows -----------------------------------------------------
 
-    def _query(self, prompt: str, pending: PendingInvocation) -> None:
+    def _query(
+        self,
+        prompt: str,
+        pending: PendingInvocation,
+        *,
+        preserve_reply_bubble: bool = False,
+    ) -> None:
         query_started = time.monotonic()
         gen = self._new_generation()
         self._safe_call(self.audio, "audio.stop", timeout=5.0)
         self._safe_call(self.ui, "ui.overlay.state", {"state": "thinking"}, timeout=30.0)
-        self._safe_call(self.ui, "ui.reply.reset", timeout=30.0)
-        self._safe_call(self.ui, "ui.reply.thinking", timeout=30.0)
+        if not preserve_reply_bubble:
+            self._safe_call(self.ui, "ui.reply.reset", timeout=30.0)
+            self._safe_call(self.ui, "ui.reply.thinking", timeout=30.0)
         params = self._brain_query_params(prompt, pending)
         log.info(
             "query context ready in %.2fs prompt_chars=%d ambient_chars=%d "
@@ -1131,6 +1298,67 @@ class FlowController:
         with self._lock:
             return generation == self._current_generation
 
+    def _claim_voice_start(self) -> bool:
+        with self._lock:
+            if self._voice_state != "idle":
+                return False
+            self._voice_state = "starting"
+            self._voice_active = True
+            return True
+
+    def _ensure_voice_start_claimed(self) -> None:
+        with self._lock:
+            if self._voice_state == "idle":
+                self._voice_state = "starting"
+                self._voice_active = True
+
+    def _mark_voice_recording(self) -> bool:
+        with self._lock:
+            if self._voice_state == "starting":
+                self._voice_state = "recording"
+                return True
+            return self._voice_state == "recording"
+
+    def _claim_voice_stop(self) -> bool:
+        with self._lock:
+            if self._voice_state == "idle":
+                return False
+            self._voice_state = "stopping"
+            self._voice_active = False
+            return True
+
+    def _ensure_voice_stop_claimed(self) -> bool:
+        with self._lock:
+            if self._voice_state == "idle":
+                return False
+            self._voice_state = "stopping"
+            self._voice_active = False
+            return True
+
+    def _mark_voice_idle(self) -> None:
+        with self._lock:
+            self._voice_state = "idle"
+            self._voice_active = False
+
+    def _claim_dictate_start(self) -> bool:
+        with self._lock:
+            # Mutually exclusive with voice push-to-talk (one shared recorder).
+            if self._dictate_state != "idle" or self._voice_state != "idle":
+                return False
+            self._dictate_state = "recording"
+            return True
+
+    def _claim_dictate_stop(self) -> bool:
+        with self._lock:
+            if self._dictate_state != "recording":
+                return False
+            self._dictate_state = "stopping"
+            return True
+
+    def _mark_dictate_idle(self) -> None:
+        with self._lock:
+            self._dictate_state = "idle"
+
     def _set_idle(self) -> None:
         # Fire-and-forget. This runs inline on the worker event-reader thread
         # (from _on_intent_cancelled / _on_snip_cancelled). A BLOCKING ui.call
@@ -1142,6 +1370,16 @@ class FlowController:
 
     def _notice(self, text: str) -> None:
         self._safe_call(self.ui, "ui.reply.notice", {"text": text}, timeout=30.0)
+
+    def _stt_warming(self) -> bool:
+        """True when the STT model isn't loaded/warmed yet, so the next transcribe
+        will block on the slow first load. Fast and best-effort: any failure or
+        timeout is treated as 'ready' so this never adds latency to the voice path."""
+        try:
+            res = self.audio.call("audio.stt.is_ready", timeout=3.0) or {}
+            return not bool(res.get("ready", True))
+        except Exception:
+            return False
 
     @staticmethod
     def _friendly_error(exc: Exception) -> str:
@@ -1430,20 +1668,26 @@ class FlowController:
                 )
             if drop_text_parts:
                 ambient_parts.append("Dropped context:\n" + "\n\n".join(drop_text_parts))
+        ambient_text = "\n\n".join(ambient_parts)
+        context_priority = self._context_priority_source(
+            context,
+            ambient_text,
+            active_document_text,
+        )
         summary = self._context_summary_badges(
             selected=str(context.get("selected_text") or ""),
             screenshot_b64=screenshot_b64,
             buffered_items=buffered_items,
             drop_items=drop_items,
             clipboard_text=str(context.get("clipboard_text") or "") if caller.get("context_clipboard") else "",
-            ambient_text="\n\n".join(ambient_parts),
+            ambient_text=ambient_text,
             active_document_text=active_document_text,
         )
         return {
             "intent_prompt": prompt,
             "selected": context.get("selected_text") or "",
             "screenshot_b64": screenshot_b64,
-            "ambient_text": "\n\n".join(ambient_parts),
+            "ambient_text": ambient_text,
             "memory_enabled": memory_mode == "auto",
             "use_tools": bool(allowed_tools),
             "allowed_tools": allowed_tools,
@@ -1453,8 +1697,40 @@ class FlowController:
             "screenshot_tool_b64": screenshot_tool_b64,
             "include_active_document": include_active_document and not active_document_text,
             "active_document_text": active_document_text,
+            "context_priority": context_priority,
             "_ui_context_summary": summary,
         }
+
+    @staticmethod
+    def _is_browser_active_context(context: dict[str, Any]) -> bool:
+        active_app = context.get("active_app") if isinstance(context.get("active_app"), dict) else {}
+        candidates = [
+            active_app.get("process_name"),
+            active_app.get("name"),
+            context.get("browser_app"),
+        ]
+        names = {str(name or "").strip().lower() for name in candidates if str(name or "").strip()}
+        if names & _BROWSER_APP_NAMES:
+            return True
+        try:
+            from core.context_fetcher import _BROWSER_PROCS
+
+            if names & set(_BROWSER_PROCS):
+                return True
+        except Exception:
+            pass
+        return False
+
+    @classmethod
+    def _context_priority_source(
+        cls,
+        context: dict[str, Any],
+        ambient_text: str,
+        active_document_text: str,
+    ) -> str:
+        if not active_document_text or "[Browser/Web]" not in (ambient_text or ""):
+            return ""
+        return "Browser/Web" if cls._is_browser_active_context(context) else "Active document"
 
     @staticmethod
     def _context_mode(caller: dict[str, Any], name: str) -> str:

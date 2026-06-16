@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QFont
+from ui.i18n import t
 from ui.shared.window_utils import enable_standard_window_controls, fit_window_to_screen
 from PySide6.QtWidgets import (
     QComboBox,
@@ -79,7 +80,7 @@ class _FactRow(QWidget):
 
         self._cat_combo = QComboBox()
         for cat in _CATEGORIES:
-            self._cat_combo.addItem(_CAT_LABELS[cat], userData=cat)
+            self._cat_combo.addItem(t(_CAT_LABELS[cat]), userData=cat)
         idx = _CATEGORIES.index(fact.get("category", "general"))
         self._cat_combo.setCurrentIndex(idx)
         self._cat_combo.setFixedWidth(160)
@@ -214,7 +215,7 @@ class MemoryPanel(QWidget):
 
             self._add_cat = QComboBox()
             for cat in _CATEGORIES:
-                self._add_cat.addItem(_CAT_LABELS[cat], userData=cat)
+                self._add_cat.addItem(t(_CAT_LABELS[cat]), userData=cat)
             self._add_cat.setFixedWidth(160)
             add_layout.addWidget(self._add_cat)
 
@@ -252,7 +253,7 @@ class MemoryPanel(QWidget):
         token = self._load_token
         if self._refresh_btn is not None:
             self._refresh_btn.setEnabled(False)
-            self._refresh_btn.setText("Refreshing...")
+            self._refresh_btn.setText(t("Refreshing..."))
 
         def worker() -> None:
             try:
@@ -273,7 +274,7 @@ class MemoryPanel(QWidget):
         self._loading = False
         if self._refresh_btn is not None:
             self._refresh_btn.setEnabled(True)
-            self._refresh_btn.setText("Refresh")
+            self._refresh_btn.setText(t("Refresh"))
         if error:
             _memory_log.warning("Memory refresh failed: %s", error)
             QMessageBox.warning(self, "Memory refresh failed", error)
@@ -300,7 +301,7 @@ class MemoryPanel(QWidget):
                 continue
             has_any = True
 
-            group = QGroupBox(_CAT_LABELS[cat])
+            group = QGroupBox(t(_CAT_LABELS[cat]))
             group_layout = QVBoxLayout(group)
             group_layout.setSpacing(2)
 

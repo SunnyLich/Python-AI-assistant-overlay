@@ -74,6 +74,10 @@ SINGLE_INSTANCE_LOCK = _user_data_dir() / "wisp.lock"
 
 MEMORY_DIR        = REPO_ROOT / "memory"
 AGENT_RUNS_DIR    = MEMORY_DIR / "agent_runs"
+# Persisted chat history + project definitions (user-writable, gitignored).
+CHATS_DIR         = REPO_ROOT / "chats"
+PROJECTS_FILE     = CHATS_DIR / "projects.json"
+CONVERSATIONS_FILE = CHATS_DIR / "conversations.json"
 TOOLS_INSTALLED_DIR = REPO_ROOT / "tools" / "installed"
 MODEL_TOOLS_DIR     = REPO_ROOT / "model_tools"
 ADDONS_DIR          = REPO_ROOT / "addons"

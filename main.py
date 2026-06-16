@@ -9,6 +9,7 @@ Flow:
 import sys
 import os
 import threading
+import uuid
 import logging
 import signal
 import traceback
@@ -123,6 +124,7 @@ from core.llm_clients import client as llm
 from core.assistant_text import ThoughtStreamParser
 from core import tts as tts_module
 from core.memory_store import store as memory_module
+from core.conversation_store import store as conversation_store
 from core.query_pipeline import GenerationCounter, ContextInputs, build_context
 from core.system.app_platform import configure_windows_app_identity
 from core.system import macos_safety
@@ -211,6 +213,8 @@ class App(QObject):
         if not _app_icon.isNull():
             self._qt.setWindowIcon(_app_icon)
         apply_app_theme(self._qt)
+        from ui.i18n import install as install_i18n
+        install_i18n(self._qt)
         self._signals = OverlaySignals()
         self._overlay = IconOverlay(self._signals)
         self._hotkeys = self._build_hotkey_listener()
@@ -225,7 +229,14 @@ class App(QObject):
         self._snip_overlay: SnipOverlay | None = None
         self._chat_window: ChatWindow | None = None
         self._memory_viewer = None
-        self._all_conversations: list[dict] = []  # each item = {"messages": [...], "context": str}
+        # Persisted chat history: each item is a dict with at least
+        # {"id", "project_id", "messages": [...], "context": str}.
+        self._active_project_id: str = conversation_store.GENERAL_PROJECT_ID
+        try:
+            self._all_conversations: list[dict] = conversation_store.load_conversations()
+        except Exception:
+            log.exception("failed to load persisted conversations")
+            self._all_conversations = []
         self._overlay_hwnd: int = 0          # cached after first show
         self._hotkey_warning_shown = False
         self._shutdown_started = False
@@ -239,6 +250,7 @@ class App(QObject):
 
         # Memory
         self._memory = memory_module.get_manager()
+        self._apply_memory_project()
 
         # Wire signals
         self._signals.show_intent_picker.connect(self._show_intent_picker)
@@ -537,8 +549,13 @@ class App(QObject):
             allowed.extend(["web_search", "get_context.browser"])
         if self._context_mode(caller, "github") == "model":
             allowed.extend(["git_status", "git_diff", "github_repo", "github_issue"])
-        if self._context_mode(caller, "memory") == "model":
+        memory_mode = self._context_mode(caller, "memory")
+        if memory_mode == "model":
             allowed.append("memory_search")
+        if memory_mode in ("auto", "model"):
+            # Let the model decide to store durable facts even when memory is
+            # frontloaded ("auto"); this is the write half of the memory system.
+            allowed.append("memory_save")
         overrides = self._tool_overrides(caller)
         for name, mode in overrides.items():
             if mode != "off" and name not in allowed:
@@ -611,6 +628,22 @@ class App(QObject):
         if content:
             bits.append(content)
         return "[Browser/Web]\n" + "\n\n".join(bits) if bits else ""
+
+    @staticmethod
+    def _is_browser_window(window) -> bool:
+        if not window:
+            return False
+        if str(getattr(window, "url", "") or "").strip():
+            return True
+        process = str(getattr(window, "process_name", "") or "").strip().lower()
+        browser_procs = getattr(context_fetcher, "_BROWSER_PROCS", frozenset())
+        return bool(process and process in browser_procs)
+
+    @classmethod
+    def _context_priority_source(cls, snapshot, ambient_text: str, active_document_text: str) -> str:
+        if not active_document_text or "[Browser/Web]" not in (ambient_text or ""):
+            return ""
+        return "Browser/Web" if cls._is_browser_window(getattr(snapshot, "active_window", None)) else "Active document"
 
     def _finish_idle(self, gen_id: int) -> None:
         """Return to idle only if this generation is still the active one."""
@@ -1016,13 +1049,10 @@ class App(QObject):
         # as the rewrite starts; assistant_msg is filled in once the reply lands.
         assistant_msg: dict = {"role": "assistant", "content": ""}
         user_content = f"{intent_prompt}:\n\n{selected_text}"
-        self._all_conversations.append({
-            "messages": [
-                {"role": "user", "content": user_content},
-                assistant_msg,
-            ],
-            "context": "",
-        })
+        self._new_conversation([
+            {"role": "user", "content": user_content},
+            assistant_msg,
+        ])
         self._signals.chat_new_conversation.emit()
 
         full_reply = ""
@@ -1066,14 +1096,12 @@ class App(QObject):
             print(f"[main] Paste-back error: {exc}")
 
         # Store in conversation history so the chat window can review it.
-        self._all_conversations.append({
-            "messages": [
-                {"role": "user",      "content": f"{intent_prompt}:\n\n{selected_text}"},
-                {"role": "assistant", "content": reply_text},
-            ],
-            "context": "",
-        })
+        self._new_conversation([
+            {"role": "user",      "content": f"{intent_prompt}:\n\n{selected_text}"},
+            {"role": "assistant", "content": reply_text},
+        ])
         self._memory.record_turn(f"{intent_prompt}:\n\n{selected_text}", reply_text, "")
+        self._persist_conversations()
 
         self._finish_idle(gen_id)
 
@@ -1154,6 +1182,11 @@ class App(QObject):
                 drop_items=drop_items,
                 clipboard_text=clipboard_text,
                 active_document_text=active_doc.get("text", ""),
+                priority_context=self._context_priority_source(
+                    snap,
+                    ambient_text,
+                    active_doc.get("text", ""),
+                ),
             ),
             read_document_file=llm.read_document_file,
         )
@@ -1168,15 +1201,14 @@ class App(QObject):
         # so an open chat window can show the new tab and live-highlight the reply
         # as it streams. llm_producer fills assistant_msg in once the reply lands.
         assistant_msg: dict = {"role": "assistant", "content": ""}
-        conversation = {
-            "messages": [
+        conversation = self._new_conversation(
+            [
                 {"role": "user", "content": user_message,
                  **({"image_base64": screenshot_b64} if screenshot_b64 else {})},
                 assistant_msg,
             ],
-            "context": ambient_ctx,
-        }
-        self._all_conversations.append(conversation)
+            context=ambient_ctx,
+        )
         self._signals.chat_new_conversation.emit()
 
         self._signals.set_state.emit("thinking")
@@ -1299,6 +1331,7 @@ class App(QObject):
                     self._memory.record_turn(user_message, reply_text, ambient_ctx)
                 except Exception:
                     log.exception("memory.record_turn crashed (gen_id=%d)", gen_id)
+                self._persist_conversations()
                 try:
                     self._plugin_manager.after_response(reply_text)
                 except Exception:
@@ -1372,6 +1405,11 @@ class App(QObject):
             send_fn=self._make_memory_send_fn(),
             auto_message=auto_message,
             start_new=force_new,
+            projects=conversation_store.load_projects(),
+            active_project_id=self._active_project_id,
+            on_project_change=self.set_active_project,
+            on_new_project=self._create_project,
+            persist_fn=self._persist_conversations,
         )
         self._chat_window.destroyed.connect(lambda: setattr(self, "_chat_window", None))
         self._chat_window.show()
@@ -1451,6 +1489,51 @@ class App(QObject):
             return llm.stream_response_with_history(messages, memory_context=mem_ctx)
 
         return send_with_memory
+
+    # ------------------------------------------------------------------
+    # Projects & conversation persistence
+    # ------------------------------------------------------------------
+
+    def _new_conversation(self, messages: list[dict], context: str = "") -> dict:
+        """Append a new conversation stamped with the active project.
+
+        Does not persist immediately — callers persist via _persist_conversations
+        once the assistant reply lands, so empty placeholders never hit disk.
+        """
+        conv = {
+            "id": str(uuid.uuid4()),
+            "project_id": self._active_project_id,
+            "messages": messages,
+            "context": context,
+        }
+        self._all_conversations.append(conv)
+        return conv
+
+    def _persist_conversations(self) -> None:
+        try:
+            conversation_store.save_conversations(self._all_conversations)
+        except Exception:
+            log.exception("failed to persist conversations")
+
+    def _apply_memory_project(self) -> None:
+        """Scope long-term memory writes/reads to the active project (General = global)."""
+        pid = self._active_project_id
+        memory_module.set_active_project(
+            None if pid == conversation_store.GENERAL_PROJECT_ID else pid
+        )
+
+    def set_active_project(self, project_id: str | None) -> None:
+        """Set the project new conversations and memory operations are scoped to."""
+        self._active_project_id = project_id or conversation_store.GENERAL_PROJECT_ID
+        self._apply_memory_project()
+
+    def _create_project(self, name: str) -> dict | None:
+        """Create + persist a project; returns the project dict (or None on error)."""
+        try:
+            return conversation_store.add_project(name)
+        except Exception:
+            log.exception("failed to create project %r", name)
+            return None
 
     # ------------------------------------------------------------------
     # Memory viewer

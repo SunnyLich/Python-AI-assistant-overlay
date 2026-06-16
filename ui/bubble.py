@@ -13,6 +13,7 @@ from PySide6.QtGui import (
     QBrush, QPen, QPainterPath,
 )
 import config
+from ui.i18n import t
 
 _DOTS_COLOR   = QColor(140, 140, 165)
 _PAD          = 12
@@ -70,8 +71,9 @@ class SpeechBubble(QWidget):
         self._full_text = ""
         self._thought_text = ""
         self._lines: list[str] = []
-        self._line_segments: list[list[tuple[str, bool, int | None, bool]]] = []
+        self._line_segments: list[list[tuple[str, bool, int | None, bool, bool]]] = []
         self._thinking = False
+        self._transcript_preview = False
         self._dot_count = 1
         self._last_chunk_ended_with_space = True  # guards mid-word chunk merging
 
@@ -227,8 +229,9 @@ class SpeechBubble(QWidget):
         self._thought_text = ""
         self._highlight_generation += 1
         self._lines = ["\u25cf Recording — release to send"]
-        self._line_segments = [[("Recording - release to send", False, None, False)]]
+        self._line_segments = [[("Recording - release to send", False, None, False, False)]]
         self._thinking = False
+        self._transcript_preview = False
         self._pending_words = []
         self._revealed_count = 0
         self._reveal_mode = False
@@ -249,6 +252,7 @@ class SpeechBubble(QWidget):
         self._lines = []
         self._line_segments = []
         self._thinking = True
+        self._transcript_preview = False
         self._dot_count = 1
         self._last_chunk_ended_with_space = True
         self._pending_words = []
@@ -339,6 +343,13 @@ class SpeechBubble(QWidget):
         """Buffer incoming LLM chunk. Starts WPM reveal on first token if not already active."""
         if not chunk:
             return
+        if self._transcript_preview:
+            self._transcript_preview = False
+            self._pending_words = []
+            self._full_text = ""
+            self._revealed_count = 0
+            self._lines = []
+            self._line_segments = []
         if self._thinking:
             self._thinking = False
             self._dot_timer.stop()
@@ -431,6 +442,7 @@ class SpeechBubble(QWidget):
         self._revealed_count = 0
         self._pre_audio_timestamps = []
         self._thinking = False
+        self._transcript_preview = False
         self._full_text = ""
         self._thought_text = ""
         self._lines = []
@@ -439,6 +451,17 @@ class SpeechBubble(QWidget):
 
     def show_notice(self, text: str, *, timeout_ms: int = 12000):
         """Show a compact non-streaming notice next to the icon."""
+        self._show_static_text(text, timeout_ms=timeout_ms)
+
+    def show_transcript(self, text: str):
+        """Show what push-to-talk transcription heard before the answer starts."""
+        text = (text or "").strip()
+        if not text:
+            return
+        self._show_static_text(f"{t('Heard')}: {text}", timeout_ms=0)
+        self._transcript_preview = True
+
+    def _show_static_text(self, text: str, *, timeout_ms: int = 12000):
         self._hide_timer.stop()
         self._dot_timer.stop()
         self._reveal_timer.stop()
@@ -447,6 +470,7 @@ class SpeechBubble(QWidget):
         self._timestamp_mode = False
         self._audio_started = False
         self._thinking = False
+        self._transcript_preview = False
         self._thought_text = ""
         self._pending_words = text.split()
         self._revealed_count = len(self._pending_words)
@@ -514,28 +538,34 @@ class SpeechBubble(QWidget):
         """Word-wrap _full_text and scroll the visible window to the read position."""
         thought_words = self._markdown_words(self._thought_text)
         reply_words = self._markdown_words(self._full_text)
-        words: list[tuple[str, bool, int | None, bool]] = []
+        # Expand each whitespace word into breakable units. CJK text has no
+        # spaces, so each CJK character is its own unit (Latin runs stay whole),
+        # letting the wrap break mid-"word". space_before marks the first unit of
+        # a source word so spacing and the read-highlight index stay correct.
+        words: list[tuple[str, bool, int | None, bool, bool]] = []
         for word, bold in thought_words:
-            words.append((word, bold, None, True))
+            for u_i, unit in enumerate(self._wrap_units(word)):
+                words.append((unit, bold, None, True, u_i == 0))
         for reply_idx, (word, bold) in enumerate(reply_words):
-            words.append((word, bold, reply_idx, False))
-        lines: list[list[tuple[str, bool, int | None, bool]]] = []
-        current: list[tuple[str, bool, int | None, bool]] = []
+            for u_i, unit in enumerate(self._wrap_units(word)):
+                words.append((unit, bold, reply_idx, False, u_i == 0))
+        lines: list[list[tuple[str, bool, int | None, bool, bool]]] = []
+        current: list[tuple[str, bool, int | None, bool, bool]] = []
         current_w = 0
         prev_is_thought: bool | None = None
-        for word, bold, reply_idx, is_thought in words:
+        for word, bold, reply_idx, is_thought, space_before in words:
             fm = self._bold_fm if bold else self._fm
             word_w = fm.horizontalAdvance(word)
             # Break onto a new line where the model's thinking ends and the
             # reply begins, so they're separated by a line, not just colour.
             force_break = bool(current) and prev_is_thought is True and not is_thought
-            extra_space = self._space_w if current else 0
+            extra_space = self._space_w if (current and space_before) else 0
             if force_break or (current and current_w + extra_space + word_w > self._text_w):
                 lines.append(current)
-                current = [(word, bold, reply_idx, is_thought)]
+                current = [(word, bold, reply_idx, is_thought, space_before)]
                 current_w = word_w
             else:
-                current.append((word, bold, reply_idx, is_thought))
+                current.append((word, bold, reply_idx, is_thought, space_before))
                 current_w += extra_space + word_w
             prev_is_thought = is_thought
         if current:
@@ -549,13 +579,58 @@ class SpeechBubble(QWidget):
             target_idx = min(self._revealed_count - 1, len(reply_words) - 1)
             target_line = 0
             for line_idx, line in enumerate(lines):
-                if any(reply_idx == target_idx for _word, _bold, reply_idx, _is_thought in line):
+                if any(reply_idx == target_idx for _word, _bold, reply_idx, _is_thought, _sb in line):
                     target_line = line_idx
                     break
             start_line = max(0, target_line - visible_lines + 1)
             visible = lines[start_line:start_line + visible_lines]
         self._line_segments = visible
-        self._lines = [" ".join(word for word, _bold, _idx, _is_thought in line) for line in visible]
+        self._lines = [self._join_units(line) for line in visible]
+
+    @staticmethod
+    def _is_cjk(ch: str) -> bool:
+        """True for characters that aren't separated by spaces (CJK / kana /
+        fullwidth), so the wrapper can break between them."""
+        if not ch:
+            return False
+        o = ord(ch[0])
+        return (
+            0x3000 <= o <= 0x303F   # CJK symbols & punctuation
+            or 0x3040 <= o <= 0x30FF  # hiragana / katakana
+            or 0x3400 <= o <= 0x4DBF  # CJK ext. A
+            or 0x4E00 <= o <= 0x9FFF  # CJK unified ideographs
+            or 0xF900 <= o <= 0xFAFF  # CJK compat ideographs
+            or 0xFF00 <= o <= 0xFFEF  # fullwidth / halfwidth forms
+        )
+
+    @classmethod
+    def _wrap_units(cls, word: str) -> list[str]:
+        """Split a whitespace-delimited word into breakable units: each CJK
+        character on its own, maximal Latin runs kept whole."""
+        units: list[str] = []
+        run = ""
+        for ch in word:
+            if cls._is_cjk(ch):
+                if run:
+                    units.append(run)
+                    run = ""
+                units.append(ch)
+            else:
+                run += ch
+        if run:
+            units.append(run)
+        return units or [word]
+
+    @staticmethod
+    def _join_units(line) -> str:
+        """Render a wrapped line back to text, inserting a space only where a
+        source-word boundary was (never between CJK characters)."""
+        out = ""
+        for i, (word, _bold, _idx, _is_thought, space_before) in enumerate(line):
+            if i and space_before:
+                out += " "
+            out += word
+        return out
 
     @staticmethod
     def _markdown_words(text: str) -> list[tuple[str, bool]]:
@@ -609,11 +684,11 @@ class SpeechBubble(QWidget):
             p.setPen(QPen(self._text_color))
             y = _PAD
             if not self._line_segments and self._lines:
-                self._line_segments = [[(line, False, None, False)] for line in self._lines]
+                self._line_segments = [[(line, False, None, False, False)] for line in self._lines]
             for line in self._line_segments:
                 x = _PAD
-                for idx, (word, bold, word_idx, is_thought) in enumerate(line):
-                    if idx:
+                for idx, (word, bold, word_idx, is_thought, space_before) in enumerate(line):
+                    if idx and space_before:
                         x += self._space_w
                     is_read = (not is_thought) and word_idx is not None and word_idx < self._revealed_count
                     font = self._bold_font if (bold and not is_thought) else self._font

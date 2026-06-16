@@ -261,6 +261,25 @@ def _execute_memory_search(inputs: dict) -> str:
         return f"Memory search failed: {type(exc).__name__}: {exc}"
 
 
+def _execute_memory_save(inputs: dict) -> str:
+    text = str((inputs or {}).get("text") or "").strip()
+    scope = str((inputs or {}).get("scope") or "general").strip().lower()
+    if scope not in ("general", "project"):
+        scope = "general"
+    if not text:
+        return "Memory save requires the fact text to store."
+    try:
+        from core.memory_store import store
+
+        result = store.get_manager().save_memory(text, scope=scope)
+        if not result.get("ok"):
+            return f"Did not store memory: {result.get('reason', 'rejected')}."
+        where = "the current project" if result.get("scope") == "project" else "general memory"
+        return f"Stored to {where}: {result.get('text', text)!r}"
+    except Exception as exc:  # noqa: BLE001 - memory should not block the answer path
+        return f"Memory save failed: {type(exc).__name__}: {exc}"
+
+
 def _execute_git_status(inputs: dict) -> str:
     cwd = inputs.get("cwd") or config.TOOL_GIT_ROOT
     return _run_read_only_command(["git", "status", "--short"], cwd=cwd)
@@ -404,6 +423,42 @@ def _register_builtin_tools() -> None:
                 "required": ["query"],
             },
             executor=_execute_memory_search,
+            opt_in=True,
+        )
+    )
+    _TOOL_REGISTRY.register_builtin(
+        ToolSpec(
+            name="memory_save",
+            description=(
+                "Save a durable fact about the user to long-term memory so it is "
+                "available in future conversations. Use this whenever the user "
+                "shares a stable preference, personal detail, or project fact "
+                "worth remembering (not transient or one-off requests). Set "
+                "scope to 'project' for facts that only apply to the user's "
+                "current project, or 'general' for facts that apply everywhere."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": (
+                            "The single durable fact to remember, as a short "
+                            "self-contained sentence."
+                        ),
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["general", "project"],
+                        "description": (
+                            "'general' for facts true everywhere; 'project' to "
+                            "scope the fact to the active project."
+                        ),
+                    },
+                },
+                "required": ["text"],
+            },
+            executor=_execute_memory_save,
             opt_in=True,
         )
     )
@@ -622,26 +677,23 @@ def screenshot_capability_warnings(
         # Eager ("On") screenshots always route through the Vision LLM.
         if not vision_model:
             warnings.append(
-                "Auto screenshot needs a Vision model, but none is set — "
-                "configure one under Vision LLM or auto screenshots will fail."
+                "Auto screenshot needs an Image model. Pick one under Image model."
             )
         elif vision_provider == "copilot":
             warnings.append(
-                "The Copilot provider can't process images, so auto screenshots "
-                "will fail. Use a Vision LLM that supports images."
+                "Copilot cannot read screenshots. Pick a different Image model."
             )
         elif not _model_accepts_images(vision_model):
             warnings.append(
-                f"Your Vision model '{vision_model}' may not accept images, so "
-                "auto screenshots may fail."
+                "This Image model may not read screenshots. Pick a model with image support."
             )
 
     if "model" in modes:
         # On-demand ("Let model decide") screenshots run through the tool loop.
         if llm_provider in ("copilot", "chatgpt"):
             warnings.append(
-                f"'Let model decide' screenshots aren't supported on the "
-                f"'{llm_provider}' provider, so the model can't take one there."
+                "'Let model decide' screenshots do not work with ChatGPT or Copilot. "
+                "Pick a different Chat model, or turn screenshots On instead."
             )
         elif llm_provider == "anthropic":
             pass  # Claude tool models accept images
@@ -654,10 +706,8 @@ def screenshot_capability_warnings(
             )
             if not _model_accepts_images(target):
                 warnings.append(
-                    f"'Let model decide' screenshots on '{llm_provider}' will go "
-                    f"to '{target or '(your model)'}', which may not accept images. "
-                    f"Set a vision-capable Vision model on '{llm_provider}', or "
-                    "screenshots may fail."
+                    "This Chat model may not read screenshots. Pick an image-capable "
+                    "Chat model, or use Image model with the same provider."
                 )
 
     return warnings
@@ -670,10 +720,8 @@ def tool_capability_warnings(tools_enabled: bool, *, llm_provider: str) -> list[
         return []
     if (llm_provider or "").strip().lower() == "chatgpt":
         return [
-            "On the ChatGPT provider, 'Let model decide' context tools are not "
-            "run as live Wisp tool calls. Open documents can be injected up "
-            "front when enabled, but browser/web and GitHub tool calls will not "
-            "run live on that route."
+            "ChatGPT cannot use live context tools here. Use On to attach context "
+            "up front, or choose another Chat model for Let model decide."
         ]
     return []
 
@@ -693,18 +741,18 @@ def subscription_auth_warnings(
     sign-in — most visibly after a restart — whereas API-key providers do not.
     Advisory only; the user's choice is still honored. Returns one message per
     affected role (Vision LLM, Main LLM)."""
-    roles: list[tuple[str, str]] = []
+    warnings: list[str] = []
     if (vision_provider or "").strip().lower() in _SUBSCRIPTION_AUTH_PROVIDERS:
-        roles.append(("Vision LLM", vision_provider.strip()))
+        warnings.append(
+            "Image model uses a subscription login. You may need to sign in again "
+            "after restart. For fewer login issues, use an API-key provider."
+        )
     if (llm_provider or "").strip().lower() in _SUBSCRIPTION_AUTH_PROVIDERS:
-        roles.append(("Main LLM", llm_provider.strip()))
-    return [
-        f"Your {role} uses '{provider}', which signs in with a personal "
-        "subscription account. That login can be invalidated and need re-signing "
-        "in (often after a restart). For an always-on route, use an API-key "
-        "provider such as Anthropic, OpenAI, or Google."
-        for role, provider in roles
-    ]
+        warnings.append(
+            "Chat model uses a subscription login. You may need to sign in again "
+            "after restart. For fewer login issues, use an API-key provider."
+        )
+    return warnings
 
 
 def _get_tool_schemas(
@@ -752,6 +800,10 @@ def _get_tool_schemas(
         spec = _TOOL_REGISTRY.get_tool("memory_search")
         if spec is not None:
             schemas.append(spec.anthropic_schema())
+    if allowed_tools is not None and _tools_allow(allowed_tools, "memory_save"):
+        spec = _TOOL_REGISTRY.get_tool("memory_save")
+        if spec is not None:
+            schemas.append(spec.anthropic_schema())
     return schemas
 
 
@@ -785,6 +837,10 @@ def _get_openai_tool_schemas(
             schemas.append(spec.openai_schema())
     if allowed_tools is not None and _tools_allow(allowed_tools, "memory_search"):
         spec = _TOOL_REGISTRY.get_tool("memory_search")
+        if spec is not None:
+            schemas.append(spec.openai_schema())
+    if allowed_tools is not None and _tools_allow(allowed_tools, "memory_save"):
+        spec = _TOOL_REGISTRY.get_tool("memory_save")
         if spec is not None:
             schemas.append(spec.openai_schema())
     return schemas

@@ -27,6 +27,14 @@ def prewarm() -> None:
         log.warning("helper stt.prewarm failed: %s", exc)
 
 
+def reset_model() -> None:
+    """Drop the worker's cached Whisper model after STT settings change."""
+    try:
+        get_client().call("stt.reset_model", timeout=10.0)
+    except HelperError as exc:
+        log.warning("helper stt.reset_model failed: %s", exc)
+
+
 def start_recording() -> None:
     """Open the mic in the worker. Logs (does not raise) on failure so a worker
     hiccup can't throw on the hotkey thread; stop_and_transcribe then yields ""."""

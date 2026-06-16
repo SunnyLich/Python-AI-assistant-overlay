@@ -269,6 +269,8 @@ class HotkeyListener:
         on_snip: Callable[[], None] | None = None,
         on_voice_start: Callable[[], None] | None = None,
         on_voice_stop: Callable[[], None] | None = None,
+        on_dictate_start: Callable[[], None] | None = None,
+        on_dictate_stop: Callable[[], None] | None = None,
         extra_hotkeys: list[tuple[str, Callable[[], None]]] | None = None,
     ):
         self._hotkey_defs: list[tuple[str, Callable]] = []
@@ -288,6 +290,9 @@ class HotkeyListener:
                 self._hotkey_defs.append((hotkey, cb))
         self._on_voice_start = on_voice_start
         self._on_voice_stop  = on_voice_stop
+        self._on_dictate_start = on_dictate_start
+        self._on_dictate_stop  = on_dictate_stop
+        self._dictate_hotkey = getattr(config, "HOTKEY_DICTATE", "") or ""
 
         if _IS_WIN:
             self._impl = _Win32Impl(self._hotkey_defs)
@@ -302,6 +307,9 @@ class HotkeyListener:
             self._impl = _PynputImpl(self._hotkey_defs)
         self._voice_listener = None
         self._voice_key      = None
+        # Maps a resolved pynput key object -> (on_press, on_release) so one
+        # listener can serve both the voice and dictation push-to-talk keys.
+        self._ptt_map: dict = {}
 
     def start(self) -> bool:
         started = self._impl.start()
@@ -310,7 +318,9 @@ class HotkeyListener:
         # The push-to-talk listener is a pynput keyboard tap. On macOS that tap
         # decodes every keystroke off the main thread (HIToolbox keycode_context),
         # which trace-traps (SIGTRAP) — same flaw as GlobalHotKeys. Skip it there.
-        if not _IS_MAC and config.HOTKEY_VOICE and (self._on_voice_start or self._on_voice_stop):
+        has_voice = bool(config.HOTKEY_VOICE and (self._on_voice_start or self._on_voice_stop))
+        has_dictate = bool(self._dictate_hotkey and (self._on_dictate_start or self._on_dictate_stop))
+        if not _IS_MAC and (has_voice or has_dictate):
             self._start_voice_listener()
         return True
 
@@ -341,19 +351,31 @@ class HotkeyListener:
     def _start_voice_listener(self) -> None:
         from pynput import keyboard as _kb
 
-        s   = config.HOTKEY_VOICE.lower().strip()
-        key = None
-        try:
-            key = _kb.Key[s]
-        except KeyError:
-            if len(s) == 1:
-                key = _kb.KeyCode.from_char(s)
+        def _resolve(hotkey_str: str):
+            s = (hotkey_str or "").lower().strip()
+            if not s:
+                return None
+            try:
+                return _kb.Key[s]
+            except KeyError:
+                return _kb.KeyCode.from_char(s) if len(s) == 1 else None
 
-        if key is None:
-            print(f"[hotkeys] Voice hotkey {s!r} not recognised for push-to-talk.")
+        bindings = [
+            (config.HOTKEY_VOICE, self._on_voice_start, self._on_voice_stop, "voice"),
+            (self._dictate_hotkey, self._on_dictate_start, self._on_dictate_stop, "dictation"),
+        ]
+        self._ptt_map = {}
+        for hotkey_str, on_start, on_stop, label in bindings:
+            if not (hotkey_str and (on_start or on_stop)):
+                continue
+            key = _resolve(hotkey_str)
+            if key is None:
+                print(f"[hotkeys] {label} hotkey {hotkey_str!r} not recognised for push-to-talk.")
+                continue
+            self._ptt_map[key] = (on_start, on_stop)
+
+        if not self._ptt_map:
             return
-
-        self._voice_key      = key
         self._voice_listener = _kb.Listener(
             on_press=self._voice_press,
             on_release=self._voice_release,
@@ -362,12 +384,14 @@ class HotkeyListener:
         self._voice_listener.start()
 
     def _voice_press(self, key) -> None:
-        if key == self._voice_key and self._on_voice_start:
-            self._on_voice_start()
+        binding = self._ptt_map.get(key)
+        if binding and binding[0]:
+            binding[0]()
 
     def _voice_release(self, key) -> None:
-        if key == self._voice_key and self._on_voice_stop:
-            self._on_voice_stop()
+        binding = self._ptt_map.get(key)
+        if binding and binding[1]:
+            binding[1]()
 
 
 # ---------------------------------------------------------------------------

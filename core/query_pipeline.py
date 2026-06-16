@@ -51,6 +51,7 @@ class ContextInputs:
     drop_items: list[tuple] = field(default_factory=list)  # (name, content, type)
     clipboard_text: str | None = None                  # already read when caller opted in
     active_document_text: str = ""                      # already read + filtered, or ""
+    priority_context: str = ""                          # e.g. "Browser/Web" or "Active document"
 
 
 @dataclass
@@ -58,6 +59,30 @@ class BuiltContext:
     user_message: str
     ambient_ctx: str
     screenshot_b64: str | None
+
+
+def _context_sources(ambient_text: str, all_contexts: list[str], active_document_text: str) -> set[str]:
+    sources: set[str] = set()
+    if "[Browser/Web]" in (ambient_text or ""):
+        sources.add("Browser/Web")
+    elif ambient_text:
+        sources.add("Ambient context")
+    if all_contexts:
+        sources.add("User-provided context")
+    if active_document_text:
+        sources.add("Active document")
+    return sources
+
+
+def _context_priority_note(priority_context: str, sources: set[str]) -> str:
+    priority = (priority_context or "").strip()
+    if priority not in sources or len(sources) < 2:
+        return ""
+    return (
+        f"Context priority: Prioritize {priority} because it was the active "
+        "or last-used context when this request was captured. Use the other "
+        "context as supporting context unless the user asks otherwise."
+    )
 
 
 def build_context(
@@ -98,6 +123,7 @@ def build_context(
         context_items.append(inp.clipboard_text)
 
     all_contexts = context_items + ([inp.selected] if inp.selected else [])
+    sources = _context_sources(inp.ambient_text, all_contexts, inp.active_document_text)
 
     ambient_ctx = inp.ambient_text
     if all_contexts:
@@ -114,6 +140,10 @@ def build_context(
             if ambient_ctx
             else f"[Active document]\n{inp.active_document_text}"
         )
+
+    priority_note = _context_priority_note(inp.priority_context, sources)
+    if priority_note:
+        ambient_ctx = f"{priority_note}\n\n---\n{ambient_ctx}" if ambient_ctx else priority_note
 
     return BuiltContext(
         user_message=inp.intent_prompt,

@@ -39,6 +39,7 @@ a = Analysis(
     binaries=QT_RUNTIME_DLLS + LITEPARSE_BINARIES + UV_BINARIES,
     datas=[
         (str(ROOT / "assets"), "assets"),
+        (str(ROOT / "ui" / "locales"), "ui/locales"),
         (str(ROOT / ".env.example"), "."),
     ] + LITEPARSE_DATAS,
     hiddenimports=[

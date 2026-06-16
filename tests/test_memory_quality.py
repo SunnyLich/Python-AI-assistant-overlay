@@ -232,7 +232,7 @@ def test_manual_fact_writes_are_serialized(monkeypatch):
     max_active = 0
     state_lock = threading.Lock()
 
-    def slow_fallback(_text, _category, _source):
+    def slow_fallback(_text, _category, _source, _project=None):
         nonlocal active, max_active
         with state_lock:
             active += 1
@@ -251,3 +251,67 @@ def test_manual_fact_writes_are_serialized(monkeypatch):
     t2.join(timeout=2)
 
     assert max_active == 1
+
+
+def _fallback_manager():
+    manager = store.MemoryManager.__new__(store.MemoryManager)
+    manager._chroma_ok = False
+    manager._collection = None
+    manager._ltm_lock = threading.RLock()
+    return manager
+
+
+def test_save_memory_scopes_general_and_project(tmp_path, monkeypatch):
+    fallback = tmp_path / "facts_fallback.json"
+    monkeypatch.setattr(store, "_MEMORY_DIR", str(tmp_path))
+    monkeypatch.setattr(store, "_FALLBACK_PATH", str(fallback))
+
+    manager = _fallback_manager()
+    try:
+        store.set_active_project(None)
+        assert manager.save_memory("I prefer concise answers", scope="general")["ok"]
+
+        store.set_active_project("proj-1")
+        result = manager.save_memory("This project uses PySide6 widgets", scope="project")
+        assert result["ok"] and result["scope"] == "project" and result["project"] == "proj-1"
+
+        facts = store._fallback_get_all_from_path()
+
+        # General fact is visible regardless of active project.
+        assert "concise" in store._format_memory_block(facts, "concise", project_id=None)
+        assert "concise" in store._format_memory_block(facts, "concise", project_id="proj-1")
+
+        # Project fact is hidden globally and in other projects, shown only in its own.
+        assert "PySide6" not in store._format_memory_block(facts, "PySide6", project_id=None)
+        assert "PySide6" not in store._format_memory_block(facts, "PySide6", project_id="proj-2")
+        assert "PySide6" in store._format_memory_block(facts, "PySide6", project_id="proj-1")
+    finally:
+        store.set_active_project(None)
+
+
+def test_save_memory_project_scope_falls_back_to_general_without_active_project(tmp_path, monkeypatch):
+    fallback = tmp_path / "facts_fallback.json"
+    monkeypatch.setattr(store, "_MEMORY_DIR", str(tmp_path))
+    monkeypatch.setattr(store, "_FALLBACK_PATH", str(fallback))
+
+    manager = _fallback_manager()
+    store.set_active_project(None)
+    result = manager.save_memory("I work best in the mornings", scope="project")
+    assert result["ok"] and result["scope"] == "general" and result["project"] is None
+
+
+def test_memory_save_tool_executor(monkeypatch):
+    from core.llm_clients import client
+
+    captured: dict = {}
+
+    class FakeManager:
+        def save_memory(self, text, scope="general"):
+            captured["text"] = text
+            captured["scope"] = scope
+            return {"ok": True, "scope": scope, "project": None, "text": text}
+
+    monkeypatch.setattr(store, "get_manager", lambda: FakeManager())
+    out = client._execute_memory_save({"text": "I like green tea", "scope": "general"})
+    assert "green tea" in out
+    assert captured == {"text": "I like green tea", "scope": "general"}

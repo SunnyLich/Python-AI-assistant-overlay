@@ -55,7 +55,9 @@ def ping(value: Any = None) -> dict[str, Any]:
 _SAMPLE_RATE = 16_000  # Whisper expects 16 kHz mono
 
 _model = None
+_model_ready = False  # True once the model is loaded AND warmed (first clip fast)
 _model_lock = threading.Lock()
+_recording_lock = threading.RLock()
 _stream = None
 _recording = False
 _chunks: list = []
@@ -63,17 +65,19 @@ _chunks_lock = threading.Lock()
 
 
 def _get_model():
-    global _model
+    global _model, _model_ready
     with _model_lock:
         if _model is None:
             import config
             from faster_whisper import WhisperModel
-            _model = WhisperModel(
-                config.STT_MODEL,
-                device="cpu",
-                compute_type=config.STT_COMPUTE_TYPE,
+            from core.stt_device import resolve_device, resolve_compute_type, build_model
+            device = resolve_device(config.STT_DEVICE, log=_log)
+            compute_type = resolve_compute_type(device, config.STT_COMPUTE_TYPE, log=_log)
+            _model, compute_type = build_model(
+                WhisperModel, config.STT_MODEL, device, compute_type, log=_log
             )
-            _log(f"Whisper model '{config.STT_MODEL}' loaded.")
+            _model_ready = True
+            _log(f"Whisper model '{config.STT_MODEL}' loaded on {device} ({compute_type}).")
     return _model
 
 
@@ -89,6 +93,25 @@ def stt_prewarm() -> None:
     return None
 
 
+def stt_reset_model() -> None:
+    """Drop the cached Whisper model after STT settings change."""
+    global _model, _model_ready
+    with _model_lock:
+        _model = None
+        _model_ready = False
+    _log("Whisper model cache reset")
+    return None
+
+
+def stt_is_ready() -> dict[str, Any]:
+    """Non-blocking readiness check: True once the model is loaded and warmed.
+
+    Reads a flag only (never the model lock), so it answers instantly even while
+    prewarm is still loading on its background thread — letting the GUI show a
+    "warming up" indicator instead of a silent slow first transcription."""
+    return {"ready": _model_ready}
+
+
 def _audio_callback(indata, frames, time_info, status) -> None:
     if _recording:
         with _chunks_lock:
@@ -101,18 +124,30 @@ def stt_start_recording() -> None:
     loop owns this process."""
     global _stream, _recording
     import sounddevice as sd
-    _recording = True
-    with _chunks_lock:
-        _chunks.clear()
-    stream = sd.InputStream(
-        samplerate=_SAMPLE_RATE,
-        channels=1,
-        dtype="float32",
-        blocksize=1024,
-        callback=_audio_callback,
-    )
-    stream.start()
-    _stream = stream
+    with _recording_lock:
+        if _stream is not None:
+            try:
+                _stream.stop()
+                _stream.close()
+            except Exception:  # noqa: BLE001
+                pass
+            _stream = None
+        _recording = True
+        with _chunks_lock:
+            _chunks.clear()
+        try:
+            stream = sd.InputStream(
+                samplerate=_SAMPLE_RATE,
+                channels=1,
+                dtype="float32",
+                blocksize=1024,
+                callback=_audio_callback,
+            )
+            stream.start()
+            _stream = stream
+        except Exception:
+            _recording = False
+            raise
     _log("recording started")
     return None
 
@@ -123,33 +158,54 @@ def stt_stop_and_transcribe() -> str:
     global _stream, _recording
     import numpy as np
     import config
-    _recording = False
-    if _stream is not None:
-        try:
-            _stream.stop()
-            _stream.close()
-        except Exception:  # noqa: BLE001
-            pass
-        _stream = None
+    from core.stt_postprocess import clean_transcript
+    with _recording_lock:
+        _recording = False
+        if _stream is not None:
+            try:
+                _stream.stop()
+                _stream.close()
+            except Exception:  # noqa: BLE001
+                pass
+            _stream = None
 
-    with _chunks_lock:
-        chunks = list(_chunks)
-        _chunks.clear()
+        with _chunks_lock:
+            chunks = list(_chunks)
+            _chunks.clear()
     if not chunks:
+        _log("transcribe skipped: no audio chunks captured")
         return ""
 
     audio = np.concatenate(chunks, axis=0).flatten()
+    seconds = len(audio) / float(_SAMPLE_RATE)
     if len(audio) < _SAMPLE_RATE * 0.3:  # ignore accidental sub-0.3 s taps
+        _log(f"transcribe skipped: clip too short ({seconds:.2f}s)")
         return ""
 
+    # Whisper hallucinates fluent text from near-silent audio, so reject a dead
+    # or far-too-quiet mic instead of returning gibberish; boost quiet-but-real
+    # speech to a normal level so the model gets a properly-levelled signal.
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    if peak < 0.01:
+        _log(f"transcribe skipped: input level too low (peak={peak:.4f}) — check microphone")
+        return ""
+    if peak < 0.3:
+        audio = audio * (0.3 / peak)
+
     model = _get_model()
+    language = config.STT_LANGUAGE or None
+    beam_size = config.STT_BEAM_SIZE
+    _log(f"transcribing {seconds:.2f}s with language={language!r} beam_size={beam_size}")
     segments, _info = model.transcribe(
         audio,
-        beam_size=1,
-        language=config.STT_LANGUAGE or None,
+        beam_size=beam_size,
+        language=language,
         vad_filter=True,
     )
-    text = " ".join(seg.text.strip() for seg in segments).strip()
+    raw_text = " ".join(seg.text.strip() for seg in segments).strip()
+    text = clean_transcript(raw_text)
+    if raw_text and not text:
+        _log(f"discarded repeated-token transcript: {raw_text!r}")
     _log(f"transcribed: {text!r}")
     return text
 
@@ -205,6 +261,8 @@ def stt_mic_probe() -> dict[str, Any]:
 HANDLERS: dict[str, Callable[..., Any]] = {
     "ping": ping,
     "stt.prewarm": stt_prewarm,
+    "stt.reset_model": stt_reset_model,
+    "stt.is_ready": stt_is_ready,
     "stt.start_recording": stt_start_recording,
     "stt.stop_and_transcribe": stt_stop_and_transcribe,
     "stt.selftest": stt_selftest,

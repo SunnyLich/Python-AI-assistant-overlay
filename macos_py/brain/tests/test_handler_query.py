@@ -140,6 +140,22 @@ def test_query_includes_active_document_when_requested(record_ctx, monkeypatch):
     assert "".join(_chunks(events)) == result["text"]
 
 
+def test_query_includes_context_priority_note(record_ctx):
+    events, ctx = record_ctx()
+    result = handlers.HANDLERS["brain.query"](
+        ctx,
+        intent_prompt="use both",
+        ambient_text="[Browser/Web]\nPAGE TEXT",
+        active_document_text="DOC TEXT",
+        context_priority="Browser/Web",
+        memory_context="(none)",
+    )
+
+    assert "Context priority: Prioritize Browser/Web" in result["text"]
+    assert "[Active document]\nDOC TEXT" in result["text"]
+    assert "".join(_chunks(events)) == result["text"]
+
+
 def test_query_injects_frontloaded_tool_context(record_ctx, monkeypatch):
     from core.llm_clients import client as llm_client
 

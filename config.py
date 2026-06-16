@@ -201,13 +201,14 @@ def _load_config() -> None:
     global VISION_LLM_PROVIDER, VISION_LLM_MODEL, VISION_LLM_FALLBACKS
     global TTS_PROVIDER, CARTESIA_VOICE_ID
     global THEME_MODE, DARK_MODE, ICON_AUTO_HIDE, CHAT_AUTO_ELABORATE, CHAT_ELABORATE_PROMPT
+    global APP_LANGUAGE, ASSISTANT_LANGUAGE
     global THEME_DARK_BG, THEME_DARK_SURFACE, THEME_DARK_TEXT, THEME_DARK_ACCENT
     global THEME_LIGHT_BG, THEME_LIGHT_SURFACE, THEME_LIGHT_TEXT, THEME_LIGHT_ACCENT
     global GITHUB_DEFAULT_CLIENT_ID, GITHUB_CLIENT_ID, GITHUB_OAUTH_SCOPES
     global COPILOT_CLI_URL, COPILOT_CLI_PATH
-    global HOTKEY_ADD_CONTEXT, HOTKEY_CLEAR_CONTEXT, HOTKEY_SNIP, HOTKEY_VOICE
+    global HOTKEY_ADD_CONTEXT, HOTKEY_CLEAR_CONTEXT, HOTKEY_SNIP, HOTKEY_VOICE, HOTKEY_DICTATE, DICTATE_MODE
     global SNIP_CONTEXT_AMBIENT, SNIP_CONTEXT_DOCUMENTS, SNIP_CONTEXT_TOOLS
-    global STT_MODEL, STT_COMPUTE_TYPE, STT_LANGUAGE
+    global STT_MODEL, STT_COMPUTE_TYPE, STT_LANGUAGE, STT_BEAM_SIZE, STT_DEVICE
     global CALLER_ROWS, VOICE_CALLER
     global CONTEXT_BROWSER_MAX_CHARS, CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS, CONTEXT_TOOL_DOCUMENT_MAX_CHARS
     global TOOL_PLUGIN_DIR, TOOL_GIT_ROOT
@@ -280,6 +281,8 @@ def _load_config() -> None:
     ICON_AUTO_HIDE        = env_bool("ICON_AUTO_HIDE", env_bool("DOLL_AUTO_HIDE", False))
     CHAT_AUTO_ELABORATE   = env_bool("CHAT_AUTO_ELABORATE", False)
     CHAT_ELABORATE_PROMPT = os.getenv("CHAT_ELABORATE_PROMPT", "Please elaborate on that.")
+    APP_LANGUAGE          = os.getenv("APP_LANGUAGE", "")
+    ASSISTANT_LANGUAGE    = os.getenv("ASSISTANT_LANGUAGE", "")
     GITHUB_DEFAULT_CLIENT_ID = os.getenv("GITHUB_DEFAULT_CLIENT_ID", "")
     GITHUB_CLIENT_ID     = os.getenv("GITHUB_CLIENT_ID", GITHUB_DEFAULT_CLIENT_ID)
     GITHUB_OAUTH_SCOPES  = os.getenv("GITHUB_OAUTH_SCOPES", "repo read:user user:email")
@@ -291,6 +294,11 @@ def _load_config() -> None:
     HOTKEY_CLEAR_CONTEXT = os.getenv("HOTKEY_CLEAR_CONTEXT", "alt+w")
     HOTKEY_SNIP          = os.getenv("HOTKEY_SNIP",          "ctrl+alt+q")
     HOTKEY_VOICE         = os.getenv("HOTKEY_VOICE",         "f9")
+    # Push-to-talk dictation: hold to transcribe straight into the focused text
+    # field (no assistant). Empty = disabled. DICTATE_MODE: "raw" pastes the
+    # transcript verbatim; "llm" runs it through the LLM for punctuation/cleanup.
+    HOTKEY_DICTATE       = os.getenv("HOTKEY_DICTATE",       "")
+    DICTATE_MODE         = os.getenv("DICTATE_MODE",         "raw")
 
     SNIP_CONTEXT_AMBIENT   = env_bool("SNIP_CONTEXT_AMBIENT",   True)
     SNIP_CONTEXT_DOCUMENTS = env_bool("SNIP_CONTEXT_DOCUMENTS", False)
@@ -300,6 +308,13 @@ def _load_config() -> None:
     STT_MODEL        = os.getenv("STT_MODEL",        "base")
     STT_COMPUTE_TYPE = os.getenv("STT_COMPUTE_TYPE", "int8")
     STT_LANGUAGE     = os.getenv("STT_LANGUAGE",     "en")
+    # cpu | cuda | auto. "auto" uses the GPU when an NVIDIA/CUDA device is
+    # present and falls back to CPU otherwise. Resolved in core.stt._get_model.
+    STT_DEVICE       = os.getenv("STT_DEVICE",        "auto").strip().lower()
+    # Beam width for Whisper decoding. 5 is Whisper's own default and noticeably
+    # more accurate than greedy (1); clamp to a sane range so a bad .env value
+    # can't wedge the decoder.
+    STT_BEAM_SIZE    = max(1, min(env_int("STT_BEAM_SIZE", 5), 10))
 
     # --- Caller rows ---
     new_rows = _load_caller_rows()
@@ -372,8 +387,20 @@ def _load_config() -> None:
 _load_config()
 
 
+def _assistant_language_instruction(language: str) -> str:
+    language = (language or "").strip()
+    if not language:
+        return ""
+    if language == "match_user":
+        return "Respond in the same language as the user's latest request unless they ask otherwise."
+    return f"Respond in {language} unless the user explicitly asks for another language."
+
+
 def get_system_prompt() -> str:
-    return SYSTEM_PROMPT_UTILITY
+    language_instruction = _assistant_language_instruction(ASSISTANT_LANGUAGE)
+    if not language_instruction:
+        return SYSTEM_PROMPT_UTILITY
+    return f"{SYSTEM_PROMPT_UTILITY}\n\n{language_instruction}"
 
 
 def reload() -> None:

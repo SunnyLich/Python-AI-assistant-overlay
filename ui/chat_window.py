@@ -10,15 +10,18 @@ from __future__ import annotations
 import html
 import re
 import threading
+import uuid
 import config
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QLabel, QTextEdit, QPushButton, QFrame, QApplication, QTextBrowser,
-    QSizePolicy, QStackedWidget, QSplitter,
+    QSizePolicy, QStackedWidget, QSplitter, QComboBox, QInputDialog,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtGui import QFont, QPixmap, QShortcut, QKeySequence
 from core.assistant_text import ThoughtStreamParser, merge_segment_iterables, split_tagged_text
+from core.conversation_store.store import GENERAL_PROJECT_ID as _GENERAL_PROJECT_ID
+from ui.i18n import t
 from ui.shared.window_utils import enable_standard_window_controls, fit_window_to_screen
 
 _W          = 680
@@ -219,6 +222,11 @@ class ChatWindow(QWidget):
         send_fn,
         auto_message: str | None = None,
         start_new: bool = False,
+        projects: list[dict] | None = None,
+        active_project_id: str | None = None,
+        on_project_change=None,
+        on_new_project=None,
+        persist_fn=None,
     ):
         """
         Args:
@@ -228,10 +236,24 @@ class ChatWindow(QWidget):
                            ``"context"`` (ambient context string).
             send_fn:       Callable(messages: list) -> Generator[str]
             auto_message:  If set, automatically sent when the window opens.
+            projects:      List of {"id", "name"} dicts for the project selector.
+            active_project_id: Project new conversations are filed under.
+            on_project_change: Callable(project_id) invoked when the user picks
+                           a different project (e.g. to scope memory).
+            on_new_project: Callable(name) -> project dict, creating + persisting
+                           a project; returns the new project.
+            persist_fn:    Callable() invoked after a reply lands to save chats.
         """
         super().__init__()
         self._conversations = conversations  # live reference -” NOT a copy
         self._send_fn = send_fn
+        self._projects = list(projects or [])
+        if not any(p.get("id") == _GENERAL_PROJECT_ID for p in self._projects):
+            self._projects.insert(0, {"id": _GENERAL_PROJECT_ID, "name": "General"})
+        self._active_project_id = active_project_id or _GENERAL_PROJECT_ID
+        self._on_project_change = on_project_change
+        self._on_new_project = on_new_project
+        self._persist_fn = persist_fn
         self._streaming = False
         self._current_ai_label: _MessageTextView | None = None
         self._current_ai_text = ""
@@ -302,8 +324,67 @@ class ChatWindow(QWidget):
         self._new_chat_btn = new_chat
         h.addWidget(title)
         h.addStretch()
+        h.addWidget(self._make_project_selector())
         h.addWidget(new_chat)
         return bar
+
+    _NEW_PROJECT_SENTINEL = "__new_project__"
+
+    def _make_project_selector(self) -> QWidget:
+        """Dropdown that scopes new conversations (and memory) to a project."""
+        combo = QComboBox()
+        combo.setFixedHeight(26)
+        combo.setMinimumWidth(120)
+        combo.setToolTip(t("Project for new chats (memory is scoped per project)"))
+        combo.setStyleSheet(
+            f"QComboBox {{ background: rgba(160,160,255,12); color: {_TEXT};"
+            f" border: 1px solid {_BORDER}; border-radius: 6px; padding: 2px 8px;"
+            " font-size: 9pt; }"
+            f" QComboBox QAbstractItemView {{ background: {_TITLE_BG}; color: {_TEXT};"
+            f" selection-background-color: {_SEL_BG}; }}"
+        )
+        self._project_combo = combo
+        self._reload_project_combo()
+        combo.currentIndexChanged.connect(self._on_project_selected)
+        return combo
+
+    def _reload_project_combo(self) -> None:
+        combo = self._project_combo
+        combo.blockSignals(True)
+        combo.clear()
+        for proj in self._projects:
+            combo.addItem(proj.get("name", "General"), proj.get("id"))
+        combo.addItem(t("＋ New project…"), self._NEW_PROJECT_SENTINEL)
+        idx = combo.findData(self._active_project_id)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+
+    def _on_project_selected(self, _index: int) -> None:
+        data = self._project_combo.currentData()
+        if data == self._NEW_PROJECT_SENTINEL:
+            self._create_project_interactive()
+            return
+        if not data or data == self._active_project_id:
+            return
+        self._active_project_id = data
+        if self._on_project_change:
+            self._on_project_change(data)
+
+    def _create_project_interactive(self) -> None:
+        name, ok = QInputDialog.getText(self, t("New project"), t("Project name:"))
+        name = (name or "").strip()
+        if not ok or not name or self._on_new_project is None:
+            # Revert the combo to the current project (user cancelled).
+            self._reload_project_combo()
+            return
+        project = self._on_new_project(name)
+        if project:
+            if not any(p.get("id") == project.get("id") for p in self._projects):
+                self._projects.append(project)
+            self._active_project_id = project.get("id")
+            if self._on_project_change:
+                self._on_project_change(self._active_project_id)
+        self._reload_project_combo()
 
     # ------------------------------------------------------------------ Sidebar
 
@@ -364,9 +445,9 @@ class ChatWindow(QWidget):
 
     def _make_sidebar_btn(self, idx: int, conv: dict) -> QPushButton:
         first_user = next((m for m in conv["messages"] if m["role"] == "user"), None)
-        raw = first_user["content"] if first_user else f"Conversation {idx+1}"
+        raw = first_user["content"] if first_user else f"{t('Conversation')} {idx+1}"
         has_image = bool(first_user and first_user.get("image_base64"))
-        prefix = "[image] " if has_image else ""
+        prefix = f"[{t('image')}] " if has_image else ""
         title = (prefix + raw.strip().replace("\n", " "))
         if len(title) > 42:
             title = title[:42] + "..."
@@ -422,14 +503,14 @@ class ChatWindow(QWidget):
                 else:
                     self._stack.addWidget(self._make_page_placeholder())
         else:
-            ph = QLabel("No conversations yet.\n\nPress Ctrl+Q to ask something.")
+            ph = QLabel(t("No conversations yet.\n\nPress Ctrl+Q to ask something."))
             ph.setAlignment(Qt.AlignmentFlag.AlignCenter)
             ph.setStyleSheet(f"color: {_HINT}; background: {_BG};")
             self._stack.addWidget(ph)
         self._stack.setCurrentIndex(self._active_idx)
         vl.addWidget(self._stack, stretch=1)
 
-        self._past_notice = QLabel("  Selected conversation")
+        self._past_notice = QLabel(t("  Selected conversation"))
         self._past_notice.setFixedHeight(26)
         self._past_notice.setStyleSheet(
             f"background: rgba(160,160,255,10); color: {_HINT};"
@@ -448,7 +529,12 @@ class ChatWindow(QWidget):
             return
 
         was_empty = not self._conversations
-        conv = {"messages": [], "context": ""}
+        conv = {
+            "id": str(uuid.uuid4()),
+            "project_id": self._active_project_id,
+            "messages": [],
+            "context": "",
+        }
         self._conversations.append(conv)
 
         if was_empty and self._has_placeholder:
@@ -497,7 +583,7 @@ class ChatWindow(QWidget):
             self._switch(len(self._conversations) - 1)
 
     def _make_page_placeholder(self) -> QLabel:
-        ph = QLabel("Loading conversation...")
+        ph = QLabel(t("Loading conversation..."))
         ph.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ph.setStyleSheet(f"color: {_HINT}; background: {_BG};")
         return ph
@@ -560,15 +646,15 @@ class ChatWindow(QWidget):
         preview = " ".join(text.split())  # collapse newlines/runs to one line
         if len(preview) > 160:
             preview = preview[:160].rstrip() + "…"
-        body = f"Context · {html.escape(preview)}"
+        body = f"{t('Context')} · {html.escape(preview)}"
         if truncated:
-            body += " <span style='color:#d6a04a;'>· truncated</span>"
+            body += f" <span style='color:#d6a04a;'>· {t('truncated')}</span>"
         lbl = QLabel(body)
         lbl.setTextFormat(Qt.TextFormat.RichText)
         lbl.setWordWrap(True)
         tooltip = _truncate_for_display(text, _CONTEXT_TOOLTIP_CHAR_LIMIT, "context tooltip")
         lbl.setToolTip(
-            tooltip + "\n\n[context was truncated to fit the limit]" if truncated else tooltip
+            tooltip + f"\n\n[{t('context was truncated to fit the limit')}]" if truncated else tooltip
         )
         lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         lbl.setStyleSheet(
@@ -587,14 +673,14 @@ class ChatWindow(QWidget):
 
         self._input = QTextEdit()
         self._input.setFixedHeight(62)
-        self._input.setPlaceholderText("Message... (Enter to send, Shift+Enter for newline)")
+        self._input.setPlaceholderText(t("Message... (Enter to send, Shift+Enter for newline)"))
         self._input.setStyleSheet(
             f"QTextEdit {{ background: rgba(255,255,255,8); border: 1px solid {_BORDER};"
             f" border-radius: 6px; color: {_TEXT}; padding: 6px 8px; font-size: 10pt; }}"
         )
         self._input.installEventFilter(self)
 
-        self._send_btn = QPushButton("Send")
+        self._send_btn = QPushButton(t("Send"))
         self._send_btn.setFixedSize(64, 46)
         self._send_btn.setStyleSheet(
             f"QPushButton {{ background: {_ACCENT}; color: #1c1c24; border: none;"
@@ -623,7 +709,7 @@ class ChatWindow(QWidget):
         else:
             lbl.setPlainText(display_text)
 
-        role_lbl = QLabel("You" if role == "user" else "Assistant")
+        role_lbl = QLabel(t("You" if role == "user" else "Assistant"))
         role_lbl.setStyleSheet(f"color: {_HINT}; background: transparent; font-size: 8pt;")
 
         wrapper = QWidget()
@@ -756,6 +842,11 @@ class ChatWindow(QWidget):
             if self._current_ai_text != self._current_ai_reply_text:
                 message["display_content"] = self._current_ai_text
             self._conversations[self._active_idx]["messages"].append(message)
+            if self._persist_fn:
+                try:
+                    self._persist_fn()
+                except Exception:
+                    pass
         self._current_ai_label = None
         self._current_ai_text = ""
         self._current_ai_reply_text = ""

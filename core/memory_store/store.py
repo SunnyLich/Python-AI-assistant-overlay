@@ -55,6 +55,41 @@ _FALLBACK_LOCK = threading.RLock()
 _CATEGORIES = ("project_context", "general")
 
 # ---------------------------------------------------------------------------
+# Active project
+#
+# A fact is either *global* (project == None / "") or scoped to a single
+# project id. Retrieval always returns global facts plus the facts of the
+# currently-active project, so "general" chatting and project work don't bleed
+# into each other. main.py sets the active project before each query/save.
+# ---------------------------------------------------------------------------
+
+_active_project_lock = threading.Lock()
+_active_project_id: Optional[str] = None
+
+
+def set_active_project(project_id: Optional[str]) -> None:
+    """Set the project scope used by subsequent save/retrieve calls."""
+    global _active_project_id
+    with _active_project_lock:
+        _active_project_id = (project_id or "").strip() or None
+
+
+def get_active_project() -> Optional[str]:
+    with _active_project_lock:
+        return _active_project_id
+
+
+def _fact_project(fact: dict) -> Optional[str]:
+    value = str(fact.get("project") or "").strip()
+    return value or None
+
+
+def _fact_in_scope(fact: dict, project_id: Optional[str]) -> bool:
+    """A fact is in scope when it is global or belongs to *project_id*."""
+    fact_project = _fact_project(fact)
+    return fact_project is None or fact_project == project_id
+
+# ---------------------------------------------------------------------------
 # Prompts
 # ---------------------------------------------------------------------------
 
@@ -193,15 +228,21 @@ def _semantic_memory_query_enabled() -> bool:
     }
 
 
-def _format_memory_block(facts: list[dict], query: str = "", top_k: int | None = None) -> str:
+def _format_memory_block(
+    facts: list[dict],
+    query: str = "",
+    top_k: int | None = None,
+    project_id: Optional[str] = None,
+) -> str:
     if not facts:
         return ""
+    in_scope = [fact for fact in facts if _fact_in_scope(fact, project_id)]
     active = [
-        fact for fact in facts
+        fact for fact in in_scope
         if not fact.get("archived") and _lexical_overlap(query, fact.get("text", "")) > 0
     ]
     if not active:
-        active = [fact for fact in facts if not fact.get("archived")]
+        active = [fact for fact in in_scope if not fact.get("archived")]
     k = max(1, top_k if top_k is not None else config.MEMORY_TOP_K)
     lines: list[str] = []
     seen: set[str] = set()
@@ -231,7 +272,9 @@ def _fallback_write_all_unlocked(facts: list[dict]) -> None:
         json.dump(facts, f, indent=2, ensure_ascii=False)
 
 
-def add_fact_manual_lightweight(text: str, category: str = "general") -> bool:
+def add_fact_manual_lightweight(
+    text: str, category: str = "general", project: Optional[str] = None
+) -> bool:
     """Store a manual fact in the JSON fact store without initializing Chroma."""
     if category not in _CATEGORIES:
         category = "general"
@@ -239,7 +282,7 @@ def add_fact_manual_lightweight(text: str, category: str = "general") -> bool:
     if not _is_memory_worthy_fact(text, source="manual"):
         return False
     with _FALLBACK_LOCK:
-        _fallback_upsert_unlocked(text, category, "manual")
+        _fallback_upsert_unlocked(text, category, "manual", project)
     return True
 
 
@@ -272,12 +315,17 @@ def delete_fact_lightweight(fact_id: str) -> bool:
         return True
 
 
-def _fallback_upsert_unlocked(text: str, category: str, source: str) -> None:
+def _fallback_upsert_unlocked(
+    text: str, category: str, source: str, project: Optional[str] = None
+) -> None:
+    project = (project or "").strip() or None
     facts = _fallback_read_all_unlocked()
     now = _now_iso()
     for fact in facts:
         if fact.get("archived"):
             continue
+        if _fact_project(fact) != project:
+            continue  # keep per-project facts distinct even when text is similar
         existing = fact.get("text", "")
         if (
             existing.lower() == text.lower()
@@ -293,6 +341,7 @@ def _fallback_upsert_unlocked(text: str, category: str, source: str) -> None:
             "text": text,
             "category": category,
             "source": source,
+            "project": project,
             "created_at": now,
             "last_seen": now,
             "archived": False,
@@ -485,15 +534,44 @@ class MemoryManager:
     # Long-term memory -” explicit writes
     # ------------------------------------------------------------------
 
-    def add_explicit_fact(self, text: str) -> None:
+    def add_explicit_fact(self, text: str, project: Optional[str] = None) -> None:
         """
         Immediately commit a user-stated fact to LTM.
         Called when the user's message starts with "remember that -¦".
         """
         category = _infer_category(text)
         with self._ltm_lock:
-            self._upsert_fact(text.strip(), category, source="explicit")
+            self._upsert_fact(text.strip(), category, source="explicit", project=project)
         print(f"[memory] Explicit fact stored ({category}): {text!r}")
+
+    def save_memory(self, text: str, scope: str = "general") -> dict:
+        """
+        Model-facing memory write. ``scope`` is "general" (a durable fact that
+        applies everywhere) or "project" (scoped to the currently-active
+        project). When "project" is requested but no project is active, the
+        fact is stored globally so nothing is silently dropped.
+
+        Returns a small status dict for the tool layer to surface to the model.
+        """
+        text = _normalize_fact_text(text)
+        if not text:
+            return {"ok": False, "reason": "empty text"}
+        if not _is_memory_worthy_fact(text, source="explicit"):
+            return {"ok": False, "reason": "not durable enough to store"}
+
+        scope = (scope or "general").strip().lower()
+        project = get_active_project() if scope == "project" else None
+        category = "project_context" if project else "general"
+        with self._ltm_lock:
+            stored = self._upsert_fact(text, category, source="explicit", project=project)
+        if stored:
+            print(f"[memory] Saved ({category}, project={project!r}): {text!r}")
+        return {
+            "ok": bool(stored),
+            "scope": "project" if project else "general",
+            "project": project,
+            "text": text,
+        }
 
 
     # ------------------------------------------------------------------
@@ -547,9 +625,13 @@ class MemoryManager:
     # Long-term memory -- retrieval
     # ------------------------------------------------------------------
 
-    def retrieve_relevant(self, query, top_k=None):
+    def retrieve_relevant(self, query, top_k=None, project_id=None):
         k = top_k if top_k is not None else config.MEMORY_TOP_K
-        fast_block = _format_memory_block(get_all_facts_lightweight(), query, top_k=k)
+        if project_id is None:
+            project_id = get_active_project()
+        fast_block = _format_memory_block(
+            get_all_facts_lightweight(), query, top_k=k, project_id=project_id
+        )
         if not _semantic_memory_query_enabled():
             return fast_block
 
@@ -590,10 +672,19 @@ class MemoryManager:
             count = self._collection.count()
             if count == 0:
                 return fast_block
+            where: dict = {'archived': {'$eq': False}}
+            if project_id:
+                where = {'$and': [
+                    {'archived': {'$eq': False}},
+                    {'$or': [
+                        {'project': {'$eq': project_id}},
+                        {'project': {'$eq': ''}},
+                    ]},
+                ]}
             results = self._collection.query(
                 query_texts=[query],
                 n_results=min(k, count),
-                where={'archived': {'$eq': False}},
+                where=where,
                 include=['documents', 'metadatas', 'distances'],
             )
             docs = results.get('documents', [[]])[0]
@@ -710,32 +801,38 @@ class MemoryManager:
     # ------------------------------------------------------------------
 
     def _upsert_fact(
-        self, text: str, category: str, source: str = "summarizer"
+        self, text: str, category: str, source: str = "summarizer",
+        project: Optional[str] = None,
     ) -> bool:
         """
         Insert a fact into LTM.  If a semantically similar fact already exists
         (cosine similarity â‰¥ 0.85, i.e. distance < 0.15) it is archived and
         the new fact replaces it.
         """
+        project = (project or "").strip() or None
         text = _normalize_fact_text(text)
         if not _is_memory_worthy_fact(text, source=source):
             print(f"[memory] Ignored low-value fact candidate: {text!r}")
             return False
 
         if not self._chroma_ok or self._collection is None:
-            self._fallback_upsert(text, category, source)
+            self._fallback_upsert(text, category, source, project)
             return True
 
         now = _now_iso()
 
-        # Conflict check -” only if the collection is non-empty
+        # Conflict check -” only against facts in the same project scope so a
+        # global fact and a project fact with similar wording can coexist.
+        scope_filter: dict = {"archived": {"$eq": False}}
+        if project is not None:
+            scope_filter = {"$and": [scope_filter, {"project": {"$eq": project}}]}
         try:
             count = self._collection.count()
             if count > 0:
                 results = self._collection.query(
                     query_texts=[text],
                     n_results=min(3, count),
-                    where={"archived": {"$eq": False}},
+                    where=scope_filter,
                     include=["documents", "metadatas", "distances"],
                 )
                 ids: list[str] = results.get("ids", [[]])[0]
@@ -776,6 +873,7 @@ class MemoryManager:
                     "id": fact_id,
                     "category": category,
                     "source": source,
+                    "project": project or "",
                     "created_at": now,
                     "last_seen": now,
                     "archived": False,
@@ -788,11 +886,11 @@ class MemoryManager:
             return False
 
     def _fallback_upsert(
-        self, text: str, category: str, source: str
+        self, text: str, category: str, source: str, project: Optional[str] = None
     ) -> None:
         text = _normalize_fact_text(text)
         with _FALLBACK_LOCK:
-            _fallback_upsert_unlocked(text, category, source)
+            _fallback_upsert_unlocked(text, category, source, project)
 
     # ------------------------------------------------------------------
     # Viewer API -” read
@@ -819,6 +917,7 @@ class MemoryManager:
                     "text": doc,
                     "category": meta.get("category", "personal"),
                     "source": meta.get("source", "summarizer"),
+                    "project": meta.get("project", ""),
                     "created_at": meta.get("created_at", ""),
                     "last_seen": meta.get("last_seen", ""),
                 })
@@ -1089,6 +1188,7 @@ def get_all_facts_lightweight() -> list[dict]:
                 "text": doc,
                 "category": meta.get("category", "general"),
                 "source": meta.get("source", "summarizer"),
+                "project": meta.get("project", ""),
                 "created_at": meta.get("created_at", ""),
                 "last_seen": meta.get("last_seen", ""),
             })

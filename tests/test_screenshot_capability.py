@@ -21,7 +21,7 @@ class ScreenshotCapabilityWarnings(unittest.TestCase):
         w = warn(["auto"], llm_provider="anthropic", llm_model="claude-opus-4-5",
                  vision_provider="", vision_model="")
         self.assertEqual(len(w), 1)
-        self.assertIn("Vision model", w[0])
+        self.assertIn("Image model", w[0])
 
     def test_auto_with_vision_capable_model_is_silent(self):
         self.assertEqual(
@@ -32,7 +32,7 @@ class ScreenshotCapabilityWarnings(unittest.TestCase):
     def test_auto_with_text_only_vision_model_warns(self):
         w = warn(["auto"], vision_provider="groq", vision_model="llama-3.3-70b")
         self.assertEqual(len(w), 1)
-        self.assertIn("may not accept images", w[0])
+        self.assertIn("may not read screenshots", w[0])
 
     def test_model_mode_anthropic_is_silent(self):
         self.assertEqual(
@@ -43,7 +43,7 @@ class ScreenshotCapabilityWarnings(unittest.TestCase):
     def test_model_mode_copilot_warns_unsupported(self):
         w = warn(["model"], llm_provider="copilot", llm_model="gpt-4o")
         self.assertEqual(len(w), 1)
-        self.assertIn("aren't supported", w[0])
+        self.assertIn("do not work", w[0])
 
     def test_model_mode_openai_vision_capable_main_model_is_silent(self):
         self.assertEqual(
@@ -54,7 +54,7 @@ class ScreenshotCapabilityWarnings(unittest.TestCase):
     def test_model_mode_groq_text_only_warns(self):
         w = warn(["model"], llm_provider="groq", llm_model="llama-3.3-70b")
         self.assertEqual(len(w), 1)
-        self.assertIn("may not accept images", w[0])
+        self.assertIn("may not read screenshots", w[0])
 
     def test_model_mode_groq_with_same_provider_vision_model_is_silent(self):
         self.assertEqual(
@@ -95,12 +95,12 @@ class SubscriptionAuthWarnings(unittest.TestCase):
     def test_chatgpt_vision_warns(self):
         w = subscription_auth_warnings(vision_provider="chatgpt")
         self.assertEqual(len(w), 1)
-        self.assertIn("Vision LLM", w[0])
+        self.assertIn("Image model", w[0])
 
     def test_copilot_main_warns(self):
         w = subscription_auth_warnings(llm_provider="copilot")
         self.assertEqual(len(w), 1)
-        self.assertIn("Main LLM", w[0])
+        self.assertIn("Chat model", w[0])
 
     def test_both_roles_warn_separately(self):
         w = subscription_auth_warnings(llm_provider="chatgpt", vision_provider="copilot")

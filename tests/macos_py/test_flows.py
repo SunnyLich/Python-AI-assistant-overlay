@@ -495,6 +495,100 @@ def test_browser_app_captured_at_hotkey_time_fetches_text_via_applescript():
     assert "Page text via Safari" in ambient
 
 
+def test_context_priority_marks_browser_when_browser_was_active():
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "auto",
+            "context_browser_mode": "auto",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+
+    def snapshot_handler(params: dict[str, Any]) -> dict[str, Any]:
+        result = {
+            "selected_text": "",
+            "clipboard_text": "",
+            "active_app": {"name": "Browser", "pid": 42, "bundle_id": "com.browser"},
+        }
+        if params.get("include_browser_url"):
+            result["browser_url"] = "https://example.test/page"
+            result["browser_hwnd"] = 777
+        return result
+
+    native = FakeWorker(
+        {
+            "native.context.snapshot": snapshot_handler,
+            "native.context.browser_content": lambda _params: {
+                "url": "https://example.test/page",
+                "content": "Browser text",
+            },
+        }
+    )
+    brain = FakeWorker(
+        handlers={"brain.context.active_document": lambda _params: {"text": "DOC TEXT"}},
+        stream_handlers={"brain.query": query_stream("ok")},
+    )
+    with caller_config(rows):
+        _flow, _native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "Use both"})
+
+    query = brain.last_call("brain.query")["params"]
+    assert query["context_priority"] == "Browser/Web"
+
+
+def test_context_priority_marks_document_when_browser_was_background_context():
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "auto",
+            "context_browser_mode": "auto",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+
+    def snapshot_handler(params: dict[str, Any]) -> dict[str, Any]:
+        result = {
+            "selected_text": "",
+            "clipboard_text": "",
+            "active_app": {"name": "Notes", "pid": 42, "bundle_id": "com.apple.Notes"},
+        }
+        if params.get("include_browser_url"):
+            result["browser_url"] = "https://example.test/page"
+            result["browser_hwnd"] = 777
+        return result
+
+    native = FakeWorker(
+        {
+            "native.context.snapshot": snapshot_handler,
+            "native.context.browser_content": lambda _params: {
+                "url": "https://example.test/page",
+                "content": "Browser text",
+            },
+        }
+    )
+    brain = FakeWorker(
+        handlers={"brain.context.active_document": lambda _params: {"text": "DOC TEXT"}},
+        stream_handlers={"brain.query": query_stream("ok")},
+    )
+    with caller_config(rows):
+        _flow, _native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "Use both"})
+
+    query = brain.last_call("brain.query")["params"]
+    assert query["context_priority"] == "Active document"
+
+
 def test_active_document_auto_fetches_before_query_and_summary():
     rows = [
         {
@@ -970,13 +1064,67 @@ def test_voice_flow_records_transcribes_and_queries():
     audio = FakeWorker({"audio.record.stop_transcribe": lambda _params: {"text": "voice prompt"}})
     brain = FakeWorker(stream_handlers={"brain.query": query_stream("voice reply")})
     with caller_config(rows):
-        _flow, native, _ui, brain, audio = make_flow(native=native, audio=audio, brain=brain)
+        _flow, native, ui, brain, audio = make_flow(native=native, audio=audio, brain=brain)
         native.emit("native.hotkey", {"kind": "voice_start"})
         native.emit("native.hotkey", {"kind": "voice_stop"})
 
     assert audio.calls_for("audio.record.start")
     assert audio.calls_for("audio.record.stop_transcribe")
+    assert ui.last_call("ui.reply.transcript")["params"]["text"] == "voice prompt"
     assert brain.last_call("brain.query")["params"]["intent_prompt"] == "voice prompt"
+
+
+def test_voice_start_starts_recording_before_context_capture():
+    audio = FakeWorker()
+    native = FakeWorker()
+
+    def snapshot(_params):
+        assert audio.calls_for("audio.record.start")
+        return context_handler(selected="")(_params)
+
+    native.handlers["native.context.snapshot"] = snapshot
+
+    _flow, native, ui, _brain, audio = make_flow(native=native, audio=audio)
+    native.emit("native.hotkey", {"kind": "voice_start"})
+
+    assert audio.calls_for("audio.record.start")
+    assert ui.calls_for("ui.reply.listening")
+    assert ui.calls_for("ui.overlay.state")[0]["params"]["state"] == "listening"
+
+
+def test_voice_start_key_repeat_is_ignored_until_release():
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="")})
+    audio = FakeWorker({"audio.record.stop_transcribe": lambda _params: {"text": ""}})
+    _flow, native, ui, _brain, audio = make_flow(native=native, audio=audio)
+
+    native.emit("native.hotkey", {"kind": "voice_start"})
+    native.emit("native.hotkey", {"kind": "voice_start"})
+    native.emit("native.hotkey", {"kind": "voice_start"})
+    native.emit("native.hotkey", {"kind": "voice_stop"})
+
+    assert len(audio.calls_for("audio.record.start")) == 1
+    assert len(ui.calls_for("ui.reply.listening")) == 1
+    assert len(audio.calls_for("audio.record.stop_transcribe")) == 1
+
+
+def test_voice_stop_leaves_recording_bubble_before_transcribing():
+    ui = FakeWorker()
+
+    def transcribe(_params):
+        assert ui.last_call("ui.overlay.state")["params"]["state"] == "thinking"
+        assert ui.calls_for("ui.reply.thinking")
+        return {"text": ""}
+
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="")})
+    audio = FakeWorker({"audio.record.stop_transcribe": transcribe})
+    _flow, native, ui, _brain, audio = make_flow(native=native, ui=ui, audio=audio)
+
+    native.emit("native.hotkey", {"kind": "voice_start"})
+    native.emit("native.hotkey", {"kind": "voice_stop"})
+
+    assert audio.calls_for("audio.record.stop_transcribe")
+    assert ui.calls_for("ui.reply.reset")
+    assert ui.last_call("ui.overlay.state")["params"]["state"] == "idle"
 
 
 def test_voice_flow_uses_voice_caller_config():
@@ -1347,6 +1495,9 @@ def test_settings_reload_refreshes_supervisor_brain_audio_and_hotkeys(monkeypatc
     assert reload_calls == ["supervisor"]
     assert brain.calls_for("brain.config.reload")
     assert audio.calls_for("audio.prewarm")
+    # The native worker must reload its own config before re-registering, else a
+    # changed hotkey only takes effect after an app restart.
+    assert native.calls_for("native.config.reload")
     assert native.calls_for("native.hotkeys.stop")
     assert native.calls_for("native.hotkeys.start")
 

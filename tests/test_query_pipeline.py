@@ -71,6 +71,28 @@ class BuildContextTests(unittest.TestCase):
         out = _build(selected="sel", active_document_text="ACTIVE")
         self.assertEqual(out.ambient_ctx, "sel\n\n---\n[Active document]\nACTIVE")
 
+    def test_priority_note_added_when_browser_and_document_context_exist(self):
+        out = _build(
+            ambient_text="[Browser/Web]\nWEB",
+            active_document_text="ACTIVE",
+            priority_context="Browser/Web",
+        )
+        self.assertEqual(
+            out.ambient_ctx,
+            "Context priority: Prioritize Browser/Web because it was the active "
+            "or last-used context when this request was captured. Use the other "
+            "context as supporting context unless the user asks otherwise.\n\n"
+            "---\n[Browser/Web]\nWEB\n\n"
+            "---\n[Active document]\nACTIVE",
+        )
+
+    def test_priority_note_omitted_for_single_context(self):
+        out = _build(
+            active_document_text="ACTIVE",
+            priority_context="Active document",
+        )
+        self.assertEqual(out.ambient_ctx, "[Active document]\nACTIVE")
+
     def test_active_document_kept_when_screenshot_present(self):
         # A screenshot shows pixels, not document text — enabling documents must
         # still inject them even on vision queries.

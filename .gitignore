@@ -24,6 +24,9 @@ docs/OS_TEST_CHECKLIST.md
 memory/
 !memory/.gitkeep
 
+# Persisted chat history + project definitions (personal user data)
+chats/
+
 # Python
 __pycache__/
 .pytest_cache/

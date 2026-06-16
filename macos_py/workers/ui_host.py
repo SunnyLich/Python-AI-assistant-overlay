@@ -1488,6 +1488,8 @@ class QtProtocolHost:
             return self._reply_schedule_words(**params)
         if method == "ui.reply.notice":
             return self._reply_notice(**params)
+        if method == "ui.reply.transcript":
+            return self._reply_transcript(**params)
         if method == "ui.reply.chunk":
             return self._reply_chunk(**params)
         if method == "ui.reply.done":
@@ -1729,6 +1731,10 @@ class QtProtocolHost:
     def _reply_notice(self, text: str = "", timeout_ms: int = 12000) -> dict[str, Any]:
         self._ensure_bubble().show_notice(text, timeout_ms=timeout_ms)
         return {"shown": True, "text": text}
+
+    def _reply_transcript(self, text: str = "") -> dict[str, Any]:
+        self._ensure_bubble().show_transcript(text)
+        return {"shown": bool((text or "").strip()), "text": text}
 
     def _reply_chunk(self, text: str = "", is_thought: bool = False) -> dict[str, Any]:
         bubble = self._ensure_bubble()
@@ -2477,8 +2483,10 @@ def main() -> int:
         app.setWindowIcon(QIcon(str(icon_path)))
     try:
         from ui.shared.theme import apply_app_theme
+        from ui.i18n import install as install_i18n
 
         apply_app_theme(app)
+        install_i18n(app)
     except Exception:
         traceback.print_exc()
 

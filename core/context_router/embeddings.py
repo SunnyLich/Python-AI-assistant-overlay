@@ -1,14 +1,10 @@
 """
 embeddings.py — pluggable semantic-similarity backend.
 
-The plan weights vector similarity at 0.40. The DEFAULT backend is
-sentence-transformers (real dense embeddings — the same family the main app's
-chromadb uses), which catches paraphrase, not just word overlap.
-
-A zero-dependency *lexical* fallback is also provided: IDF-weighted
-bag-of-words vectors compared with cosine. It's used automatically if
-sentence-transformers can't load, or forced with:
-    CONTEXT_ROUTER_EMBEDDER=lexical
+The plan weights similarity at 0.40. The DEFAULT backend is the zero-dependency
+*lexical* backend: IDF-weighted bag-of-words vectors compared with cosine.
+An optional sentence-transformers backend can be forced with:
+    CONTEXT_ROUTER_EMBEDDER=sentence-transformers
 The interface is identical, so the router doesn't care which backend is active.
 """
 
@@ -97,11 +93,11 @@ class SentenceTransformerEmbedder:
 def make_embedder(chunks: list[ContextChunk]):
     """Return the embedder selected by CONTEXT_ROUTER_EMBEDDER.
 
-    Default: sentence-transformers (real semantic matching). Falls back to the
-    lexical embedder if it can't load. Force the lexical backend with
-    CONTEXT_ROUTER_EMBEDDER=lexical.
+    Default: lexical matching with no external model dependency. Force the
+    optional sentence-transformers backend with
+    CONTEXT_ROUTER_EMBEDDER=sentence-transformers.
     """
-    choice = os.getenv("CONTEXT_ROUTER_EMBEDDER", "sentence-transformers").lower()
+    choice = os.getenv("CONTEXT_ROUTER_EMBEDDER", "lexical").lower()
     if choice in ("lexical", "bow", "tfidf"):
         return LexicalEmbedder(chunks)
     try:

@@ -3,6 +3,102 @@
   <context>
     <name>Wisp</name>
     <message>
+      <source>Advanced</source>
+      <translation>進階</translation>
+    </message>
+    <message>
+      <source>Search settings...</source>
+      <translation>搜尋設定...</translation>
+    </message>
+    <message>
+      <source>Presets...</source>
+      <translation>預設...</translation>
+    </message>
+    <message>
+      <source>Apply a starter configuration for common Wisp setups. Review changes before Apply.</source>
+      <translation>套用常見 Wisp 配置的起始設定。套用前請檢查變更。</translation>
+    </message>
+    <message>
+      <source>Fast</source>
+      <translation>快速</translation>
+    </message>
+    <message>
+      <source>Best quality</source>
+      <translation>最佳品質</translation>
+    </message>
+    <message>
+      <source>Private/local</source>
+      <translation>私密/本機</translation>
+    </message>
+    <message>
+      <source>Coding assistant</source>
+      <translation>程式助理</translation>
+    </message>
+    <message>
+      <source>Low cost</source>
+      <translation>低成本</translation>
+    </message>
+    <message>
+      <source>Smaller speech model, leaner context, and fast transcription.</source>
+      <translation>使用較小的語音模型、較精簡的上下文和快速轉寫。</translation>
+    </message>
+    <message>
+      <source>Larger speech model, richer memory/context, and more accurate transcription.</source>
+      <translation>使用較大的語音模型、更豐富的記憶/上下文和更準確的轉寫。</translation>
+    </message>
+    <message>
+      <source>Keep local documents and memory, but turn off web, GitHub, screenshots, and live tools.</source>
+      <translation>保留本機文件和記憶，但關閉網頁、GitHub、截圖和即時工具。</translation>
+    </message>
+    <message>
+      <source>Lean into docs, git, browser fetches, memory, and screenshots for coding work.</source>
+      <translation>為程式工作啟用文件、git、瀏覽器擷取、記憶和截圖。</translation>
+    </message>
+    <message>
+      <source>Tighter context budgets and cheaper/faster defaults.</source>
+      <translation>使用更嚴格的上下文預算和更便宜/更快的預設值。</translation>
+    </message>
+    <message>
+      <source>{preset} preset selected. Edits saved with Apply will update this preset.</source>
+      <translation>已選擇 {preset} 預設。使用「套用」儲存的編輯會更新此預設。</translation>
+    </message>
+    <message>
+      <source>Context limits</source>
+      <translation>上下文限制</translation>
+    </message>
+    <message>
+      <source>Auto document fetch chars</source>
+      <translation>自動文件擷取字元數</translation>
+    </message>
+    <message>
+      <source>Tool document fetch chars</source>
+      <translation>工具文件擷取字元數</translation>
+    </message>
+    <message>
+      <source>Tuning limits for how much external text Wisp can collect before asking the model.</source>
+      <translation>調整 Wisp 在詢問模型前可收集的外部文字量。</translation>
+    </message>
+    <message>
+      <source>legacy tool folder / script tool folder</source>
+      <translation>舊版工具資料夾 / 腳本工具資料夾</translation>
+    </message>
+    <message>
+      <source>Memory tuning</source>
+      <translation>記憶調校</translation>
+    </message>
+    <message>
+      <source>Consolidation interval (min)</source>
+      <translation>整理間隔（分鐘）</translation>
+    </message>
+    <message>
+      <source>STM token budget</source>
+      <translation>短期記憶 token 預算</translation>
+    </message>
+    <message>
+      <source>Speech and bubble timing</source>
+      <translation>語音和氣泡時間</translation>
+    </message>
+    <message>
       <source> Logs</source>
       <translation> 記錄</translation>
     </message>
@@ -45,6 +141,18 @@
     <message>
       <source>Ask anything</source>
       <translation>問任何問題</translation>
+    </message>
+    <message>
+      <source>Configured backend: {summary} — active backend appears after recording starts.</source>
+      <translation>已設定後端：{summary} — 開始錄音後會顯示作用中的後端。</translation>
+    </message>
+    <message>
+      <source>Active backend: {summary}</source>
+      <translation>作用中後端：{summary}</translation>
+    </message>
+    <message>
+      <source>Active backend: {summary} — GPU not in use. Free the GPU and restart to recover quality.</source>
+      <translation>作用中後端：{summary} — 未使用 GPU。釋放 GPU 後重新啟動以恢復品質。</translation>
     </message>
     <message>
       <source>Custom prompt</source>
@@ -1751,10 +1859,6 @@ Let model decide — expose an open-document tool during the answer.</source>
     <message>
       <source>Restore every agent card to its default position and size</source>
       <translation>將每個代理卡片還原到預設位置和大小</translation>
-    </message>
-    <message>
-      <source>Retrieval max distance:</source>
-      <translation>檢索最大距離：</translation>
     </message>
     <message>
       <source>Retrieval top-k:</source>

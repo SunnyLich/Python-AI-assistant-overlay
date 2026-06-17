@@ -41,8 +41,6 @@ a = Analysis(
         (str(ROOT / ".env.example"), "."),
     ] + LITEPARSE_DATAS,
     hiddenimports=[
-        "chromadb",
-        "sentence_transformers",
         "pynput.keyboard._xorg",
         "pynput.mouse._xorg",
         # SSL support — required for any https:// request from the bundle

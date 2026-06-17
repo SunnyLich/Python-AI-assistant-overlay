@@ -196,7 +196,7 @@ def _load_caller_rows() -> list[dict]:
 def _load_config() -> None:
     """Assign all .env-backed module-level config vars. Call after load_dotenv()."""
     global GROQ_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY
-    global CARTESIA_API_KEY, ELEVENLABS_API_KEY
+    global CARTESIA_API_KEY, ELEVENLABS_API_KEY, TTS_CUSTOM_API_KEY
     global CUSTOM_API_KEY, CUSTOM_BASE_URL
     global DEEPSEEK_API_KEY, OPENROUTER_API_KEY, MISTRAL_API_KEY
     global XAI_API_KEY, TOGETHER_API_KEY, CEREBRAS_API_KEY
@@ -204,6 +204,9 @@ def _load_config() -> None:
     global CHAT_LLM_PROVIDER, CHAT_LLM_MODEL, CHAT_LLM_FALLBACKS, TOOL_LLM_MODEL
     global VISION_LLM_PROVIDER, VISION_LLM_MODEL, VISION_LLM_FALLBACKS
     global TTS_PROVIDER, CARTESIA_VOICE_ID
+    global ELEVENLABS_VOICE_ID, ELEVENLABS_MODEL
+    global OPENAI_TTS_VOICE, OPENAI_TTS_MODEL
+    global TTS_CUSTOM_BASE_URL, TTS_CUSTOM_VOICE, TTS_CUSTOM_MODEL, TTS_CUSTOM_SAMPLE_RATE
     global THEME_MODE, DARK_MODE, ICON_AUTO_HIDE, CHAT_AUTO_ELABORATE, CHAT_ELABORATE_PROMPT
     global APP_LANGUAGE, ASSISTANT_LANGUAGE
     global THEME_DARK_BG, THEME_DARK_SURFACE, THEME_DARK_TEXT, THEME_DARK_ACCENT
@@ -221,7 +224,7 @@ def _load_config() -> None:
     global BUBBLE_REVEAL_WPM, BUBBLE_HOLD_REVEAL_WPM
     global TTS_PLAYBACK_RATE, TTS_HOLD_PLAYBACK_RATE
     global MEMORY_LLM_PROVIDER, MEMORY_LLM_MODEL, MEMORY_LLM_FALLBACKS, MEMORY_AUTO_CONSOLIDATE
-    global MEMORY_CONSOLIDATION_INTERVAL, MEMORY_TOP_K, MEMORY_RELEVANCE_MAX_DISTANCE, MEMORY_STM_TOKEN_BUDGET
+    global MEMORY_CONSOLIDATION_INTERVAL, MEMORY_TOP_K, MEMORY_STM_TOKEN_BUDGET
     global SETTINGS
     global SYSTEM_PROMPT_UTILITY
 
@@ -232,6 +235,7 @@ def _load_config() -> None:
     GOOGLE_API_KEY    = secret_store.get_secret("GOOGLE_API_KEY")
     CARTESIA_API_KEY  = secret_store.get_secret("CARTESIA_API_KEY")
     ELEVENLABS_API_KEY = secret_store.get_secret("ELEVENLABS_API_KEY")
+    TTS_CUSTOM_API_KEY = secret_store.get_secret("TTS_CUSTOM_API_KEY")
     CUSTOM_API_KEY    = secret_store.get_secret("CUSTOM_API_KEY")
     CUSTOM_BASE_URL   = os.getenv("CUSTOM_BASE_URL", "")
     DEEPSEEK_API_KEY  = secret_store.get_secret("DEEPSEEK_API_KEY")
@@ -264,8 +268,22 @@ def _load_config() -> None:
     VISION_LLM_FALLBACKS = os.getenv("VISION_LLM_FALLBACKS", "")
 
     # --- TTS ---
-    TTS_PROVIDER      = os.getenv("TTS_PROVIDER", "none")    # cartesia | elevenlabs | none
+    # cartesia | elevenlabs | openai | openai_compatible | none
+    TTS_PROVIDER      = os.getenv("TTS_PROVIDER", "none")
     CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "")
+    # ElevenLabs: voice id is optional (blank uses the account default voice).
+    ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
+    ELEVENLABS_MODEL    = os.getenv("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
+    # OpenAI TTS reuses OPENAI_API_KEY. Streams raw PCM (24 kHz, 16-bit mono).
+    OPENAI_TTS_VOICE  = os.getenv("OPENAI_TTS_VOICE", "alloy")
+    OPENAI_TTS_MODEL  = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+    # OpenAI-compatible endpoint (self-hosted Kokoro/LocalAI, Groq, etc.). Hits
+    # the /audio/speech route with response_format=pcm; sample rate varies by
+    # server so it is configurable.
+    TTS_CUSTOM_BASE_URL    = os.getenv("TTS_CUSTOM_BASE_URL", "")
+    TTS_CUSTOM_VOICE       = os.getenv("TTS_CUSTOM_VOICE", "")
+    TTS_CUSTOM_MODEL       = os.getenv("TTS_CUSTOM_MODEL", "")
+    TTS_CUSTOM_SAMPLE_RATE = env_int("TTS_CUSTOM_SAMPLE_RATE", 24000)
 
     # --- App behaviour ---
     THEME_MODE            = os.getenv("THEME_MODE", "system")  # "dark" | "light" | "system"
@@ -367,7 +385,6 @@ def _load_config() -> None:
     MEMORY_AUTO_CONSOLIDATE         = env_bool("MEMORY_AUTO_CONSOLIDATE", False)
     MEMORY_CONSOLIDATION_INTERVAL   = env_int("MEMORY_CONSOLIDATION_INTERVAL", 15)
     MEMORY_TOP_K                    = env_int("MEMORY_TOP_K", 3)
-    MEMORY_RELEVANCE_MAX_DISTANCE   = env_float("MEMORY_RELEVANCE_MAX_DISTANCE", 0.55)
     MEMORY_STM_TOKEN_BUDGET         = env_int("MEMORY_STM_TOKEN_BUDGET", 4000)
 
     # --- System prompt ---

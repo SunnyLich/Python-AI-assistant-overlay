@@ -136,7 +136,7 @@ def test_tts_voice_tab_does_not_import_stt_stack():
         tab = SettingsDialog._tab_tts(dialog)
 
         assert "core.stt" not in sys.modules
-        assert "Configured backend:" in dialog._stt_active_lbl.text()
+        assert "tiny · auto / int8" in dialog._stt_active_lbl.text()
     finally:
         if tab is not None:
             tab.deleteLater()
@@ -336,6 +336,31 @@ def test_i18n_translates_settings_apply_tool_warning(monkeypatch):
         assert translated != warning
         assert "ChatGPT" in translated
         assert "\u5de5\u5177" in translated
+    finally:
+        config.APP_LANGUAGE = old_language
+        i18n.set_language(app=app)
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_i18n_translates_stt_backend_status_messages(monkeypatch):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    import config
+    from ui import i18n
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    old_language = getattr(config, "APP_LANGUAGE", "")
+    source = "Configured backend: {summary} — active backend appears after recording starts."
+    try:
+        for language in ("zh", "zh-Hant", "es", "fr"):
+            config.APP_LANGUAGE = language
+            i18n.set_language(app=app)
+
+            translated = i18n.t(source)
+
+            assert translated != source
+            assert "{summary}" in translated
     finally:
         config.APP_LANGUAGE = old_language
         i18n.set_language(app=app)
@@ -1020,6 +1045,139 @@ def test_settings_has_reset_page_button():
             "Restablecer todo…",
             "Tout réinitialiser…",
         } & button_texts
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_settings_search_filters_to_matching_page():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLineEdit
+
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog()
+
+    try:
+        search = dialog.findChild(QLineEdit, "settingsSearch")
+        assert search is not None
+
+        search.setText("legacy tool folder")
+        app.processEvents()
+
+        tabs = dialog._tabs
+        visible_pages = {
+            dialog._tab_base_names[i]
+            for i in range(tabs.count())
+            if tabs.isTabVisible(i)
+        }
+        assert visible_pages == {"Advanced"}
+
+        search.clear()
+        app.processEvents()
+        assert all(tabs.isTabVisible(i) for i in range(tabs.count()))
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_settings_dirty_marker_enables_apply_after_change():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog()
+
+    try:
+        apply_btn = dialog.findChild(QPushButton, "settingsApplyButton")
+        assert apply_btn is not None
+        assert not apply_btn.isEnabled()
+
+        dialog._fields["CHAT_ELABORATE_PROMPT"].setText("Please add more detail.")
+        app.processEvents()
+
+        assert apply_btn.isEnabled()
+        app_index = dialog._tab_base_names.index("App")
+        assert dialog._tabs.tabText(app_index).endswith("*")
+        assert dialog._fields["CHAT_ELABORATE_PROMPT"].property("dirty") is True
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_settings_preset_marks_reviewable_changes_without_saving():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    from ui.settings_panel.dialog import SettingsDialog, _get
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog()
+
+    try:
+        apply_btn = dialog.findChild(QPushButton, "settingsApplyButton")
+        assert apply_btn is not None
+
+        dialog._apply_preset("Low cost")
+        app.processEvents()
+
+        assert apply_btn.isEnabled()
+        assert _get(dialog._fields["STT_MODEL"]) == "base"
+        assert _get(dialog._fields["CONTEXT_BROWSER_MAX_CHARS"]) == "3000"
+        assert dialog._active_preset_slug == "low_cost"
+        assert {"TTS / Voice", "Advanced", "Keybinds"} <= dialog._tab_dirty_names
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_settings_active_preset_persists_user_edits_as_preset_overrides():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from ui.settings_panel.dialog import SettingsDialog, _get
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog()
+
+    try:
+        dialog._apply_preset("Fast")
+        _set_value = "7"
+        dialog._fields["MEMORY_TOP_K"].setText(_set_value)
+        vals = {"MEMORY_TOP_K": _get(dialog._fields["MEMORY_TOP_K"])}
+
+        persisted = dialog._preset_values_to_persist(vals)
+
+        assert persisted["WISP_SETTINGS_PRESET"] == "fast"
+        assert persisted["WISP_PRESET_FAST_MEMORY_TOP_K"] == _set_value
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_settings_advanced_tab_keeps_only_tuning_controls():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLabel
+
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog()
+
+    try:
+        advanced_tab = dialog._tabs.widget(dialog._tab_base_names.index("Advanced"))
+
+        assert advanced_tab.isAncestorOf(dialog._fields["BUBBLE_REVEAL_WPM"])
+        assert advanced_tab.isAncestorOf(dialog._fields["MEMORY_STM_TOKEN_BUDGET"])
+        assert advanced_tab.isAncestorOf(dialog._fields["CONTEXT_BROWSER_MAX_CHARS"])
     finally:
         dialog.deleteLater()
         app.processEvents()

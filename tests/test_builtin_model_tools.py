@@ -1,6 +1,8 @@
 import unittest
+from unittest.mock import patch
 
 from core.llm_clients import client as llm
+from core.llm_clients import prompt_guidance
 
 
 class BuiltinModelToolsTests(unittest.TestCase):
@@ -52,6 +54,56 @@ class BuiltinModelToolsTests(unittest.TestCase):
 
         self.assertNotIn("memory_search", default_names)
         self.assertIn("memory_search", allowed_names)
+
+    def test_memory_search_note_only_when_tool_offered(self):
+        base = "You are a concise desktop assistant."
+
+        self.assertIn("memory_search tool", llm._with_memory_search_note(base, ["memory_search"]))
+        self.assertEqual(llm._with_memory_search_note(base, ["memory_save"]), base)
+        self.assertEqual(llm._with_memory_search_note(base, None), base)
+
+    def test_prompt_guidance_builds_query_notes_from_one_place(self):
+        system = prompt_guidance.apply_query_guidance(
+            "Base prompt",
+            tools_offered=True,
+            allowed_tools=["memory_search", "memory_save"],
+            allow_screenshot_tool=True,
+        )
+
+        self.assertIn("live tools available", system)
+        self.assertIn("capture_screen tool", system)
+        self.assertIn("memory_search tool", system)
+        self.assertIn("memory_save tool", system)
+
+    def test_frontloaded_memory_search_uses_query(self):
+        captured = {}
+
+        class FakeManager:
+            def retrieve_relevant(self, query):
+                captured["query"] = query
+                return "[Memory]\n- I prefer concise answers"
+
+        with patch("core.memory_store.store.get_manager", return_value=FakeManager()):
+            ambient = llm._inject_frontloaded_tool_context(
+                "Active app: Notes",
+                ["memory_search"],
+                query="what do you remember about my answer style?",
+            )
+
+        self.assertIn("Active app: Notes", ambient)
+        self.assertIn("[Memory]", ambient)
+        self.assertEqual(captured["query"], "what do you remember about my answer style?")
+
+    def test_frontloaded_memory_search_stays_opt_in(self):
+        with patch("core.memory_store.store.get_manager") as get_manager:
+            ambient = llm._inject_frontloaded_tool_context(
+                "Active app: Notes",
+                None,
+                query="what do you remember?",
+            )
+
+        self.assertEqual(ambient, "Active app: Notes")
+        get_manager.assert_not_called()
 
     def test_get_context_execution_respects_source_allowlist(self):
         self.assertIn(

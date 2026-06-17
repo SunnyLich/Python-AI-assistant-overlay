@@ -3,12 +3,18 @@ core/tts.py — Streaming TTS client.
 
 Supports:
   - Cartesia 3.x (~75ms TTFT) via WebSocket — pcm_f32le, 44100 Hz
-  - ElevenLabs (~300-500ms TTFT)
+  - ElevenLabs (~300-500ms TTFT) — pcm_22050, optional voice id + model
+  - OpenAI TTS — raw PCM, 24000 Hz int16 (reuses OPENAI_API_KEY)
+  - OpenAI-compatible endpoint — any server exposing /audio/speech with a
+    response_format=pcm option (self-hosted Kokoro/LocalAI, Groq, …); base URL,
+    key, voice, model and sample rate are all configurable.
 
 The Cartesia WebSocket connection is kept alive as a singleton so every call
 avoids the ~600ms handshake penalty. Call prewarm() at app startup.
 
 Yields raw PCM audio bytes as they stream in, ready for sounddevice playback.
+Each provider yields its own sample rate / dtype — use playback_format() to get
+the (sample_rate, channels, dtype) the player must open the output stream with.
 
 For Cartesia, also exposes stream_audio_from_chunks() which accepts an
 iterator of text pieces (e.g. LLM stream chunks) so TTS starts before the
@@ -31,6 +37,27 @@ DTYPE = "float32"     # pcm_f32le  (Cartesia / default)
 # ElevenLabs uses a different output format
 _EL_SAMPLE_RATE = 22050
 _EL_DTYPE = "int16"
+
+# OpenAI TTS streams raw PCM at 24 kHz, signed 16-bit, mono.
+_OPENAI_SAMPLE_RATE = 24000
+_OPENAI_DTYPE = "int16"
+
+
+def playback_format(provider: str | None = None) -> tuple[int, int, str]:
+    """Return (sample_rate, channels, dtype) the player must use for `provider`.
+
+    Each provider streams its own PCM format, so the output stream has to be
+    opened with matching parameters or playback is garbled / wrong-pitch.
+    """
+    provider = (provider or config.TTS_PROVIDER).lower().strip()
+    if provider == "elevenlabs":
+        return _EL_SAMPLE_RATE, CHANNELS, _EL_DTYPE
+    if provider == "openai":
+        return _OPENAI_SAMPLE_RATE, CHANNELS, _OPENAI_DTYPE
+    if provider == "openai_compatible":
+        rate = int(getattr(config, "TTS_CUSTOM_SAMPLE_RATE", 24000) or 24000)
+        return rate, CHANNELS, "int16"
+    return SAMPLE_RATE, CHANNELS, DTYPE  # cartesia / default
 
 # ------------------------------------------------------------------
 # Singleton Cartesia WebSocket connection
@@ -131,6 +158,17 @@ def stream_audio_from_chunks(text_chunks: Iterable[str],
     elif provider == "elevenlabs":
         # ElevenLabs doesn't support incremental push; collect then stream
         yield from _stream_elevenlabs("".join(text_chunks))
+    elif provider == "openai":
+        # HTTP synthesis: collect the text then stream the PCM response.
+        yield from _stream_openai("".join(text_chunks))
+    elif provider == "openai_compatible":
+        yield from _stream_openai(
+            "".join(text_chunks),
+            base_url=config.TTS_CUSTOM_BASE_URL,
+            api_key=config.TTS_CUSTOM_API_KEY,
+            model=config.TTS_CUSTOM_MODEL,
+            voice=config.TTS_CUSTOM_VOICE,
+        )
     elif provider == "none":
         # Drain the iterator so the caller's on_done fires only after LLM finishes.
         for _ in text_chunks:
@@ -196,14 +234,56 @@ def _stream_elevenlabs(text: str) -> Generator[bytes, None, None]:
     with ssl_init_lock():
         client = ElevenLabs(api_key=config.ELEVENLABS_API_KEY)
 
-    audio_stream = client.generate(
-        text=text,
-        stream=True,
-        output_format="pcm_22050",
-    )
+    # voice id is optional: blank falls back to the library's default voice.
+    kwargs = {
+        "text": text,
+        "stream": True,
+        "output_format": "pcm_22050",
+        "model": config.ELEVENLABS_MODEL or "eleven_turbo_v2_5",
+    }
+    if config.ELEVENLABS_VOICE_ID:
+        kwargs["voice"] = config.ELEVENLABS_VOICE_ID
+    audio_stream = client.generate(**kwargs)
     for chunk in audio_stream:
         if chunk:
             yield chunk
+
+
+# ------------------------------------------------------------------
+# OpenAI TTS  /  OpenAI-compatible endpoints
+# ------------------------------------------------------------------
+
+def _stream_openai(text: str, *, base_url: str | None = None,
+                   api_key: str | None = None, model: str | None = None,
+                   voice: str | None = None) -> Generator[bytes, None, None]:
+    """Stream raw PCM from OpenAI's (or a compatible server's) /audio/speech.
+
+    `base_url` selects a self-hosted / third-party endpoint; left None it hits
+    OpenAI directly with OPENAI_API_KEY. response_format=pcm returns signed
+    16-bit mono — 24 kHz from OpenAI, server-defined elsewhere (see
+    playback_format)."""
+    if not text.strip():
+        return
+    sdk_clients.install_proxy_guard()
+    from openai import OpenAI  # type: ignore
+
+    resolved_key = api_key or config.OPENAI_API_KEY
+    resolved_model = model or config.OPENAI_TTS_MODEL or "gpt-4o-mini-tts"
+    resolved_voice = voice or config.OPENAI_TTS_VOICE or "alloy"
+    with ssl_init_lock():
+        client = OpenAI(
+            api_key=resolved_key or "sk-none",  # compatible servers ignore the key
+            base_url=base_url or None,
+        )
+    with client.audio.speech.with_streaming_response.create(
+        model=resolved_model,
+        voice=resolved_voice,
+        input=text,
+        response_format="pcm",
+    ) as response:
+        for chunk in response.iter_bytes():
+            if chunk:
+                yield chunk
 
 
 def test_connection(
@@ -212,11 +292,21 @@ def test_connection(
     cartesia_api_key: str | None = None,
     cartesia_voice_id: str | None = None,
     elevenlabs_api_key: str | None = None,
+    openai_api_key: str | None = None,
+    openai_voice: str | None = None,
+    openai_model: str | None = None,
+    custom_base_url: str | None = None,
+    custom_api_key: str | None = None,
+    custom_voice: str | None = None,
+    custom_model: str | None = None,
 ) -> tuple[bool, str]:
     provider = (provider or config.TTS_PROVIDER).lower().strip()
     cartesia_api_key = config.CARTESIA_API_KEY if cartesia_api_key is None else cartesia_api_key
     cartesia_voice_id = config.CARTESIA_VOICE_ID if cartesia_voice_id is None else cartesia_voice_id
     elevenlabs_api_key = config.ELEVENLABS_API_KEY if elevenlabs_api_key is None else elevenlabs_api_key
+    openai_api_key = config.OPENAI_API_KEY if openai_api_key is None else openai_api_key
+    custom_base_url = config.TTS_CUSTOM_BASE_URL if custom_base_url is None else custom_base_url
+    custom_api_key = config.TTS_CUSTOM_API_KEY if custom_api_key is None else custom_api_key
     try:
         if provider == "none":
             return True, "TTS is disabled (provider=none)."
@@ -274,6 +364,27 @@ def test_connection(
                 if chunk:
                     return True, "TTS route OK: elevenlabs"
             raise RuntimeError("ElevenLabs connected but returned no audio.")
+        if provider in ("openai", "openai_compatible"):
+            if provider == "openai":
+                if not openai_api_key:
+                    raise ValueError("OPENAI_API_KEY is not configured.")
+                base_url = None
+                api_key = openai_api_key
+                model = openai_model
+                voice = openai_voice
+            else:
+                if not custom_base_url:
+                    raise ValueError("TTS_CUSTOM_BASE_URL is not configured.")
+                base_url = custom_base_url
+                api_key = custom_api_key
+                model = custom_model
+                voice = custom_voice
+            for chunk in _stream_openai(
+                "ok", base_url=base_url, api_key=api_key, model=model, voice=voice
+            ):
+                if chunk:
+                    return True, f"TTS route OK: {provider}"
+            raise RuntimeError(f"{provider} connected but returned no audio.")
         raise ValueError(f"Unknown TTS provider: {provider}")
     except Exception as exc:
         if provider == "cartesia" and cartesia_api_key is None:

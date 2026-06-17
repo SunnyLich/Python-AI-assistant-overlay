@@ -42,6 +42,13 @@ from core.llm_clients.messages import (
     build_openai_messages as _build_openai_messages,
     sanitize_history as _sanitize_history,
 )
+from core.llm_clients.prompt_guidance import (
+    REWRITE_SYSTEM_PROMPT as _REWRITE_SYSTEM_PROMPT,
+    with_memory_save_note as _with_memory_save_note,
+    with_memory_search_note as _with_memory_search_note,
+    with_screenshot_note as _with_screenshot_note,
+    with_tools_note as _with_tools_note,
+)
 from dataclasses import dataclass, field
 from typing import Generator
 
@@ -528,65 +535,6 @@ def _register_builtin_tools() -> None:
     )
 
 
-# Appended to the system prompt only when the screenshot tool is actually
-# offered, so the model knows it can see the screen instead of denying it.
-_SCREENSHOT_TOOL_NOTE = (
-    "You also have a capture_screen tool that takes a screenshot of the user's "
-    "screen. When answering needs you to visually see what is on screen — a "
-    "website, app UI, image, chart, or error — call capture_screen instead of "
-    "saying you cannot see the screen."
-)
-
-
-# Appended to the system prompt only when general tools are actually attached
-# to the request, so the model is never promised access it does not have.
-_TOOLS_NOTE = (
-    "You have live tools available for this query — use real tool calls when "
-    "they would improve the answer. Never print or simulate tool calls in the "
-    "reply text."
-)
-
-
-def _with_tools_note(system: str, tools_offered: bool) -> str:
-    if not tools_offered:
-        return system
-    return f"{system}\n\n{_TOOLS_NOTE}" if system else _TOOLS_NOTE
-
-
-def _with_screenshot_note(system: str, allow_screenshot_tool: bool) -> str:
-    """Append the screenshot capability note when that tool is exposed."""
-    if allow_screenshot_tool:
-        return f"{system}\n\n{_SCREENSHOT_TOOL_NOTE}"
-    return system
-
-
-_MEMORY_SAVE_NOTE = (
-    "You have a memory_save tool. ALWAYS call it when the user explicitly asks "
-    "you to remember, note, or save something (e.g. 'remember winter is "
-    "coming') — store exactly what they asked, even if it seems trivial. Also "
-    "call it proactively when the user shares a durable fact worth remembering "
-    "across sessions: a stable preference, a personal detail, or a fact about "
-    "their current project. Scope: by default (omit scope) the fact is filed "
-    "under the conversation's current project — keep that default for anything "
-    "specific to what you're working on. Only set scope='general' for universal "
-    "facts that should apply across every project, such as a personal "
-    "preference about how the user likes answers. Do not store one-off "
-    "questions, transient task requests, or secrets, and don't announce that "
-    "you saved something unless asked."
-)
-
-
-def _with_memory_save_note(system: str, allowed_tools: list[str] | None) -> str:
-    """Append memory-save guidance when the memory_save tool is offered.
-
-    Injected dynamically (not baked into the static system prompt) so the model
-    is only told it can save when the tool is actually exposed for this query.
-    """
-    if allowed_tools is not None and "memory_save" in set(allowed_tools):
-        return f"{system}\n\n{_MEMORY_SAVE_NOTE}" if system else _MEMORY_SAVE_NOTE
-    return system
-
-
 def _looks_like_screenshot_tool_request(text: str) -> bool:
     """Detect providers that ask for the screenshot tool as text, not tool_calls."""
     normalized = " ".join((text or "").lower().split())
@@ -984,7 +932,10 @@ def _tools_allow(allowed_tools: list[str] | None, *names: str) -> bool:
     return any(name in allowed for name in names)
 
 
-def _frontload_context_for_disabled_tools(allowed_tools: list[str] | None) -> str:
+def _frontload_context_for_disabled_tools(
+    allowed_tools: list[str] | None,
+    query: str = "",
+) -> str:
     parts: list[str] = []
     if _tools_allow(allowed_tools, "get_context", "get_context.documents"):
         try:
@@ -1010,6 +961,16 @@ def _frontload_context_for_disabled_tools(allowed_tools: list[str] | None) -> st
             diff = ""
         if diff:
             parts.append("[Git diff]\n" + diff)
+    if allowed_tools is not None and _tools_allow(allowed_tools, "memory_search"):
+        try:
+            from core.memory_store import store
+
+            memory = store.get_manager().retrieve_relevant(query or "") or ""
+        except Exception as exc:
+            print(f"[llm] failed to front-load memory context: {exc}", flush=True)
+            memory = ""
+        if memory:
+            parts.append(memory)
     return "\n\n".join(parts)
 
 
@@ -1020,10 +981,14 @@ def _append_ambient_context(ambient_context: str, extra: str) -> str:
     return f"{ambient_context}\n\n---\n{extra}".strip() if ambient_context else extra
 
 
-def _inject_frontloaded_tool_context(ambient_context: str, allowed_tools: list[str] | None) -> str:
+def _inject_frontloaded_tool_context(
+    ambient_context: str,
+    allowed_tools: list[str] | None,
+    query: str = "",
+) -> str:
     return _append_ambient_context(
         ambient_context,
-        _frontload_context_for_disabled_tools(allowed_tools),
+        _frontload_context_for_disabled_tools(allowed_tools, query=query),
     )
 
 
@@ -2886,7 +2851,14 @@ def _stream_single_response_route(
             allowed_tools=allowed_tools,
         )
     elif provider == "copilot":
-        yield from _stream_copilot(user_message, model, ambient_context, memory_context, use_tools)
+        yield from _stream_copilot(
+            user_message,
+            model,
+            ambient_context,
+            memory_context,
+            use_tools,
+            allowed_tools=allowed_tools,
+        )
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")
 
@@ -2903,7 +2875,11 @@ def _stream_copilot(
 
     if use_tools:
         _update_route_capabilities("copilot", model, supports_tools=False)
-        ambient_context = _inject_frontloaded_tool_context(ambient_context, allowed_tools)
+        ambient_context = _inject_frontloaded_tool_context(
+            ambient_context,
+            allowed_tools,
+            query=user_message,
+        )
     parts = []
     if memory_context:
         parts.append(memory_context)
@@ -2948,10 +2924,31 @@ def _stream_openai_compat(
         raise RuntimeError(f"{provider}/{model} does not support image input.")
     tools_requested = (use_tools or allow_screenshot_tool) and not image_base64 and not json_mode
     tools_allowed = macos_safety.openai_compat_tools_enabled() and cap.supports_tools is not False
+    nonstream_safe_mode = _use_macos_openai_compat_non_streaming(provider)
     if tools_requested and not tools_allowed:
         reason = "macOS safe mode" if not macos_safety.openai_compat_tools_enabled() else "route capability cache"
         print(f"[llm] OpenAI-compatible live tools disabled by {reason}", flush=True)
-        ambient_context = _inject_frontloaded_tool_context(ambient_context, allowed_tools)
+        ambient_context = _inject_frontloaded_tool_context(
+            ambient_context,
+            allowed_tools,
+            query=user_message,
+        )
+    if tools_requested and tools_allowed and nonstream_safe_mode:
+        print(
+            "[llm] OpenAI-compatible non-streaming safe mode cannot run live "
+            "tool loops; front-loading supported local context instead.",
+            flush=True,
+        )
+        _update_route_capabilities(provider, model, supports_tools=False)
+        ambient_context = _inject_frontloaded_tool_context(
+            ambient_context,
+            allowed_tools,
+            query=user_message,
+        )
+        tools_requested = False
+        tools_allowed = False
+        use_tools = False
+        allow_screenshot_tool = False
     messages = _build_openai_messages(user_message, image_base64, ambient_context, memory_context, history)
     expose_screenshot = tools_allowed and allow_screenshot_tool and not image_base64 and not json_mode
     if expose_screenshot and messages and messages[0].get("role") == "system":
@@ -2982,6 +2979,7 @@ def _stream_openai_compat(
         )
     if tools and messages and messages[0].get("role") == "system":
         messages[0]["content"] = _with_tools_note(messages[0]["content"], True)
+        messages[0]["content"] = _with_memory_search_note(messages[0]["content"], allowed_tools)
         messages[0]["content"] = _with_memory_save_note(messages[0]["content"], allowed_tools)
 
     kwargs: dict = {
@@ -3003,7 +3001,7 @@ def _stream_openai_compat(
     for unsupported in list(cap.unsupported_parameters):
         kwargs.pop(unsupported, None)
 
-    if _use_macos_openai_compat_non_streaming(provider):
+    if nonstream_safe_mode:
         # OpenAI-compatible streaming was the crash source in macOS logs for a
         # plain "hi" prompt. Keep the same UI path by yielding the final text as
         # one chunk, and keep live tool loops opt-in while this path is validated.
@@ -3026,7 +3024,11 @@ def _stream_openai_compat(
             image_base64,
             model,
             client,
-            _inject_frontloaded_tool_context(ambient_context, allowed_tools),
+            _inject_frontloaded_tool_context(
+                ambient_context,
+                allowed_tools,
+                query=user_message,
+            ),
             memory_context,
             use_tools=False,
             allowed_tools=allowed_tools,
@@ -3277,7 +3279,11 @@ def _stream_codex(
                 "provider for model-decided browser/web calls.",
                 flush=True,
             )
-        ambient_context = _inject_frontloaded_tool_context(ambient_context, allowed_tools)
+        ambient_context = _inject_frontloaded_tool_context(
+            ambient_context,
+            allowed_tools,
+            query=user_message,
+        )
     text = _build_codex_text(user_message, ambient_context, memory_context)
     yield from _response_stream_text(
         client,
@@ -3429,13 +3435,18 @@ def _stream_anthropic(
             f"front-loading supported context instead. allowed={allowed_tools or []}",
             flush=True,
         )
-        ambient_context = _inject_frontloaded_tool_context(ambient_context, allowed_tools)
+        ambient_context = _inject_frontloaded_tool_context(
+            ambient_context,
+            allowed_tools,
+            query=user_message,
+        )
         tools_active = False
         use_tools = False
         allow_screenshot_tool = False
 
     system = _with_screenshot_note(config.get_system_prompt(), allow_screenshot_tool)
     system = _with_tools_note(system, use_tools)
+    system = _with_memory_search_note(system, allowed_tools if use_tools else None)
     system = _with_memory_save_note(system, allowed_tools if use_tools else None)
     if memory_context:
         system += f"\n\n{memory_context}"
@@ -3504,7 +3515,11 @@ def _stream_anthropic(
             image_base64,
             model,
             client,
-            _inject_frontloaded_tool_context(ambient_context, allowed_tools),
+            _inject_frontloaded_tool_context(
+                ambient_context,
+                allowed_tools,
+                query=user_message,
+            ),
             memory_context,
             use_tools=False,
             allowed_tools=allowed_tools,
@@ -3544,7 +3559,11 @@ def _stream_anthropic(
                 image_base64,
                 model,
                 client,
-                _inject_frontloaded_tool_context(ambient_context, allowed_tools),
+                _inject_frontloaded_tool_context(
+                    ambient_context,
+                    allowed_tools,
+                    query=user_message,
+                ),
                 memory_context,
                 use_tools=False,
                 allowed_tools=allowed_tools,
@@ -3583,15 +3602,6 @@ def _stream_anthropic(
 # ------------------------------------------------------------------
 # Inline rewrite / fix  (Ctrl+Shift+Q)
 # ------------------------------------------------------------------
-
-_REWRITE_SYSTEM_PROMPT = (
-    "You are a text editor assistant. "
-    "Rewrite or fix the provided text. "
-    "Output ONLY the corrected/rewritten text -” no explanation, "
-    "no markdown, no commentary, no code fences. "
-    "Your entire response will be pasted directly as a replacement for the original text."
-)
-
 
 def stream_rewrite(selected_text: str, intent_prompt: str = "Rewrite or fix the following text") -> Generator[str, None, None]:
     """

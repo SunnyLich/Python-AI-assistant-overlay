@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QLineEdit, QTextEdit, QComboBox, QCheckBox,
     QPushButton, QTabWidget, QWidget, QFrame, QGroupBox, QMessageBox,
-    QScrollArea, QSizePolicy, QCompleter,
+    QScrollArea, QSizePolicy, QCompleter, QMenu,
 )
 from PySide6.QtCore import Qt, QTimer, QObject, Signal
 from PySide6.QtGui import QFont
@@ -109,6 +109,88 @@ _DICTATE_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Light LLM cleanup", "llm"),
 )
 
+_SETTINGS_PRESET_KEY = "WISP_SETTINGS_PRESET"
+_PRESET_ENV_PREFIX = "WISP_PRESET_"
+
+_PRESET_LABELS: dict[str, str] = {
+    "fast": "Fast",
+    "best_quality": "Best quality",
+    "private_local": "Private/local",
+    "coding_assistant": "Coding assistant",
+    "low_cost": "Low cost",
+}
+
+_PRESET_SLUGS: dict[str, str] = {
+    label.lower(): slug for slug, label in _PRESET_LABELS.items()
+}
+
+_PRESET_DESCRIPTIONS: dict[str, str] = {
+    "fast": "Smaller speech model, leaner context, and fast transcription.",
+    "best_quality": "Larger speech model, richer memory/context, and more accurate transcription.",
+    "private_local": "Keep local documents and memory, but turn off web, GitHub, screenshots, and live tools.",
+    "coding_assistant": "Lean into docs, git, browser fetches, memory, and screenshots for coding work.",
+    "low_cost": "Tighter context budgets and cheaper/faster defaults.",
+}
+
+_PRESET_DEFAULTS: dict[str, dict[str, str]] = {
+    "fast": {
+        "STT_MODEL": "base",
+        "STT_BEAM_SIZE": "1",
+        "MEMORY_TOP_K": "3",
+        "CONTEXT_BROWSER_MAX_CHARS": "4000",
+        "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS": "6000",
+        "CONTEXT_TOOL_DOCUMENT_MAX_CHARS": "6000",
+    },
+    "best_quality": {
+        "STT_MODEL": "large-v3",
+        "STT_BEAM_SIZE": "8",
+        "MEMORY_TOP_K": "8",
+        "CONTEXT_BROWSER_MAX_CHARS": "14000",
+        "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS": "18000",
+        "CONTEXT_TOOL_DOCUMENT_MAX_CHARS": "18000",
+    },
+    "private_local": {
+        "MEMORY_TOP_K": "5",
+    },
+    "coding_assistant": {
+        "MEMORY_TOP_K": "6",
+        "CONTEXT_BROWSER_MAX_CHARS": "10000",
+        "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS": "14000",
+        "CONTEXT_TOOL_DOCUMENT_MAX_CHARS": "14000",
+    },
+    "low_cost": {
+        "STT_MODEL": "base",
+        "STT_BEAM_SIZE": "1",
+        "MEMORY_TOP_K": "2",
+        "CONTEXT_BROWSER_MAX_CHARS": "3000",
+        "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS": "4000",
+        "CONTEXT_TOOL_DOCUMENT_MAX_CHARS": "4000",
+    },
+}
+
+_PRESET_CONTEXT_DEFAULTS: dict[str, dict[str, str]] = {
+    "fast": {
+        "documents": "auto", "browser": "off", "github": "off",
+        "memory": "auto", "screenshot": "off",
+    },
+    "best_quality": {
+        "documents": "auto", "browser": "model", "github": "model",
+        "memory": "auto", "screenshot": "auto",
+    },
+    "private_local": {
+        "documents": "auto", "browser": "off", "github": "off",
+        "memory": "auto", "screenshot": "off", "clear_tools": "true",
+    },
+    "coding_assistant": {
+        "documents": "auto", "browser": "model", "github": "auto",
+        "memory": "auto", "screenshot": "model",
+    },
+    "low_cost": {
+        "documents": "off", "browser": "off", "github": "off",
+        "memory": "auto", "screenshot": "off", "clear_tools": "true",
+    },
+}
+
 
 class _ModelFetchSignals(QObject):
     """Marshals a background model-list fetch result back to the Qt main thread.
@@ -165,6 +247,14 @@ class SettingsDialog(QDialog):
         self._warning_headers: dict[str, QLabel] = {}
         self._warning_header_base_texts: dict[str, str] = {}
         self._fallback_rows: dict = {}
+        self._loading_values = False
+        self._dirty_refresh_scheduled = False
+        self._dirty_baseline: dict[str, str] = {}
+        self._dirty_keys: set[str] = set()
+        self._tab_base_names: list[str] = []
+        self._tab_dirty_names: set[str] = set()
+        self._tab_search_text: dict[str, str] = {}
+        self._active_preset_slug = self._env.get(_SETTINGS_PRESET_KEY, "")
         self._pending_test_results: list[tuple[str, int, bool, str]] = []
         self._pending_test_results_lock = threading.Lock()
         self._pending_status_results: list[tuple[int, str, object, str]] = []
@@ -185,6 +275,8 @@ class SettingsDialog(QDialog):
         self._build_ui()
         self._load_values()
         localize_widget_tree(self)
+        self._refresh_tab_labels()
+        self._refresh_search_index()
         self._schedule_open_status_refresh()
         fit_window_to_screen(self, preferred_width=760, preferred_height=720)
 
@@ -232,6 +324,7 @@ class SettingsDialog(QDialog):
         for name, label in [
             ("CARTESIA_API_KEY",   "Cartesia"),
             ("ELEVENLABS_API_KEY", "ElevenLabs"),
+            ("TTS_CUSTOM_API_KEY", "Custom TTS endpoint"),
             ("CUSTOM_API_KEY",     "Custom provider"),
         ]:
             if name not in self._fields:
@@ -389,6 +482,9 @@ class SettingsDialog(QDialog):
             background: {c["surface"]}; border: 1px solid {c["border"]}; border-radius: 8px;
             color: {c["text"]};
         }}
+        QLineEdit[dirty="true"], QComboBox[dirty="true"], QTextEdit[dirty="true"] {{
+            border-color: {c["accent"]};
+        }}
         QScrollBar:vertical, QScrollBar:horizontal {{
             background: {c["bg"]}; border: none;
         }}
@@ -411,6 +507,27 @@ class SettingsDialog(QDialog):
         root = QVBoxLayout(self)
         root.setSpacing(12)
 
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
+        self._settings_search = QLineEdit()
+        self._settings_search.setObjectName("settingsSearch")
+        self._settings_search.setPlaceholderText(t("Search settings..."))
+        self._settings_search.setClearButtonEnabled(True)
+        self._settings_search.textChanged.connect(self._apply_settings_search)
+        top_row.addWidget(self._settings_search, 1)
+
+        preset_btn = QPushButton(t("Presets..."))
+        preset_btn.setObjectName("settingsPresetsButton")
+        preset_btn.setToolTip(t("Apply a starter configuration for common Wisp setups. Review changes before Apply."))
+        preset_btn.setMenu(self._build_presets_menu(preset_btn))
+        top_row.addWidget(preset_btn)
+        root.addLayout(top_row)
+
+        self._search_status_lbl = QLabel()
+        self._search_status_lbl.setStyleSheet("color: palette(placeholder-text); font-size: 9pt;")
+        self._search_status_lbl.hide()
+        root.addWidget(self._search_status_lbl)
+
         tabs = QTabWidget()
         tabs.setObjectName("settingsTabs")
         tabs.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -428,7 +545,9 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._tab_app(),       "App")
         tabs.addTab(self._tab_memory(), "Memory")
         tabs.addTab(self._tab_tools(),     "Tools")
+        tabs.addTab(self._tab_advanced(),  "Advanced")
         self._tabs = tabs
+        self._tab_base_names = [tabs.tabText(i) for i in range(tabs.count())]
         root.addWidget(tabs)
 
         # Buttons
@@ -454,14 +573,468 @@ class SettingsDialog(QDialog):
         btn_row.addStretch()
         apply_btn = QPushButton("Apply")
         confirm_btn = QPushButton("Confirm")
+        self._apply_btn = apply_btn
         apply_btn.setObjectName("settingsApplyButton")
         confirm_btn.setObjectName("settingsConfirmButton")
         confirm_btn.setDefault(True)
+        apply_btn.setEnabled(False)
         apply_btn.clicked.connect(self._apply)
         confirm_btn.clicked.connect(self._confirm)
         btn_row.addWidget(apply_btn)
         btn_row.addWidget(confirm_btn)
         root.addLayout(btn_row)
+
+    def _build_presets_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu(parent)
+        for slug, name in _PRESET_LABELS.items():
+            action = menu.addAction(t(name))
+            action.setToolTip(t(_PRESET_DESCRIPTIONS[slug]))
+            action.triggered.connect(lambda _checked=False, preset=slug: self._apply_preset(preset))
+        return menu
+
+    @staticmethod
+    def _preset_slug(raw: str) -> str:
+        value = str(raw or "").strip()
+        return value if value in _PRESET_LABELS else _PRESET_SLUGS.get(value.lower(), "")
+
+    @staticmethod
+    def _preset_override_key(slug: str, key: str) -> str:
+        safe_slug = slug.upper().replace("-", "_")
+        return f"{_PRESET_ENV_PREFIX}{safe_slug}_{key}"
+
+    @staticmethod
+    def _key_from_preset_override(slug: str, env_key: str) -> str:
+        prefix = SettingsDialog._preset_override_key(slug, "")
+        return env_key[len(prefix):] if env_key.startswith(prefix) else ""
+
+    def _preset_saved_values(self, slug: str) -> dict[str, str]:
+        values: dict[str, str] = {}
+        prefix = self._preset_override_key(slug, "")
+        for env_key, value in self._env.items():
+            if env_key.startswith(prefix):
+                key = env_key[len(prefix):]
+                if key:
+                    values[key] = value
+        return values
+
+    def _preset_effective_values(self, slug: str) -> dict[str, str]:
+        values = dict(_PRESET_DEFAULTS.get(slug, {}))
+        values.update(self._preset_saved_values(slug))
+        return values
+
+    def _preset_page_keys(self, slug: str, page: str, env: dict[str, str]) -> set[str]:
+        keys = set(self._reset_env_keys_for_page(page, env))
+        prefix = self._preset_override_key(slug, "")
+        for env_key in env:
+            if env_key.startswith(prefix):
+                key = env_key[len(prefix):]
+                if key and self._page_for_dirty_key(key) == page:
+                    keys.add(key)
+        return keys
+
+    def _preset_override_keys_for_keys(self, slug: str, keys: set[str], env: dict[str, str]) -> set[str]:
+        prefix = self._preset_override_key(slug, "")
+        remove = {self._preset_override_key(slug, key) for key in keys}
+        remove.update(env_key for env_key in env if env_key.startswith(prefix) and env_key[len(prefix):] in keys)
+        return remove
+
+    def _current_tab_name(self) -> str:
+        tabs = getattr(self, "_tabs", None)
+        if tabs is None:
+            return ""
+        idx = tabs.currentIndex()
+        if 0 <= idx < len(getattr(self, "_tab_base_names", [])):
+            return self._tab_base_names[idx]
+        return tabs.tabText(idx).replace("*", "").strip()
+
+    def _field_page_map(self) -> dict[str, str]:
+        mapping: dict[str, str] = {}
+        tabs = getattr(self, "_tabs", None)
+        if tabs is None:
+            return mapping
+        for key, widget in self._fields.items():
+            for idx, page in enumerate(self._tab_base_names):
+                tab_widget = tabs.widget(idx)
+                if tab_widget is widget or tab_widget.isAncestorOf(widget):
+                    mapping[key] = page
+                    break
+        return mapping
+
+    def _page_for_dirty_key(self, key: str) -> str:
+        if key.startswith("CALLER_") or key.startswith("VOICE_") or key in {
+            "HOTKEY_VOICE", "HOTKEY_DICTATE", "DICTATE_MODE",
+            "HOTKEY_ADD_CONTEXT", "HOTKEY_CLEAR_CONTEXT", "HOTKEY_SNIP",
+            "SNIP_CONTEXT_AMBIENT", "SNIP_CONTEXT_DOCUMENTS", "SNIP_CONTEXT_TOOLS",
+        }:
+            return "Keybinds"
+        if key.startswith("API_KEY_ROW"):
+            return "LLM"
+        if key.startswith("LLM_") or key.startswith("VISION_LLM_") or key.startswith("MEMORY_LLM_"):
+            return "LLM"
+        if key.startswith("THEME_") or key.startswith("BUBBLE_") or key.startswith("TTS_PLAYBACK"):
+            return self._field_page_map().get(key, "App")
+        return self._field_page_map().get(key, "")
+
+    def _snapshot_settings(self) -> dict[str, str]:
+        snapshot: dict[str, str] = {}
+
+        for key, widget in self._fields.items():
+            if key.endswith("_API_KEY"):
+                snapshot[key] = _get(widget).strip()
+            elif isinstance(widget, QCheckBox):
+                snapshot[key] = str(widget.isChecked())
+            elif isinstance(widget, (QLineEdit, QComboBox, QTextEdit)):
+                snapshot[key] = _get(widget)
+
+        for idx, row in enumerate(getattr(self, "_api_key_rows", []), 1):
+            snapshot[f"API_KEY_ROW_{idx}_PROVIDER"] = _get(row["provider"])
+            snapshot[f"API_KEY_ROW_{idx}_ALIAS"] = row["alias"].text()
+            snapshot[f"API_KEY_ROW_{idx}_KEY"] = row["key"].text()
+        snapshot["API_KEY_ROW_COUNT"] = str(len(getattr(self, "_api_key_rows", [])))
+
+        for section, rows in getattr(self, "_model_section_rows", {}).items():
+            snapshot[f"{section}_ROW_COUNT"] = str(len(rows))
+            for idx, row in enumerate(rows, 1):
+                snapshot[f"{section}_{idx}_PROVIDER"] = str(row["api_key_combo"].currentData() or "")
+                snapshot[f"{section}_{idx}_MODEL"] = self._model_value(row)
+
+        snapshot["CALLER_COUNT"] = str(len(getattr(self, "_caller_blocks", [])))
+        for idx, blk in enumerate(getattr(self, "_caller_blocks", []), 1):
+            prefix = f"CALLER_{idx}"
+            snapshot[f"{prefix}_HOTKEY"] = _get(blk["hotkey"])
+            snapshot[f"{prefix}_LABEL"] = _get(blk["label"])
+            snapshot[f"{prefix}_PASTE_BACK"] = str(blk["paste_back"].isChecked())
+            snapshot[f"{prefix}_CUSTOM_KEY"] = _get(blk["custom_key"])
+            snapshot[f"{prefix}_CUSTOM_LABEL"] = _get(blk["custom_label"])
+            snapshot[f"{prefix}_CONTEXT_AMBIENT"] = str(blk["context_ambient"].isChecked())
+            for name in (
+                "context_documents_mode", "context_browser_mode",
+                "context_github_mode", "context_memory_mode", "context_screenshot",
+            ):
+                snapshot[f"{prefix}_{name.upper()}"] = str(blk[name].currentData())
+            snapshot[f"{prefix}_TOOLS"] = format_tool_modes(blk.get("tool_overrides") or {})
+            snapshot[f"{prefix}_INTENT_COUNT"] = str(len(blk["intent_rows"]))
+            for row_idx, row in enumerate(blk["intent_rows"], 1):
+                row_prefix = f"{prefix}_INTENT_{row_idx}"
+                snapshot[f"{row_prefix}_KEY"] = _get(row["key"])
+                snapshot[f"{row_prefix}_LABEL"] = _get(row["label"])
+                snapshot[f"{row_prefix}_PROMPT"] = _get(row["prompt"])
+
+        if hasattr(self, "_voice_block"):
+            vb = self._voice_block
+            snapshot["VOICE_CONTEXT_AMBIENT"] = str(vb["context_ambient"].isChecked())
+            for name in (
+                "context_documents_mode", "context_browser_mode",
+                "context_github_mode", "context_memory_mode", "context_screenshot",
+            ):
+                snapshot[f"VOICE_{name.upper()}"] = str(vb[name].currentData())
+            snapshot["VOICE_TOOLS"] = format_tool_modes(vb.get("tool_overrides") or {})
+
+        return snapshot
+
+    def _reset_dirty_baseline(self) -> None:
+        self._dirty_baseline = self._snapshot_settings()
+        self._refresh_dirty_state()
+
+    def _schedule_dirty_refresh(self) -> None:
+        if getattr(self, "_loading_values", False) or getattr(self, "_disposing", False):
+            return
+        if not hasattr(self, "_dirty_baseline"):
+            return
+        if getattr(self, "_dirty_refresh_scheduled", False):
+            return
+        self._dirty_refresh_scheduled = True
+        QTimer.singleShot(0, self._refresh_dirty_state)
+
+    def _wire_change_tracking(self, root: QWidget | None = None) -> None:
+        root = root or self
+        widgets = [root]
+        widgets.extend(root.findChildren(QWidget))
+        for widget in widgets:
+            if widget.property("_wisp_dirty_connected"):
+                continue
+            if isinstance(widget, QLineEdit):
+                widget.textChanged.connect(lambda _text="", self=self: self._schedule_dirty_refresh())
+            elif isinstance(widget, QTextEdit):
+                widget.textChanged.connect(self._schedule_dirty_refresh)
+            elif isinstance(widget, QComboBox):
+                widget.currentIndexChanged.connect(lambda _idx=0, self=self: self._schedule_dirty_refresh())
+                widget.currentTextChanged.connect(lambda _text="", self=self: self._schedule_dirty_refresh())
+            elif isinstance(widget, QCheckBox):
+                widget.toggled.connect(lambda _checked=False, self=self: self._schedule_dirty_refresh())
+            widget.setProperty("_wisp_dirty_connected", True)
+
+    def _refresh_dirty_state(self) -> None:
+        self._dirty_refresh_scheduled = False
+        current = self._snapshot_settings()
+        baseline = getattr(self, "_dirty_baseline", {})
+        keys = {key for key, value in current.items() if baseline.get(key) != value}
+        keys.update(key for key in baseline if current.get(key) != baseline.get(key))
+        self._dirty_keys = keys
+
+        for key, widget in self._fields.items():
+            is_dirty = key in keys
+            if widget.property("dirty") != is_dirty:
+                widget.setProperty("dirty", is_dirty)
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+
+        dirty_pages = {
+            page for page in (self._page_for_dirty_key(key) for key in keys) if page
+        }
+        self._tab_dirty_names = dirty_pages
+        self._refresh_tab_labels()
+
+        apply_btn = getattr(self, "_apply_btn", None)
+        if apply_btn is not None:
+            apply_btn.setEnabled(bool(keys))
+
+        if keys:
+            visible_pages = [page for page in self._tab_base_names if page in dirty_pages]
+            self._status_lbl.setText(t("Unsaved changes") + ": " + ", ".join(visible_pages))
+        elif self._status_lbl.text().startswith(t("Unsaved changes")):
+            self._status_lbl.setText("")
+
+    def _refresh_tab_labels(self) -> None:
+        tabs = getattr(self, "_tabs", None)
+        if tabs is None:
+            return
+        for idx, base in enumerate(self._tab_base_names):
+            suffix = " *" if base in getattr(self, "_tab_dirty_names", set()) else ""
+            tabs.setTabText(idx, t(base) + suffix)
+
+    def _refresh_search_index(self) -> None:
+        tabs = getattr(self, "_tabs", None)
+        if tabs is None:
+            return
+
+        def _original_text(widget: QWidget, prop_name: str) -> str:
+            try:
+                return str(widget.property(f"_wisp_i18n_{prop_name}") or "")
+            except Exception:
+                return ""
+
+        field_pages = self._field_page_map()
+        per_page_fields: dict[str, list[str]] = {}
+        for key, page in field_pages.items():
+            per_page_fields.setdefault(page, []).append(key)
+        text_by_page: dict[str, str] = {}
+        for idx, page in enumerate(self._tab_base_names):
+            tab_widget = tabs.widget(idx)
+            parts = [page, *per_page_fields.get(page, [])]
+            for widget in tab_widget.findChildren(QWidget):
+                if isinstance(widget, QLabel):
+                    parts.extend([widget.text(), _original_text(widget, "text")])
+                elif isinstance(widget, QLineEdit):
+                    parts.extend([
+                        widget.placeholderText(), _original_text(widget, "placeholder"),
+                        widget.toolTip(), _original_text(widget, "tooltip"),
+                        widget.text(),
+                    ])
+                elif isinstance(widget, QTextEdit):
+                    parts.extend([
+                        widget.placeholderText(), _original_text(widget, "placeholder"),
+                        widget.toolTip(), _original_text(widget, "tooltip"),
+                    ])
+                elif isinstance(widget, QComboBox):
+                    parts.extend([widget.toolTip(), _original_text(widget, "tooltip")])
+                    parts.extend(widget.itemText(i) for i in range(widget.count()))
+                elif isinstance(widget, QCheckBox):
+                    parts.extend([
+                        widget.text(), _original_text(widget, "text"),
+                        widget.toolTip(), _original_text(widget, "tooltip"),
+                    ])
+                elif isinstance(widget, QPushButton):
+                    parts.extend([
+                        widget.text(), _original_text(widget, "text"),
+                        widget.toolTip(), _original_text(widget, "tooltip"),
+                    ])
+            text_by_page[page] = " ".join(part for part in parts if part).lower()
+        self._tab_search_text = text_by_page
+        self._apply_settings_search()
+
+    def _apply_settings_search(self) -> None:
+        tabs = getattr(self, "_tabs", None)
+        if tabs is None:
+            return
+        search = getattr(self, "_settings_search", None)
+        query = search.text().strip().lower() if search is not None else ""
+        visible: list[int] = []
+        for idx, page in enumerate(self._tab_base_names):
+            match = not query or query in self._tab_search_text.get(page, page.lower())
+            tabs.setTabVisible(idx, match)
+            if match:
+                visible.append(idx)
+        if query and visible and not tabs.isTabVisible(tabs.currentIndex()):
+            tabs.setCurrentIndex(visible[0])
+        if query:
+            count = len(visible)
+            self._search_status_lbl.setText(
+                t("No matching settings.") if count == 0 else t("{count} matching pages.").format(count=count)
+            )
+            self._search_status_lbl.show()
+        else:
+            self._search_status_lbl.hide()
+
+    def _set_value_for_env_key(self, key: str, value: str) -> bool:
+        if key in self._fields:
+            widget = self._fields[key]
+            if isinstance(widget, QCheckBox):
+                widget.setChecked(str(value).strip().lower() == "true")
+            elif isinstance(widget, (QLineEdit, QComboBox, QTextEdit)):
+                _set(widget, value)
+            return True
+
+        if key == "VOICE_CONTEXT_AMBIENT" and hasattr(self, "_voice_block"):
+            self._voice_block["context_ambient"].setChecked(str(value).strip().lower() == "true")
+            return True
+        voice_mode_keys = {
+            "VOICE_CONTEXT_DOCUMENTS_MODE": "context_documents_mode",
+            "VOICE_CONTEXT_BROWSER_MODE": "context_browser_mode",
+            "VOICE_CONTEXT_GITHUB_MODE": "context_github_mode",
+            "VOICE_CONTEXT_MEMORY_MODE": "context_memory_mode",
+            "VOICE_CONTEXT_SCREENSHOT": "context_screenshot",
+        }
+        if key in voice_mode_keys and hasattr(self, "_voice_block"):
+            _set(self._voice_block[voice_mode_keys[key]], value)
+            return True
+        if key == "VOICE_TOOLS" and hasattr(self, "_voice_block"):
+            self._voice_block["tool_overrides"] = parse_tool_modes(value)
+            return True
+
+        if not key.startswith("CALLER_"):
+            return False
+        parts = key.split("_", 2)
+        if len(parts) != 3 or not parts[1].isdigit():
+            return False
+        idx = int(parts[1]) - 1
+        if idx < 0 or idx >= len(getattr(self, "_caller_blocks", [])):
+            return False
+        blk = self._caller_blocks[idx]
+        caller_key = parts[2]
+        simple_widgets = {
+            "HOTKEY": "hotkey",
+            "LABEL": "label",
+            "CUSTOM_KEY": "custom_key",
+            "CUSTOM_LABEL": "custom_label",
+        }
+        if caller_key in simple_widgets:
+            _set(blk[simple_widgets[caller_key]], value)
+            return True
+        if caller_key == "PASTE_BACK":
+            blk["paste_back"].setChecked(str(value).strip().lower() == "true")
+            return True
+        if caller_key == "CONTEXT_AMBIENT":
+            blk["context_ambient"].setChecked(str(value).strip().lower() == "true")
+            return True
+        mode_keys = {
+            "CONTEXT_DOCUMENTS_MODE": "context_documents_mode",
+            "CONTEXT_BROWSER_MODE": "context_browser_mode",
+            "CONTEXT_GITHUB_MODE": "context_github_mode",
+            "CONTEXT_MEMORY_MODE": "context_memory_mode",
+            "CONTEXT_SCREENSHOT": "context_screenshot",
+        }
+        if caller_key in mode_keys:
+            _set(blk[mode_keys[caller_key]], value)
+            return True
+        if caller_key == "TOOLS":
+            blk["tool_overrides"] = parse_tool_modes(value)
+            return True
+        return False
+
+    def _apply_env_values_to_ui(self, values: dict[str, str]) -> None:
+        for section, provider_key, model_key, fallbacks_key in (
+            ("LLM", "LLM_PROVIDER", "LLM_MODEL", "LLM_FALLBACKS"),
+            ("VISION_LLM", "VISION_LLM_PROVIDER", "VISION_LLM_MODEL", "VISION_LLM_FALLBACKS"),
+            ("MEMORY_LLM", "MEMORY_LLM_PROVIDER", "MEMORY_LLM_MODEL", "MEMORY_LLM_FALLBACKS"),
+        ):
+            if not any(key in values for key in (provider_key, model_key, fallbacks_key)):
+                continue
+            rows = getattr(self, "_model_section_rows", {}).get(section, [])
+            current_provider = str(rows[0]["api_key_combo"].currentData() or "") if rows else ""
+            current_model = self._model_value(rows[0]) if rows else ""
+            for row in list(rows):
+                self._remove_model_section_row(section, row)
+            self._add_model_section_row(
+                section,
+                values.get(provider_key, current_provider),
+                values.get(model_key, current_model),
+            )
+            for provider, model in _parse_fallback_rows(values.get(fallbacks_key, "")):
+                self._add_model_section_row(section, provider, model)
+
+        for key, value in values.items():
+            if key in {
+                _SETTINGS_PRESET_KEY, "CALLER_COUNT",
+                "LLM_PROVIDER", "LLM_MODEL", "LLM_FALLBACKS",
+                "VISION_LLM_PROVIDER", "VISION_LLM_MODEL", "VISION_LLM_FALLBACKS",
+                "MEMORY_LLM_PROVIDER", "MEMORY_LLM_MODEL", "MEMORY_LLM_FALLBACKS",
+            }:
+                continue
+            self._set_value_for_env_key(key, value)
+
+    def _preset_values_to_persist(self, vals: dict[str, str]) -> dict[str, str]:
+        slug = self._preset_slug(getattr(self, "_active_preset_slug", ""))
+        if not slug:
+            return {}
+        preset_vals = {_SETTINGS_PRESET_KEY: slug}
+        for key, value in vals.items():
+            if key in secret_store.API_KEY_NAMES or key.endswith("_API_KEY"):
+                continue
+            preset_vals[self._preset_override_key(slug, key)] = str(value)
+        return preset_vals
+
+    def _set_context_modes(self, *, documents: str | None = None, browser: str | None = None,
+                           github: str | None = None, memory: str | None = None,
+                           screenshot: str | None = None, clear_tools: bool = False) -> None:
+        blocks = list(getattr(self, "_caller_blocks", []))
+        if hasattr(self, "_voice_block"):
+            blocks.append(self._voice_block)
+        for blk in blocks:
+            updates = {
+                "context_documents_mode": documents,
+                "context_browser_mode": browser,
+                "context_github_mode": github,
+                "context_memory_mode": memory,
+                "context_screenshot": screenshot,
+            }
+            for key, value in updates.items():
+                if value is not None:
+                    _set(blk[key], value)
+            if clear_tools:
+                blk["tool_overrides"] = {}
+
+    def _apply_preset(self, preset: str) -> None:
+        preset_key = self._preset_slug(preset)
+        if not preset_key:
+            return
+        self._active_preset_slug = preset_key
+        values = self._preset_effective_values(preset_key)
+        self._apply_env_values_to_ui(values)
+        self._rebuild_stt_languages()
+        saved_values = self._preset_saved_values(preset_key)
+        has_saved_context = any(
+            key.startswith("CALLER_") or key.startswith("VOICE_")
+            for key in saved_values
+        )
+        if not has_saved_context:
+            context_defaults = _PRESET_CONTEXT_DEFAULTS.get(preset_key, {})
+            self._set_context_modes(
+                documents=context_defaults.get("documents"),
+                browser=context_defaults.get("browser"),
+                github=context_defaults.get("github"),
+                memory=context_defaults.get("memory"),
+                screenshot=context_defaults.get("screenshot"),
+                clear_tools=context_defaults.get("clear_tools", "").lower() == "true",
+            )
+        self._refresh_stt_active_backend()
+        self._schedule_warning_marker_refresh()
+        self._schedule_dirty_refresh()
+        self._status_lbl.setText(
+            t("{preset} preset selected. Edits saved with Apply will update this preset.").format(
+                preset=t(_PRESET_LABELS[preset_key])
+            )
+        )
 
     def _tab_llm(self) -> QWidget:
         scroll = QScrollArea()
@@ -754,6 +1327,9 @@ class SettingsDialog(QDialog):
         self._api_key_rows_layout.addWidget(row_w)
         self._api_key_rows.append(row_info)
         self._refresh_model_api_key_combos()
+        self._wire_change_tracking(row_w)
+        self._refresh_search_index()
+        self._schedule_dirty_refresh()
         return row_info
 
     def _remove_api_key_row(self, row_info: dict) -> None:
@@ -761,6 +1337,8 @@ class SettingsDialog(QDialog):
             self._api_key_rows.remove(row_info)
         row_info["widget"].deleteLater()
         self._refresh_model_api_key_combos()
+        self._refresh_search_index()
+        self._schedule_dirty_refresh()
 
     def _get_api_key_display_options(self) -> "list[tuple[str, str]]":
         options: list[tuple[str, str]] = []
@@ -883,6 +1461,9 @@ class SettingsDialog(QDialog):
 
         self._model_section_layouts[section_key].addWidget(row_w)
         self._model_section_rows[section_key].append(row_info)
+        self._wire_change_tracking(row_w)
+        self._refresh_search_index()
+        self._schedule_dirty_refresh()
         return row_info
 
     def _fill_model_combo(
@@ -983,6 +1564,8 @@ class SettingsDialog(QDialog):
         if row_info in rows:
             rows.remove(row_info)
         row_info["widget"].deleteLater()
+        self._refresh_search_index()
+        self._schedule_dirty_refresh()
 
     def _apply_model_section_to_all(self, source_key: str) -> None:
         source_rows = self._model_section_rows[source_key]
@@ -1304,7 +1887,12 @@ class SettingsDialog(QDialog):
 
         # ── PROVIDER card ─────────────────────────────────────────────────
         provider_card, provider_cv = self._card("Provider")
-        self._fields["TTS_PROVIDER"] = self._combo(["cartesia", "elevenlabs", "none"])
+        self._fields["TTS_PROVIDER"] = self._combo(
+            ["cartesia", "elevenlabs", "openai", "openai_compatible", "none"]
+        )
+        self._fields["TTS_PROVIDER"].currentIndexChanged.connect(
+            lambda *_: self._update_tts_provider_fields()
+        )
         pf_w = QWidget()
         pf = _expanding_form_layout(pf_w)
         pf.setContentsMargins(0, 0, 0, 0)
@@ -1405,31 +1993,99 @@ class SettingsDialog(QDialog):
 
         outer.addWidget(stt_card)
 
-        # ── API KEYS card ─────────────────────────────────────────────────
-        keys_card, keys_cv = self._card("API Keys")
+        # ── PROVIDER SETTINGS card ────────────────────────────────────────
+        # Only the rows for the selected provider are shown (toggled by
+        # _update_tts_provider_fields), so each provider gets the space it needs
+        # for its key / voice / model without cluttering the others.
+        keys_card, keys_cv = self._card("Voice & API key")
         tts_key_note = QLabel(
             f"<small>{t('API keys are saved to the OS keychain. Leave blank to keep the stored key.')}</small>"
         )
         tts_key_note.setWordWrap(True)
         keys_cv.addWidget(tts_key_note)
 
+        # Fields shared/created up front so save + load can always reach them.
         self._fields["CARTESIA_API_KEY"] = self._password()
         self._fields["CARTESIA_API_KEY"].setPlaceholderText("Stored in OS keychain")
         self._fields["CARTESIA_VOICE_ID"] = QLineEdit()
         self._fields["CARTESIA_VOICE_ID"].setPlaceholderText("e.g. a0e99841-438c-4a64-b679-ae501e7d6091")
         self._fields["ELEVENLABS_API_KEY"] = self._password()
         self._fields["ELEVENLABS_API_KEY"].setPlaceholderText("Stored in OS keychain")
+        self._fields["ELEVENLABS_VOICE_ID"] = QLineEdit()
+        self._fields["ELEVENLABS_VOICE_ID"].setPlaceholderText("blank = account default voice")
+        self._fields["ELEVENLABS_MODEL"] = QLineEdit()
+        self._fields["ELEVENLABS_MODEL"].setPlaceholderText("e.g. eleven_turbo_v2_5")
+        self._fields["OPENAI_TTS_VOICE"] = QLineEdit()
+        self._fields["OPENAI_TTS_VOICE"].setPlaceholderText("alloy, echo, fable, onyx, nova, shimmer…")
+        self._fields["OPENAI_TTS_MODEL"] = QLineEdit()
+        self._fields["OPENAI_TTS_MODEL"].setPlaceholderText("e.g. gpt-4o-mini-tts or tts-1")
+        self._fields["TTS_CUSTOM_BASE_URL"] = QLineEdit()
+        self._fields["TTS_CUSTOM_BASE_URL"].setPlaceholderText("e.g. http://localhost:8880/v1")
+        self._fields["TTS_CUSTOM_API_KEY"] = self._password()
+        self._fields["TTS_CUSTOM_API_KEY"].setPlaceholderText("Stored in OS keychain (blank if not needed)")
+        self._fields["TTS_CUSTOM_VOICE"] = QLineEdit()
+        self._fields["TTS_CUSTOM_VOICE"].setPlaceholderText("server-specific voice name")
+        self._fields["TTS_CUSTOM_MODEL"] = QLineEdit()
+        self._fields["TTS_CUSTOM_MODEL"].setPlaceholderText("server-specific model name")
+        self._fields["TTS_CUSTOM_SAMPLE_RATE"] = QLineEdit()
+        self._fields["TTS_CUSTOM_SAMPLE_RATE"].setPlaceholderText("e.g. 24000")
 
-        kf_w = QWidget()
-        kf = _expanding_form_layout(kf_w)
-        kf.setContentsMargins(0, 0, 0, 0)
-        kf.setSpacing(8)
-        kf.addRow(_link_label("Cartesia API key", "https://play.cartesia.ai/keys"), self._fields["CARTESIA_API_KEY"])
-        kf.addRow(t("Cartesia Voice ID"), self._fields["CARTESIA_VOICE_ID"])
-        kf.addRow(_sep(), _sep())
-        kf.addRow(_link_label("ElevenLabs API key", "https://elevenlabs.io/app/settings/api-keys"), self._fields["ELEVENLABS_API_KEY"])
-        keys_cv.addWidget(kf_w)
+        # Cartesia group
+        cartesia_w = QWidget()
+        cf = _expanding_form_layout(cartesia_w)
+        cf.setContentsMargins(0, 0, 0, 0)
+        cf.setSpacing(8)
+        cf.addRow(_link_label("Cartesia API key", "https://play.cartesia.ai/keys"), self._fields["CARTESIA_API_KEY"])
+        cf.addRow(t("Cartesia Voice ID"), self._fields["CARTESIA_VOICE_ID"])
+
+        # ElevenLabs group
+        eleven_w = QWidget()
+        ef = _expanding_form_layout(eleven_w)
+        ef.setContentsMargins(0, 0, 0, 0)
+        ef.setSpacing(8)
+        ef.addRow(_link_label("ElevenLabs API key", "https://elevenlabs.io/app/settings/api-keys"), self._fields["ELEVENLABS_API_KEY"])
+        ef.addRow(t("ElevenLabs Voice ID"), self._fields["ELEVENLABS_VOICE_ID"])
+        ef.addRow(t("ElevenLabs Model"), self._fields["ELEVENLABS_MODEL"])
+
+        # OpenAI group (reuses the OpenAI key from the Models tab)
+        openai_w = QWidget()
+        of = _expanding_form_layout(openai_w)
+        of.setContentsMargins(0, 0, 0, 0)
+        of.setSpacing(8)
+        openai_note = QLabel(
+            f"<small>{t('Uses your OpenAI API key from the Models tab.')}</small>"
+        )
+        openai_note.setWordWrap(True)
+        of.addRow(openai_note)
+        of.addRow(t("OpenAI Voice"), self._fields["OPENAI_TTS_VOICE"])
+        of.addRow(t("OpenAI Model"), self._fields["OPENAI_TTS_MODEL"])
+
+        # OpenAI-compatible (custom endpoint) group
+        custom_w = QWidget()
+        cuf = _expanding_form_layout(custom_w)
+        cuf.setContentsMargins(0, 0, 0, 0)
+        cuf.setSpacing(8)
+        custom_note = QLabel(
+            f"<small>{t('Any server with an OpenAI-style /audio/speech endpoint that can return PCM (self-hosted Kokoro/LocalAI, Groq, …).')}</small>"
+        )
+        custom_note.setWordWrap(True)
+        cuf.addRow(custom_note)
+        cuf.addRow(t("Base URL"), self._fields["TTS_CUSTOM_BASE_URL"])
+        cuf.addRow(t("API key"), self._fields["TTS_CUSTOM_API_KEY"])
+        cuf.addRow(t("Voice"), self._fields["TTS_CUSTOM_VOICE"])
+        cuf.addRow(t("Model"), self._fields["TTS_CUSTOM_MODEL"])
+        cuf.addRow(t("Output sample rate (Hz)"), self._fields["TTS_CUSTOM_SAMPLE_RATE"])
+
+        for gw in (cartesia_w, eleven_w, openai_w, custom_w):
+            keys_cv.addWidget(gw)
+        self._tts_provider_groups = {
+            "cartesia": cartesia_w,
+            "elevenlabs": eleven_w,
+            "openai": openai_w,
+            "openai_compatible": custom_w,
+        }
         outer.addWidget(keys_card)
+        self._tts_provider_card = keys_card
 
         # ── TEST card ─────────────────────────────────────────────────────
         test_card, test_cv = self._card("Test")
@@ -1439,9 +2095,23 @@ class SettingsDialog(QDialog):
         test_cv.addWidget(self._tts_test_status_lbl)
         outer.addWidget(test_card)
 
+        self._update_tts_provider_fields()
         outer.addStretch()
         scroll.setWidget(w)
         return scroll
+
+    def _update_tts_provider_fields(self) -> None:
+        """Show only the selected TTS provider's settings rows."""
+        groups = getattr(self, "_tts_provider_groups", None)
+        if not groups:
+            return
+        provider = _get(self._fields["TTS_PROVIDER"]).strip().lower()
+        for name, widget in groups.items():
+            widget.setVisible(name == provider)
+        # The whole card is pointless when TTS is off.
+        card = getattr(self, "_tts_provider_card", None)
+        if card is not None:
+            card.setVisible(provider != "none")
 
     def _tab_prompt(self) -> QWidget:
         scroll = QScrollArea()
@@ -1481,20 +2151,6 @@ class SettingsDialog(QDialog):
 
         # ── CALLER HOTKEYS card ───────────────────────────────────────────
         caller_card, caller_cv = self._card("Caller Hotkeys")
-
-        limits_fw = QWidget()
-        limits_layout = _expanding_form_layout(limits_fw)
-        limits_layout.setContentsMargins(0, 0, 0, 0)
-        limits_layout.setSpacing(6)
-        self._fields["CONTEXT_BROWSER_MAX_CHARS"] = QLineEdit()
-        self._fields["CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS"] = QLineEdit()
-        self._fields["CONTEXT_TOOL_DOCUMENT_MAX_CHARS"] = QLineEdit()
-        self._fields["TOOL_PLUGIN_DIR"] = QLineEdit()
-        limits_layout.addRow("Browser fetch chars", self._fields["CONTEXT_BROWSER_MAX_CHARS"])
-        limits_layout.addRow("Auto document chars", self._fields["CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS"])
-        limits_layout.addRow("Tool document chars", self._fields["CONTEXT_TOOL_DOCUMENT_MAX_CHARS"])
-        limits_layout.addRow("Legacy tool folder", self._fields["TOOL_PLUGIN_DIR"])
-        caller_cv.addWidget(limits_fw)
 
         self._callers_container = QWidget()
         self._callers_vlayout = QVBoxLayout(self._callers_container)
@@ -1756,6 +2412,7 @@ class SettingsDialog(QDialog):
         if dlg.exec():
             blk["tool_overrides"] = dlg.selected_overrides()
             self._schedule_warning_marker_refresh()
+            self._schedule_dirty_refresh()
 
     def _add_caller_block(
         self,
@@ -1888,7 +2545,10 @@ class SettingsDialog(QDialog):
 
         self._callers_vlayout.addWidget(frame)
         self._caller_blocks.append(blk)
+        self._wire_change_tracking(frame)
+        self._refresh_search_index()
         self._schedule_warning_marker_refresh()
+        self._schedule_dirty_refresh()
 
     def _add_caller_intent_row(
         self,
@@ -1929,6 +2589,9 @@ class SettingsDialog(QDialog):
 
         blk["intents_layout"].addWidget(row_w)
         blk["intent_rows"].append(row_info)
+        self._wire_change_tracking(row_w)
+        self._refresh_search_index()
+        self._schedule_dirty_refresh()
 
     def _add_caller_custom_prompt_row(
         self,
@@ -1968,11 +2631,15 @@ class SettingsDialog(QDialog):
         if row_info in blk["intent_rows"]:
             blk["intent_rows"].remove(row_info)
         row_info["widget"].deleteLater()
+        self._refresh_search_index()
+        self._schedule_dirty_refresh()
 
     def _delete_caller_block(self, blk: dict) -> None:
         if blk in self._caller_blocks:
             self._caller_blocks.remove(blk)
         blk["widget"].deleteLater()
+        self._refresh_search_index()
+        self._schedule_dirty_refresh()
 
     def _tab_memory(self) -> QWidget:
         """Memory tab: LTM configuration only."""
@@ -1999,25 +2666,10 @@ class SettingsDialog(QDialog):
         self._fields["MEMORY_AUTO_CONSOLIDATE"] = mem_auto
         f.addRow("", mem_auto)
 
-        mem_interval = QLineEdit(self._env.get("MEMORY_CONSOLIDATION_INTERVAL", "15"))
-        mem_interval.setPlaceholderText("minutes between consolidations")
-        self._fields["MEMORY_CONSOLIDATION_INTERVAL"] = mem_interval
-        f.addRow("Consolidation interval (min):", mem_interval)
-
         mem_topk = QLineEdit(self._env.get("MEMORY_TOP_K", "3"))
         mem_topk.setPlaceholderText("number of facts to retrieve per query")
         self._fields["MEMORY_TOP_K"] = mem_topk
         f.addRow("Retrieval top-k:", mem_topk)
-
-        mem_distance = QLineEdit(self._env.get("MEMORY_RELEVANCE_MAX_DISTANCE", "0.55"))
-        mem_distance.setPlaceholderText("lower is stricter; 0.55 is conservative")
-        self._fields["MEMORY_RELEVANCE_MAX_DISTANCE"] = mem_distance
-        f.addRow("Retrieval max distance:", mem_distance)
-
-        mem_budget = QLineEdit(self._env.get("MEMORY_STM_TOKEN_BUDGET", "4000"))
-        mem_budget.setPlaceholderText("tokens before STM compression kicks in")
-        self._fields["MEMORY_STM_TOKEN_BUDGET"] = mem_budget
-        f.addRow("STM token budget:", mem_budget)
 
         cfg_cv.addWidget(fw)
         root.addWidget(cfg_card)
@@ -2168,19 +2820,6 @@ class SettingsDialog(QDialog):
         _bubble_color_row      = self._color_field("BUBBLE_COLOR",          "e.g. #1c1c24dc")
         _bubble_text_color_row = self._color_field("BUBBLE_TEXT_COLOR",     "e.g. #e6e6e6")
         _read_word_color_row   = self._color_field("BUBBLE_READ_WORD_COLOR", "e.g. #4da3ff")
-        self._fields["BUBBLE_REVEAL_WPM"] = QLineEdit()
-        self._fields["BUBBLE_REVEAL_WPM"].setPlaceholderText("e.g. 170")
-        self._fields["BUBBLE_HOLD_REVEAL_WPM"] = QLineEdit()
-        self._fields["BUBBLE_HOLD_REVEAL_WPM"].setPlaceholderText("e.g. 480")
-        self._fields["BUBBLE_HIDE_DELAY_S"] = QLineEdit()
-        self._fields["BUBBLE_HIDE_DELAY_S"].setPlaceholderText("e.g. 3.5")
-        self._fields["BUBBLE_HIDE_DELAY_S"].setToolTip(
-            "How long the text bubble stays on screen after the last word, in seconds."
-        )
-        self._fields["TTS_PLAYBACK_RATE"] = QLineEdit()
-        self._fields["TTS_PLAYBACK_RATE"].setPlaceholderText("e.g. 1.0")
-        self._fields["TTS_HOLD_PLAYBACK_RATE"] = QLineEdit()
-        self._fields["TTS_HOLD_PLAYBACK_RATE"].setPlaceholderText("e.g. 1.35")
 
         for _key in ("THEME_BG", "THEME_SURFACE", "THEME_TEXT", "THEME_ACCENT"):
             self._fields[_key].setToolTip(
@@ -2209,13 +2848,87 @@ class SettingsDialog(QDialog):
         f.addRow("Text bubble color", _bubble_color_row)
         f.addRow("Text bubble text color", _bubble_text_color_row)
         f.addRow("Read word color", _read_word_color_row)
-        f.addRow("Text bubble speed (WPM)", self._fields["BUBBLE_REVEAL_WPM"])
-        f.addRow("Text bubble hold speed (WPM)", self._fields["BUBBLE_HOLD_REVEAL_WPM"])
-        f.addRow("Text bubble display time (s)", self._fields["BUBBLE_HIDE_DELAY_S"])
-        f.addRow("TTS speed", self._fields["TTS_PLAYBACK_RATE"])
-        f.addRow("TTS hold speed", self._fields["TTS_HOLD_PLAYBACK_RATE"])
         cv.addWidget(fw)
         outer.addWidget(card)
+        outer.addStretch()
+        scroll.setWidget(outer_w)
+        return scroll
+
+    def _tab_advanced(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        outer_w = QWidget()
+        outer = QVBoxLayout(outer_w)
+        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setSpacing(12)
+
+        context_card, context_cv = self._card("Context limits")
+        context_note = QLabel(
+            t("Tuning limits for how much external text Wisp can collect before asking the model.")
+        )
+        context_note.setWordWrap(True)
+        context_cv.addWidget(context_note)
+        context_fw = QWidget()
+        context_f = _expanding_form_layout(context_fw)
+        context_f.setSpacing(8)
+        context_f.setContentsMargins(0, 0, 0, 0)
+        self._fields["CONTEXT_BROWSER_MAX_CHARS"] = QLineEdit()
+        self._fields["CONTEXT_BROWSER_MAX_CHARS"].setPlaceholderText("e.g. 8000")
+        self._fields["CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS"] = QLineEdit()
+        self._fields["CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS"].setPlaceholderText("e.g. 12000")
+        self._fields["CONTEXT_TOOL_DOCUMENT_MAX_CHARS"] = QLineEdit()
+        self._fields["CONTEXT_TOOL_DOCUMENT_MAX_CHARS"].setPlaceholderText("e.g. 12000")
+        self._fields["TOOL_PLUGIN_DIR"] = QLineEdit()
+        self._fields["TOOL_PLUGIN_DIR"].setPlaceholderText("legacy tool folder / script tool folder")
+        context_f.addRow("Browser fetch chars", self._fields["CONTEXT_BROWSER_MAX_CHARS"])
+        context_f.addRow("Auto document fetch chars", self._fields["CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS"])
+        context_f.addRow("Tool document fetch chars", self._fields["CONTEXT_TOOL_DOCUMENT_MAX_CHARS"])
+        context_f.addRow("Legacy tool folder", self._fields["TOOL_PLUGIN_DIR"])
+        context_cv.addWidget(context_fw)
+        outer.addWidget(context_card)
+
+        memory_card, memory_cv = self._card("Memory tuning")
+        memory_fw = QWidget()
+        memory_f = _expanding_form_layout(memory_fw)
+        memory_f.setSpacing(8)
+        memory_f.setContentsMargins(0, 0, 0, 0)
+        self._fields["MEMORY_CONSOLIDATION_INTERVAL"] = QLineEdit()
+        self._fields["MEMORY_CONSOLIDATION_INTERVAL"].setPlaceholderText("minutes between consolidations")
+        self._fields["MEMORY_STM_TOKEN_BUDGET"] = QLineEdit()
+        self._fields["MEMORY_STM_TOKEN_BUDGET"].setPlaceholderText("tokens before STM compression kicks in")
+        memory_f.addRow("Consolidation interval (min)", self._fields["MEMORY_CONSOLIDATION_INTERVAL"])
+        memory_f.addRow("STM token budget", self._fields["MEMORY_STM_TOKEN_BUDGET"])
+        memory_cv.addWidget(memory_fw)
+        outer.addWidget(memory_card)
+
+        timing_card, timing_cv = self._card("Speech and bubble timing")
+        timing_fw = QWidget()
+        timing_f = _expanding_form_layout(timing_fw)
+        timing_f.setSpacing(8)
+        timing_f.setContentsMargins(0, 0, 0, 0)
+        self._fields["BUBBLE_REVEAL_WPM"] = QLineEdit()
+        self._fields["BUBBLE_REVEAL_WPM"].setPlaceholderText("e.g. 170")
+        self._fields["BUBBLE_HOLD_REVEAL_WPM"] = QLineEdit()
+        self._fields["BUBBLE_HOLD_REVEAL_WPM"].setPlaceholderText("e.g. 480")
+        self._fields["BUBBLE_HIDE_DELAY_S"] = QLineEdit()
+        self._fields["BUBBLE_HIDE_DELAY_S"].setPlaceholderText("e.g. 3.5")
+        self._fields["BUBBLE_HIDE_DELAY_S"].setToolTip(
+            "How long the text bubble stays on screen after the last word, in seconds."
+        )
+        self._fields["TTS_PLAYBACK_RATE"] = QLineEdit()
+        self._fields["TTS_PLAYBACK_RATE"].setPlaceholderText("e.g. 1.0")
+        self._fields["TTS_HOLD_PLAYBACK_RATE"] = QLineEdit()
+        self._fields["TTS_HOLD_PLAYBACK_RATE"].setPlaceholderText("e.g. 1.35")
+        timing_f.addRow("Text bubble speed (WPM)", self._fields["BUBBLE_REVEAL_WPM"])
+        timing_f.addRow("Text bubble hold speed (WPM)", self._fields["BUBBLE_HOLD_REVEAL_WPM"])
+        timing_f.addRow("Text bubble display time (s)", self._fields["BUBBLE_HIDE_DELAY_S"])
+        timing_f.addRow("TTS speed", self._fields["TTS_PLAYBACK_RATE"])
+        timing_f.addRow("TTS hold speed", self._fields["TTS_HOLD_PLAYBACK_RATE"])
+        timing_cv.addWidget(timing_fw)
+        outer.addWidget(timing_card)
+
         outer.addStretch()
         scroll.setWidget(outer_w)
         return scroll
@@ -2640,6 +3353,9 @@ class SettingsDialog(QDialog):
         form.insertRow(insert_at + 1, model_label, model_row)
         self._fallback_rows[key].append(row_info)
         self._renumber_fallback_rows(key)
+        self._wire_change_tracking(model_row)
+        self._refresh_search_index()
+        self._schedule_dirty_refresh()
 
     def _remove_fallback_row(self, key: str, row_info: dict) -> None:
         if row_info in self._fallback_rows[key]:
@@ -2648,6 +3364,8 @@ class SettingsDialog(QDialog):
         form.removeRow(row_info["provider_label"])
         form.removeRow(row_info["model_label"])
         self._renumber_fallback_rows(key)
+        self._refresh_search_index()
+        self._schedule_dirty_refresh()
 
     def _renumber_fallback_rows(self, key: str) -> None:
         prefix = self._fallback_rows[f"{key}__prefix"]  # type: ignore[index]
@@ -2679,6 +3397,8 @@ class SettingsDialog(QDialog):
 
     def _load_values(self):
         import config as cfg
+        self._loading_values = True
+        self._active_preset_slug = self._env.get(_SETTINGS_PRESET_KEY, "")
 
         # ── API key rows ──────────────────────────────────────────────────
         for row in list(self._api_key_rows):
@@ -2722,6 +3442,7 @@ class SettingsDialog(QDialog):
         for name, label in [
             ("CARTESIA_API_KEY",   "Cartesia"),
             ("ELEVENLABS_API_KEY", "ElevenLabs"),
+            ("TTS_CUSTOM_API_KEY", "Custom TTS endpoint"),
             ("CUSTOM_API_KEY",     "Custom provider"),
         ]:
             if name not in self._fields:
@@ -2732,6 +3453,15 @@ class SettingsDialog(QDialog):
 
         _set(self._fields["TTS_PROVIDER"], self._env.get("TTS_PROVIDER", cfg.TTS_PROVIDER))
         _set(self._fields["CARTESIA_VOICE_ID"], self._env.get("CARTESIA_VOICE_ID", ""))
+        _set(self._fields["ELEVENLABS_VOICE_ID"], self._env.get("ELEVENLABS_VOICE_ID", cfg.ELEVENLABS_VOICE_ID))
+        _set(self._fields["ELEVENLABS_MODEL"], self._env.get("ELEVENLABS_MODEL", cfg.ELEVENLABS_MODEL))
+        _set(self._fields["OPENAI_TTS_VOICE"], self._env.get("OPENAI_TTS_VOICE", cfg.OPENAI_TTS_VOICE))
+        _set(self._fields["OPENAI_TTS_MODEL"], self._env.get("OPENAI_TTS_MODEL", cfg.OPENAI_TTS_MODEL))
+        _set(self._fields["TTS_CUSTOM_BASE_URL"], self._env.get("TTS_CUSTOM_BASE_URL", cfg.TTS_CUSTOM_BASE_URL))
+        _set(self._fields["TTS_CUSTOM_VOICE"], self._env.get("TTS_CUSTOM_VOICE", cfg.TTS_CUSTOM_VOICE))
+        _set(self._fields["TTS_CUSTOM_MODEL"], self._env.get("TTS_CUSTOM_MODEL", cfg.TTS_CUSTOM_MODEL))
+        _set(self._fields["TTS_CUSTOM_SAMPLE_RATE"], self._env.get("TTS_CUSTOM_SAMPLE_RATE", str(cfg.TTS_CUSTOM_SAMPLE_RATE)))
+        self._update_tts_provider_fields()
         _set(self._fields["STT_MODEL"], self._env.get("STT_MODEL", cfg.STT_MODEL))
         self._rebuild_stt_languages()  # drop yue if the loaded model isn't large-v3
         _set(self._fields["STT_COMPUTE_TYPE"], self._env.get("STT_COMPUTE_TYPE", cfg.STT_COMPUTE_TYPE))
@@ -2757,7 +3487,6 @@ class SettingsDialog(QDialog):
         )  # type: ignore
         _set(self._fields["MEMORY_CONSOLIDATION_INTERVAL"], self._env.get("MEMORY_CONSOLIDATION_INTERVAL", str(cfg.MEMORY_CONSOLIDATION_INTERVAL)))
         _set(self._fields["MEMORY_TOP_K"],           self._env.get("MEMORY_TOP_K",           str(cfg.MEMORY_TOP_K)))
-        _set(self._fields["MEMORY_RELEVANCE_MAX_DISTANCE"], self._env.get("MEMORY_RELEVANCE_MAX_DISTANCE", str(cfg.MEMORY_RELEVANCE_MAX_DISTANCE)))
         _set(self._fields["MEMORY_STM_TOKEN_BUDGET"], self._env.get("MEMORY_STM_TOKEN_BUDGET", str(cfg.MEMORY_STM_TOKEN_BUDGET)))
 
         # Build caller blocks from CALLER_ROWS + any env overrides
@@ -2924,6 +3653,10 @@ class SettingsDialog(QDialog):
         util_val = self._env.get("SYSTEM_PROMPT_UTILITY", cfg.SYSTEM_PROMPT_UTILITY)
         self._fields["SYSTEM_PROMPT_UTILITY"].setPlainText(util_val)  # type: ignore
         self._refresh_capability_warning_markers()
+        self._loading_values = False
+        self._wire_change_tracking(self)
+        self._refresh_search_index()
+        self._reset_dirty_baseline()
 
     def _effective_secret_value(self, name: str) -> str:
         typed = _get(self._fields[name]).strip()
@@ -3195,6 +3928,14 @@ class SettingsDialog(QDialog):
         cartesia_api_key = self._effective_secret_value("CARTESIA_API_KEY")
         cartesia_voice_id = _get(self._fields["CARTESIA_VOICE_ID"]).strip()
         elevenlabs_api_key = self._effective_secret_value("ELEVENLABS_API_KEY")
+        # OpenAI TTS reuses the OpenAI key managed in the Models tab's key table.
+        openai_api_key = self._effective_secret_value_from_provider("openai")
+        openai_voice = _get(self._fields["OPENAI_TTS_VOICE"]).strip()
+        openai_model = _get(self._fields["OPENAI_TTS_MODEL"]).strip()
+        custom_base_url = _get(self._fields["TTS_CUSTOM_BASE_URL"]).strip()
+        custom_api_key = self._effective_secret_value("TTS_CUSTOM_API_KEY")
+        custom_voice = _get(self._fields["TTS_CUSTOM_VOICE"]).strip()
+        custom_model = _get(self._fields["TTS_CUSTOM_MODEL"]).strip()
         self._start_async_test(
             "tts_test",
             self._tts_test_status_lbl,
@@ -3203,6 +3944,13 @@ class SettingsDialog(QDialog):
                 cartesia_api_key=cartesia_api_key,
                 cartesia_voice_id=cartesia_voice_id,
                 elevenlabs_api_key=elevenlabs_api_key,
+                openai_api_key=openai_api_key,
+                openai_voice=openai_voice,
+                openai_model=openai_model,
+                custom_base_url=custom_base_url,
+                custom_api_key=custom_api_key,
+                custom_voice=custom_voice,
+                custom_model=custom_model,
             ),
         )
 
@@ -3419,7 +4167,10 @@ class SettingsDialog(QDialog):
             if self._on_apply:
                 self._on_apply()
             self._env = _read_env()
+            self._active_preset_slug = self._env.get(_SETTINGS_PRESET_KEY, "")
             self._refresh_capability_warning_markers()
+            self._refresh_search_index()
+            self._reset_dirty_baseline()
             return True
         return False
 
@@ -3446,6 +4197,9 @@ class SettingsDialog(QDialog):
             },
             "TTS / Voice": {
                 "TTS_PROVIDER", "CARTESIA_VOICE_ID",
+                "ELEVENLABS_VOICE_ID", "ELEVENLABS_MODEL",
+                "OPENAI_TTS_VOICE", "OPENAI_TTS_MODEL",
+                "TTS_CUSTOM_BASE_URL", "TTS_CUSTOM_VOICE", "TTS_CUSTOM_MODEL", "TTS_CUSTOM_SAMPLE_RATE",
                 "STT_MODEL", "STT_COMPUTE_TYPE", "STT_LANGUAGE", "STT_BEAM_SIZE", "STT_DEVICE",
             },
             "Prompts": {
@@ -3455,8 +4209,6 @@ class SettingsDialog(QDialog):
                 "HOTKEY_ADD_CONTEXT", "HOTKEY_CLEAR_CONTEXT", "HOTKEY_SNIP", "HOTKEY_VOICE",
                 "HOTKEY_DICTATE", "DICTATE_MODE",
                 "SNIP_CONTEXT_AMBIENT", "SNIP_CONTEXT_DOCUMENTS", "SNIP_CONTEXT_TOOLS",
-                "CONTEXT_BROWSER_MAX_CHARS", "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS",
-                "CONTEXT_TOOL_DOCUMENT_MAX_CHARS", "TOOL_PLUGIN_DIR", "TOOL_GIT_ROOT",
                 "CALLER_COUNT",
             },
             "App": {
@@ -3466,13 +4218,17 @@ class SettingsDialog(QDialog):
                 "CHAT_AUTO_ELABORATE", "CHAT_ELABORATE_PROMPT", "APP_LANGUAGE", "ASSISTANT_LANGUAGE",
                 "ICON_SIZE", "DOLL_SIZE", "ICON_BACKSTOP_MS", "DOLL_ICON_BACKSTOP_MS",
                 "BUBBLE_WIDTH", "BUBBLE_LINES", "BUBBLE_COLOR", "BUBBLE_TEXT_COLOR",
-                "BUBBLE_READ_WORD_COLOR", "BUBBLE_HIDE_DELAY_MS",
-                "BUBBLE_REVEAL_WPM", "BUBBLE_HOLD_REVEAL_WPM",
-                "TTS_PLAYBACK_RATE", "TTS_HOLD_PLAYBACK_RATE",
+                "BUBBLE_READ_WORD_COLOR",
             },
             "Memory": {
-                "MEMORY_AUTO_CONSOLIDATE", "MEMORY_CONSOLIDATION_INTERVAL",
-                "MEMORY_TOP_K", "MEMORY_RELEVANCE_MAX_DISTANCE", "MEMORY_STM_TOKEN_BUDGET",
+                "MEMORY_AUTO_CONSOLIDATE", "MEMORY_TOP_K",
+            },
+            "Advanced": {
+                "CONTEXT_BROWSER_MAX_CHARS", "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS",
+                "CONTEXT_TOOL_DOCUMENT_MAX_CHARS", "TOOL_PLUGIN_DIR", "TOOL_GIT_ROOT",
+                "MEMORY_CONSOLIDATION_INTERVAL", "MEMORY_STM_TOKEN_BUDGET", "BUBBLE_HIDE_DELAY_MS",
+                "BUBBLE_REVEAL_WPM", "BUBBLE_HOLD_REVEAL_WPM",
+                "TTS_PLAYBACK_RATE", "TTS_HOLD_PLAYBACK_RATE",
             },
         }
         keys = set(exact.get(page, set()))
@@ -3498,8 +4254,11 @@ class SettingsDialog(QDialog):
         except Exception as exc:  # noqa: BLE001 - reset already happened on disk
             _settings_log.error("Live reload after page reset failed: %s", exc)
         self._env = _read_env()
+        self._active_preset_slug = self._env.get(_SETTINGS_PRESET_KEY, "")
         self._load_values()
         localize_widget_tree(self)
+        self._refresh_tab_labels()
+        self._refresh_search_index()
         if page_name == "TTS / Voice":
             self._reset_stt_model_in_background()
         if self._on_apply:
@@ -3521,7 +4280,7 @@ class SettingsDialog(QDialog):
         tabs = getattr(self, "_tabs", None)
         if tabs is None:
             return
-        page = tabs.tabText(tabs.currentIndex()).strip()
+        page = self._current_tab_name()
         confirm = QMessageBox(self)
         confirm.setIcon(QMessageBox.Icon.Warning)
         confirm.setWindowTitle("Reset page?")
@@ -3543,10 +4302,53 @@ class SettingsDialog(QDialog):
                 self._reset_tools_page()
             else:
                 current_env = _read_env()
-                remove_keys = self._reset_env_keys_for_page(page, current_env)
+                active_preset = self._preset_slug(getattr(self, "_active_preset_slug", ""))
+                if active_preset:
+                    page_keys = self._preset_page_keys(active_preset, page, current_env)
+                    remove_keys = set(page_keys)
+                    remove_keys.update(
+                        self._preset_override_keys_for_keys(active_preset, page_keys, current_env)
+                    )
+                    preset_values = {
+                        key: value
+                        for key, value in _PRESET_DEFAULTS.get(active_preset, {}).items()
+                        if key in page_keys
+                    }
+                    if page == "Keybinds":
+                        ctx = _PRESET_CONTEXT_DEFAULTS.get(active_preset, {})
+                        caller_count = int(current_env.get("CALLER_COUNT", "0") or "0")
+                        for idx in range(1, caller_count + 1):
+                            if "documents" in ctx:
+                                preset_values[f"CALLER_{idx}_CONTEXT_DOCUMENTS_MODE"] = ctx["documents"]
+                            if "browser" in ctx:
+                                preset_values[f"CALLER_{idx}_CONTEXT_BROWSER_MODE"] = ctx["browser"]
+                            if "github" in ctx:
+                                preset_values[f"CALLER_{idx}_CONTEXT_GITHUB_MODE"] = ctx["github"]
+                            if "memory" in ctx:
+                                preset_values[f"CALLER_{idx}_CONTEXT_MEMORY_MODE"] = ctx["memory"]
+                            if "screenshot" in ctx:
+                                preset_values[f"CALLER_{idx}_CONTEXT_SCREENSHOT"] = ctx["screenshot"]
+                            if ctx.get("clear_tools", "").lower() == "true":
+                                preset_values[f"CALLER_{idx}_TOOLS"] = ""
+                        if "documents" in ctx:
+                            preset_values["VOICE_CONTEXT_DOCUMENTS_MODE"] = ctx["documents"]
+                        if "browser" in ctx:
+                            preset_values["VOICE_CONTEXT_BROWSER_MODE"] = ctx["browser"]
+                        if "github" in ctx:
+                            preset_values["VOICE_CONTEXT_GITHUB_MODE"] = ctx["github"]
+                        if "memory" in ctx:
+                            preset_values["VOICE_CONTEXT_MEMORY_MODE"] = ctx["memory"]
+                        if "screenshot" in ctx:
+                            preset_values["VOICE_CONTEXT_SCREENSHOT"] = ctx["screenshot"]
+                        if ctx.get("clear_tools", "").lower() == "true":
+                            preset_values["VOICE_TOOLS"] = ""
+                    preset_values[_SETTINGS_PRESET_KEY] = active_preset
+                else:
+                    remove_keys = self._reset_env_keys_for_page(page, current_env)
+                    preset_values = {}
                 for key in remove_keys:
                     os.environ.pop(key, None)
-                _write_env({}, remove_keys=remove_keys)
+                _write_env(preset_values, remove_keys=remove_keys - set(preset_values))
             self._reload_after_page_reset(page)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Reset page failed", str(exc))
@@ -3644,8 +4446,11 @@ class SettingsDialog(QDialog):
         except Exception as exc:  # noqa: BLE001 — reset already happened on disk
             _settings_log.error("Live reload after reset failed: %s", exc)
         self._env = _read_env()
+        self._active_preset_slug = ""
         self._load_values()
         localize_widget_tree(self)
+        self._refresh_tab_labels()
+        self._refresh_search_index()
         for refresh in (
             getattr(self, "_refresh_chatgpt_status", None),
             getattr(self, "_refresh_github_status", None),
@@ -3723,6 +4528,14 @@ class SettingsDialog(QDialog):
             "MEMORY_LLM_FALLBACKS": mem_f,
             "TTS_PROVIDER":      _get(self._fields["TTS_PROVIDER"]),
             "CARTESIA_VOICE_ID": _get(self._fields["CARTESIA_VOICE_ID"]),
+            "ELEVENLABS_VOICE_ID": _get(self._fields["ELEVENLABS_VOICE_ID"]),
+            "ELEVENLABS_MODEL":  _get(self._fields["ELEVENLABS_MODEL"]),
+            "OPENAI_TTS_VOICE":  _get(self._fields["OPENAI_TTS_VOICE"]),
+            "OPENAI_TTS_MODEL":  _get(self._fields["OPENAI_TTS_MODEL"]),
+            "TTS_CUSTOM_BASE_URL": _get(self._fields["TTS_CUSTOM_BASE_URL"]),
+            "TTS_CUSTOM_VOICE":  _get(self._fields["TTS_CUSTOM_VOICE"]),
+            "TTS_CUSTOM_MODEL":  _get(self._fields["TTS_CUSTOM_MODEL"]),
+            "TTS_CUSTOM_SAMPLE_RATE": _get(self._fields["TTS_CUSTOM_SAMPLE_RATE"]),
             "STT_MODEL":         _get(self._fields["STT_MODEL"]),
             "STT_COMPUTE_TYPE":  _get(self._fields["STT_COMPUTE_TYPE"]),
             "STT_LANGUAGE":      _get(self._fields["STT_LANGUAGE"]),
@@ -3744,7 +4557,6 @@ class SettingsDialog(QDialog):
             "MEMORY_AUTO_CONSOLIDATE":   str(self._fields["MEMORY_AUTO_CONSOLIDATE"].isChecked()),  # type: ignore
             "MEMORY_CONSOLIDATION_INTERVAL": _get(self._fields["MEMORY_CONSOLIDATION_INTERVAL"]),
             "MEMORY_TOP_K":             _get(self._fields["MEMORY_TOP_K"]),
-            "MEMORY_RELEVANCE_MAX_DISTANCE": _get(self._fields["MEMORY_RELEVANCE_MAX_DISTANCE"]),
             "MEMORY_STM_TOKEN_BUDGET":  _get(self._fields["MEMORY_STM_TOKEN_BUDGET"]),
             "CALLER_COUNT":  str(len(self._caller_blocks)),
             "THEME_MODE":       self._fields["THEME_MODE"].currentData(),  # type: ignore[attr-defined]
@@ -3823,6 +4635,7 @@ class SettingsDialog(QDialog):
                 vals[f"CALLER_{n}_INTENT_{m}_PROMPT"] = _get(row["prompt"])
         # The Chat model is combined with the Main LLM, so purge any stale
         # CHAT_LLM_* keys a previous version may have written.
+        vals.update(self._preset_values_to_persist(vals))
         _write_env(
             vals,
             remove_keys=set(secret_store.API_KEY_NAMES)
@@ -3985,6 +4798,8 @@ _PROVIDER_LABELS: dict[str, str] = {
     "custom":     "Custom (OpenAI-compatible)",
     "cartesia":   "Cartesia",
     "elevenlabs": "ElevenLabs",
+    "openai":     "OpenAI",
+    "openai_compatible": "OpenAI-compatible (custom)",
     "none":       "None",
 }
 

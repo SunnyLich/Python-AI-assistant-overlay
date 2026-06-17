@@ -147,6 +147,19 @@ def _current_tts_rate() -> float:
     )
 
 
+# Length of the silence flushed after the last speech chunk so the trailing
+# audio isn't clipped when the output stream is stopped. ~250ms is inaudible as
+# a pause but comfortably longer than a typical device output buffer.
+_TTS_TAIL_SILENCE_MS = 250
+
+
+def _silence_tail(dtype: str, channels: int, sample_rate: int) -> bytes:
+    """Return PCM silence of _TTS_TAIL_SILENCE_MS for the given output format."""
+    frames = max(1, int(sample_rate * _TTS_TAIL_SILENCE_MS / 1000))
+    np_dtype = np.float32 if dtype == "float32" else np.int16
+    return np.zeros(frames * channels, dtype=np_dtype).tobytes()
+
+
 def _speed_adjust_pcm(chunk: bytes, dtype: str, rate: float) -> bytes:
     """Change PCM playback speed by resampling chunk length before playback."""
     if abs(rate - 1.0) < 0.01 or not chunk:
@@ -332,17 +345,10 @@ def _stream_and_play_chunks(text_chunks, on_done: callable | None,
     threading.Thread(target=producer, daemon=True).start()
 
     # Consumer: feed chunks to sounddevice output stream
-    # Derive playback params from the configured provider so that ElevenLabs
-    # (22050 Hz int16) and Cartesia (44100 Hz float32) both play correctly,
-    # regardless of which was used last.
-    if provider == "elevenlabs":
-        sample_rate = tts_module._EL_SAMPLE_RATE
-        channels    = tts_module.CHANNELS
-        dtype       = tts_module._EL_DTYPE
-    else:
-        sample_rate = tts_module.SAMPLE_RATE
-        channels    = tts_module.CHANNELS
-        dtype       = tts_module.DTYPE
+    # Derive playback params from the configured provider so that every provider
+    # (ElevenLabs 22050 Hz int16, Cartesia 44100 Hz float32, OpenAI 24000 Hz
+    # int16, …) plays correctly, regardless of which was used last.
+    sample_rate, channels, dtype = tts_module.playback_format(provider)
 
     # macOS CoreAudio segfaults when two PortAudio streams are open on the same
     # device at once. The filler clip (play_filler -> sd.play) is still playing
@@ -386,6 +392,19 @@ def _stream_and_play_chunks(text_chunks, on_done: callable | None,
             except queue.Empty:
                 continue
             if chunk is None:
+                # End of speech. PortAudio's blocking write returns once a chunk
+                # is queued, not once it has been played, and stop()/close() in
+                # _close_stream tears the stream down as soon as the final period
+                # drains — on several host APIs that clips the last fraction of a
+                # second, so words trail off mid-syllable. Push a short tail of
+                # silence so the real speech is fully through the device buffer
+                # before the stream stops. Skip when interrupted: a superseding
+                # generation wants the stream gone now, not flushed.
+                if _audio_started and not stop_event.is_set():
+                    try:
+                        stream.write(_silence_tail(dtype, channels, sample_rate))
+                    except Exception:
+                        pass
                 break
             if not _audio_started:
                 _audio_started = True

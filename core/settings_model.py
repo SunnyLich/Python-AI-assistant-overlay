@@ -60,7 +60,6 @@ class MemorySettings:
     model: ModelSettings
     auto_consolidate: bool
     top_k: int
-    relevance_max_distance: float
     stm_token_budget: int
 
 
@@ -127,7 +126,6 @@ class AppSettings:
                 ),
                 auto_consolidate=bool(values.get("MEMORY_AUTO_CONSOLIDATE", False)),
                 top_k=int(values.get("MEMORY_TOP_K", 0)),
-                relevance_max_distance=float(values.get("MEMORY_RELEVANCE_MAX_DISTANCE", 0.0)),
                 stm_token_budget=int(values.get("MEMORY_STM_TOKEN_BUDGET", 0)),
             ),
             callers=CallerSettings(

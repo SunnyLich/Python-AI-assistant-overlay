@@ -14,10 +14,10 @@ Usage:
     # Interactive REPL — type prompts, blank line to quit:
     python -m experiments.context_router.cli --repl
 
-The default embedder is sentence-transformers. Force the zero-dependency
-lexical fallback with:
-    set CONTEXT_ROUTER_EMBEDDER=lexical    (Windows)
-    export CONTEXT_ROUTER_EMBEDDER=lexical (POSIX)
+The default embedder is the zero-dependency lexical backend. Force the optional
+sentence-transformers backend with:
+    set CONTEXT_ROUTER_EMBEDDER=sentence-transformers    (Windows)
+    export CONTEXT_ROUTER_EMBEDDER=sentence-transformers (POSIX)
 """
 
 from __future__ import annotations

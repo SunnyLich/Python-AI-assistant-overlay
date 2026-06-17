@@ -56,7 +56,7 @@ Click the icon at any time to open a full chat window for deeper conversations w
 - **Context without lifting a finger** — reads your highlighted text, open Word/Excel/PDF/PowerPoint files, and live browser pages automatically
 - **See it, ask it** — `Ctrl+Alt+Q` draws a snip region; a vision model answers questions about whatever you captured
 - **Rewrite & paste** — `Ctrl+Shift+Q` rewrites selected text (fix grammar, simplify, change tone) and pastes the result back in place in one motion
-- **Remembers you** — a local vector database stores facts across sessions; the most relevant ones surface automatically on every query
+- **Remembers you** — a local JSON memory store keeps facts across sessions; relevant ones surface automatically on every query
 - **Bring your own model** — Groq, Anthropic, OpenAI, Google, DeepSeek, OpenRouter, Mistral, Ollama, GitHub Copilot, and more
 - **Addons** — extend Wisp with query hooks, tray actions, settings, and model-callable tools; each addon runs in its own process
 - **Feels instant** — filler audio plays in milliseconds to mask the LLM round-trip; the real answer usually arrives before the filler finishes
@@ -268,9 +268,9 @@ CALLER_2_PASTE_BACK=true           # auto-paste result back into the active app
 Wisp remembers things so you don't have to repeat yourself. It uses a two-tier system:
 
 - **Short-term (STM):** a rolling in-session log that auto-compresses as it grows, so long sessions stay fast
-- **Long-term (LTM):** a local ChromaDB vector store of atomic facts extracted from your conversations
+- **Long-term (LTM):** a local JSON store of atomic facts extracted from your conversations
 
-On every query, the top-k most relevant facts are pulled by semantic similarity and quietly injected into the prompt. Over time, Wisp builds a picture of your projects, preferences, and recurring problems — and uses it. Tray icon → **Memory Viewer** to browse, edit, or delete anything stored.
+On every query, the top-k relevant facts are selected with project scope plus lexical/router matching and quietly injected into the prompt. Over time, Wisp builds a picture of your projects, preferences, and recurring problems — and uses it. Tray icon → **Memory Viewer** to browse, edit, or delete anything stored.
 
 ---
 

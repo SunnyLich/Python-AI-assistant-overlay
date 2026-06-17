@@ -2,10 +2,16 @@ import json
 import sys
 import threading
 import time
-import types
 
 from core.memory_store import store
 from unittest.mock import patch
+
+
+def _seed_router_attrs(manager):
+    manager._ctx_router_lock = threading.Lock()
+    manager._ctx_router = None
+    manager._ctx_router_fact_count = -1
+    return manager
 
 
 def test_summarizer_rejects_task_request():
@@ -26,23 +32,22 @@ def test_rejects_secrets():
 
 def test_memory_manager_tolerates_storage_directory_creation_failure():
     with patch.object(store.os, "makedirs", side_effect=PermissionError("denied")), \
-         patch.object(store.MemoryManager, "_init_chromadb", autospec=True, return_value=None), \
+         patch.object(store, "_migrate_legacy_chroma_to_json", return_value=0), \
          patch.object(store.MemoryManager, "_sync_consolidation_timer", autospec=True, return_value=None):
         manager = store.MemoryManager()
 
-    assert manager._collection is None
-    assert manager._chroma_ok is False
+    assert manager._stm == []
 
 
-def test_macos_memory_uses_json_fallback_when_safe_mode_is_disabled():
+def test_memory_uses_json_store_even_when_macos_safe_mode_is_disabled():
     with patch.object(store.macos_safety.sys, "platform", "darwin"), \
          patch.dict(store.macos_safety.os.environ, {"WISP_MACOS_SAFE_MODE": "0"}, clear=True), \
          patch.object(store.os, "makedirs", return_value=None), \
+         patch.object(store, "_migrate_legacy_chroma_to_json", return_value=0), \
          patch.object(store.MemoryManager, "_sync_consolidation_timer", autospec=True, return_value=None):
         manager = store.MemoryManager()
 
-    assert manager._collection is None
-    assert manager._chroma_ok is False
+    assert manager._stm == []
 
 
 def test_lightweight_fact_list_does_not_initialize_memory_manager(tmp_path, monkeypatch):
@@ -59,47 +64,15 @@ def test_lightweight_fact_list_does_not_initialize_memory_manager(tmp_path, monk
         def __init__(self):
             raise AssertionError("MemoryManager should not be constructed")
 
-    class BrokenClient:
-        def __init__(self, path):
-            raise RuntimeError("chroma unavailable")
-
     monkeypatch.setattr(store, "_manager", None)
     monkeypatch.setattr(store, "_FALLBACK_PATH", str(fallback))
+    monkeypatch.setattr(store, "_migrate_legacy_chroma_to_json", lambda: 0)
     monkeypatch.setattr(store, "MemoryManager", BrokenMemoryManager)
-    monkeypatch.setitem(sys.modules, "chromadb", types.SimpleNamespace(PersistentClient=BrokenClient))
 
     assert store.get_loaded_manager() is None
     assert store.get_all_facts_lightweight() == [
         {"id": "keep", "text": "I prefer concise answers", "archived": False}
     ]
-
-
-def test_lightweight_fact_list_skips_chroma_import_when_db_is_empty(tmp_path, monkeypatch):
-    chroma_dir = tmp_path / "chroma"
-    chroma_dir.mkdir()
-    db_path = chroma_dir / "chroma.sqlite3"
-    con = store.sqlite3.connect(db_path)
-    try:
-        con.execute("create table embeddings (id integer primary key)")
-        con.commit()
-    finally:
-        con.close()
-
-    class BrokenMemoryManager:
-        def __init__(self):
-            raise AssertionError("MemoryManager should not be constructed")
-
-    class BrokenChromaModule:
-        def __getattr__(self, _name):
-            raise AssertionError("chromadb should not be imported for an empty DB")
-
-    monkeypatch.setattr(store, "_manager", None)
-    monkeypatch.setattr(store, "_CHROMA_DIR", str(chroma_dir))
-    monkeypatch.setattr(store, "_FALLBACK_PATH", str(tmp_path / "missing.json"))
-    monkeypatch.setattr(store, "MemoryManager", BrokenMemoryManager)
-    monkeypatch.setitem(sys.modules, "chromadb", BrokenChromaModule())
-
-    assert store.get_all_facts_lightweight() == []
 
 
 def test_lightweight_manual_fact_write_uses_json_store(tmp_path, monkeypatch):
@@ -116,32 +89,27 @@ def test_lightweight_manual_fact_write_uses_json_store(tmp_path, monkeypatch):
     assert facts[0]["source"] == "manual"
 
 
-def test_get_all_facts_merges_json_and_chroma(monkeypatch):
-    manager = store.MemoryManager.__new__(store.MemoryManager)
-    manager._chroma_ok = True
-    manager._collection = types.SimpleNamespace(
-        get=lambda **_kwargs: {
-            "ids": ["chroma-1"],
-            "documents": ["I use Chroma facts"],
-            "metadatas": [{"category": "project_context", "source": "manual"}],
-        }
+def test_legacy_chroma_facts_are_imported_into_json(tmp_path, monkeypatch):
+    fallback = tmp_path / "facts_fallback.json"
+    fallback.write_text(
+        json.dumps([{"id": "json-1", "text": "I use JSON facts", "category": "general"}]),
+        encoding="utf-8",
     )
+    monkeypatch.setattr(store, "_MEMORY_DIR", str(tmp_path))
+    monkeypatch.setattr(store, "_FALLBACK_PATH", str(fallback))
     monkeypatch.setattr(
-        manager,
-        "_fallback_get_all",
-        lambda: [{"id": "json-1", "text": "I use JSON facts", "category": "general"}],
+        store,
+        "_legacy_chroma_facts",
+        lambda: [{"id": "chroma-1", "text": "I use imported facts", "category": "project_context"}],
     )
 
-    assert [fact["id"] for fact in manager.get_all_facts()] == ["json-1", "chroma-1"]
+    assert store._migrate_legacy_chroma_to_json() == 1
+    assert [fact["id"] for fact in store._fallback_get_all_from_path()] == ["json-1", "chroma-1"]
 
 
-def test_retrieve_relevant_returns_json_facts_when_chroma_empty(monkeypatch):
+def test_retrieve_relevant_returns_json_facts(monkeypatch):
     manager = store.MemoryManager.__new__(store.MemoryManager)
-    manager._chroma_ok = True
-    manager._collection = types.SimpleNamespace(count=lambda: 0)
-    manager._ctx_router_lock = threading.Lock()
-    manager._ctx_router = None
-    manager._ctx_router_fact_count = -1
+    _seed_router_attrs(manager)
     monkeypatch.setattr(
         store,
         "get_all_facts_lightweight",
@@ -149,45 +117,6 @@ def test_retrieve_relevant_returns_json_facts_when_chroma_empty(monkeypatch):
     )
 
     assert manager.retrieve_relevant("memory") == "[Memory]\n- I prefer fast memory settings"
-
-
-def test_retrieve_relevant_skips_chroma_query_by_default(monkeypatch):
-    manager = store.MemoryManager.__new__(store.MemoryManager)
-    manager._chroma_ok = True
-    manager._collection = types.SimpleNamespace(
-        count=lambda: 1,
-        query=lambda **_kwargs: (_ for _ in ()).throw(AssertionError("Chroma query should not run")),
-    )
-    manager._ctx_router_lock = threading.Lock()
-    manager._ctx_router = None
-    manager._ctx_router_fact_count = -1
-    monkeypatch.delenv("WISP_ENABLE_SEMANTIC_MEMORY_QUERY", raising=False)
-    monkeypatch.setattr(
-        store,
-        "get_all_facts_lightweight",
-        lambda: [{"id": "json-1", "text": "I prefer fast memory settings", "category": "general"}],
-    )
-
-    assert manager.retrieve_relevant("fast memory") == "[Memory]\n- I prefer fast memory settings"
-
-
-def test_retrieve_relevant_semantic_query_is_opt_in(monkeypatch):
-    manager = store.MemoryManager.__new__(store.MemoryManager)
-    manager._chroma_ok = True
-    manager._collection = types.SimpleNamespace(
-        count=lambda: 1,
-        query=lambda **_kwargs: {
-            "documents": [["I prefer semantic memory"]],
-            "distances": [[0.1]],
-        },
-    )
-    manager._ctx_router_lock = threading.Lock()
-    manager._ctx_router = None
-    manager._ctx_router_fact_count = -1
-    monkeypatch.setenv("WISP_ENABLE_SEMANTIC_MEMORY_QUERY", "1")
-    monkeypatch.setattr(store, "get_all_facts_lightweight", lambda: [])
-
-    assert manager.retrieve_relevant("memory") == "[Memory]\n- I prefer semantic memory"
 
 
 def test_get_manager_is_thread_safe(monkeypatch):
@@ -225,8 +154,7 @@ def test_get_manager_is_thread_safe(monkeypatch):
 def test_manual_fact_writes_are_serialized(monkeypatch):
     manager = store.MemoryManager.__new__(store.MemoryManager)
     manager._ltm_lock = threading.RLock()
-    manager._chroma_ok = False
-    manager._collection = None
+    _seed_router_attrs(manager)
 
     active = 0
     max_active = 0
@@ -255,10 +183,8 @@ def test_manual_fact_writes_are_serialized(monkeypatch):
 
 def _fallback_manager():
     manager = store.MemoryManager.__new__(store.MemoryManager)
-    manager._chroma_ok = False
-    manager._collection = None
     manager._ltm_lock = threading.RLock()
-    return manager
+    return _seed_router_attrs(manager)
 
 
 def test_save_memory_scopes_general_and_project(tmp_path, monkeypatch):

@@ -3,6 +3,102 @@
   <context>
     <name>Wisp</name>
     <message>
+      <source>Advanced</source>
+      <translation>Avanzado</translation>
+    </message>
+    <message>
+      <source>Search settings...</source>
+      <translation>Buscar ajustes...</translation>
+    </message>
+    <message>
+      <source>Presets...</source>
+      <translation>Preajustes...</translation>
+    </message>
+    <message>
+      <source>Apply a starter configuration for common Wisp setups. Review changes before Apply.</source>
+      <translation>Aplica una configuración inicial para usos comunes de Wisp. Revisa los cambios antes de aplicar.</translation>
+    </message>
+    <message>
+      <source>Fast</source>
+      <translation>Rápido</translation>
+    </message>
+    <message>
+      <source>Best quality</source>
+      <translation>Mejor calidad</translation>
+    </message>
+    <message>
+      <source>Private/local</source>
+      <translation>Privado/local</translation>
+    </message>
+    <message>
+      <source>Coding assistant</source>
+      <translation>Asistente de código</translation>
+    </message>
+    <message>
+      <source>Low cost</source>
+      <translation>Bajo coste</translation>
+    </message>
+    <message>
+      <source>Smaller speech model, leaner context, and fast transcription.</source>
+      <translation>Modelo de voz más pequeño, contexto más ligero y transcripción rápida.</translation>
+    </message>
+    <message>
+      <source>Larger speech model, richer memory/context, and more accurate transcription.</source>
+      <translation>Modelo de voz más grande, más memoria/contexto y transcripción más precisa.</translation>
+    </message>
+    <message>
+      <source>Keep local documents and memory, but turn off web, GitHub, screenshots, and live tools.</source>
+      <translation>Mantiene documentos locales y memoria, pero desactiva web, GitHub, capturas y herramientas en vivo.</translation>
+    </message>
+    <message>
+      <source>Lean into docs, git, browser fetches, memory, and screenshots for coding work.</source>
+      <translation>Usa documentos, git, navegador, memoria y capturas para trabajo de programación.</translation>
+    </message>
+    <message>
+      <source>Tighter context budgets and cheaper/faster defaults.</source>
+      <translation>Presupuestos de contexto más ajustados y valores predeterminados más baratos/rápidos.</translation>
+    </message>
+    <message>
+      <source>{preset} preset selected. Edits saved with Apply will update this preset.</source>
+      <translation>Preajuste {preset} seleccionado. Los cambios guardados con Aplicar actualizarán este preajuste.</translation>
+    </message>
+    <message>
+      <source>Context limits</source>
+      <translation>Límites de contexto</translation>
+    </message>
+    <message>
+      <source>Auto document fetch chars</source>
+      <translation>Caracteres de obtención automática de documentos</translation>
+    </message>
+    <message>
+      <source>Tool document fetch chars</source>
+      <translation>Caracteres de obtención de documentos por herramienta</translation>
+    </message>
+    <message>
+      <source>Tuning limits for how much external text Wisp can collect before asking the model.</source>
+      <translation>Ajusta cuánto texto externo puede recopilar Wisp antes de consultar al modelo.</translation>
+    </message>
+    <message>
+      <source>legacy tool folder / script tool folder</source>
+      <translation>carpeta de herramientas heredadas / carpeta de scripts</translation>
+    </message>
+    <message>
+      <source>Memory tuning</source>
+      <translation>Ajuste de memoria</translation>
+    </message>
+    <message>
+      <source>Consolidation interval (min)</source>
+      <translation>Intervalo de consolidación (min)</translation>
+    </message>
+    <message>
+      <source>STM token budget</source>
+      <translation>Presupuesto de tokens STM</translation>
+    </message>
+    <message>
+      <source>Speech and bubble timing</source>
+      <translation>Tiempos de voz y burbuja</translation>
+    </message>
+    <message>
       <source> Logs</source>
       <translation> Registros</translation>
     </message>
@@ -45,6 +141,18 @@
     <message>
       <source>Ask anything</source>
       <translation>Pregunta lo que sea</translation>
+    </message>
+    <message>
+      <source>Configured backend: {summary} — active backend appears after recording starts.</source>
+      <translation>Backend configurado: {summary} — el backend activo aparecerá después de iniciar la grabación.</translation>
+    </message>
+    <message>
+      <source>Active backend: {summary}</source>
+      <translation>Backend activo: {summary}</translation>
+    </message>
+    <message>
+      <source>Active backend: {summary} — GPU not in use. Free the GPU and restart to recover quality.</source>
+      <translation>Backend activo: {summary} — la GPU no está en uso. Libera la GPU y reinicia para recuperar la calidad.</translation>
     </message>
     <message>
       <source>Custom prompt</source>
@@ -1751,10 +1859,6 @@ Dejar decidir al modelo — expone una herramienta de documentos abiertos durant
     <message>
       <source>Restore every agent card to its default position and size</source>
       <translation>Restaura cada tarjeta de agente a su posición y tamaño predeterminados</translation>
-    </message>
-    <message>
-      <source>Retrieval max distance:</source>
-      <translation>Distancia máxima de recuperación:</translation>
     </message>
     <message>
       <source>Retrieval top-k:</source>

@@ -1005,11 +1005,12 @@ def brain_tts_synthesize(text: str = "", voice: str | None = None) -> dict[str, 
             wf.writeframes(b"")
         return {"path": str(out_path), "sample_rate": 22_050, "bytes": 0, "provider": provider}
 
-    if provider == "elevenlabs":
-        sample_rate = tts._EL_SAMPLE_RATE
+    sample_rate, _channels, dtype = tts.playback_format(provider)
+    if dtype == "int16":
+        # ElevenLabs / OpenAI / compatible servers already stream signed 16-bit.
         pcm_i16 = b"".join(chunks)
     else:
-        sample_rate = tts.SAMPLE_RATE
+        # Cartesia streams float32; convert to the int16 WAV body.
         # np.frombuffer yields a read-only view over the immutable bytes, so
         # nan_to_num must copy (copy=False raises "assignment destination is
         # read-only"). clip then returns its own writable array.
@@ -1286,6 +1287,7 @@ def _apply_frontloaded_tools(built: Any, frontload_tools: list[str] | None) -> A
         ambient_ctx = _inject_frontloaded_tool_context(
             getattr(built, "ambient_ctx", ""),
             frontload_tools,
+            query=getattr(built, "user_message", ""),
         )
         return type(built)(
             user_message=getattr(built, "user_message", ""),

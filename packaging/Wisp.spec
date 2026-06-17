@@ -52,8 +52,6 @@ a = Analysis(
         (str(ROOT / ".env.example"), "."),
     ] + LITEPARSE_DATAS,
     hiddenimports=[
-        "chromadb",
-        "sentence_transformers",
         "pynput.keyboard._win32",
         "pynput.mouse._win32",
         "win32clipboard",

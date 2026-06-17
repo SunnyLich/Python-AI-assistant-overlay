@@ -10,26 +10,23 @@ Short-term memory (STM):
     background timer.
 
 Long-term memory (LTM):
-  - Atomic facts stored in a chromadb vector collection (local, file-backed).
+  - Atomic facts stored in a plain JSON file.
   - Categories: project_context | general.
-  - Retrieval: top-k semantic search; result injected into every LLM call.
+  - Retrieval: project-scoped JSON facts routed by lexical/IDF matching.
   - Writes: explicit ("remember that -¦") or via the periodic summariser.
-  - Conflict: if a new fact is semantically similar (cosine distance < 0.15,
-    i.e. similarity > 0.85) to an existing one the old fact is archived
-    (not deleted) and the new one wins. Timestamps are preserved for audit.
+  - Conflict: if a new fact is lexically similar to an existing fact in the
+    same project scope, the existing fact is updated rather than duplicated.
 
 Storage: memory/ folder at the project root (gitignored).
 
-Graceful degradation: if chromadb / sentence-transformers are not installed,
-the module falls back to a plain JSON store with no semantic search (all active
-facts are injected, capped at 10).
+Legacy ChromaDB collections are imported into the JSON store opportunistically,
+then left untouched. ChromaDB is no longer used for live reads or writes.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
-import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -51,6 +48,7 @@ _MEMORY_DIR = str(MEMORY_DIR)
 _CHROMA_DIR = os.path.join(_MEMORY_DIR, "chroma")
 _FALLBACK_PATH = os.path.join(_MEMORY_DIR, "facts_fallback.json")
 _FALLBACK_LOCK = threading.RLock()
+_LEGACY_CHROMA_MIGRATION_ATTEMPTED = False
 
 _CATEGORIES = ("project_context", "general")
 
@@ -230,12 +228,6 @@ def _merge_fact_lists(*fact_lists: list[dict]) -> list[dict]:
     return merged
 
 
-def _semantic_memory_query_enabled() -> bool:
-    return os.environ.get("WISP_ENABLE_SEMANTIC_MEMORY_QUERY", "").strip().lower() in {
-        "1", "true", "yes", "on",
-    }
-
-
 def _format_memory_block(
     facts: list[dict],
     query: str = "",
@@ -278,6 +270,97 @@ def _fallback_write_all_unlocked(facts: list[dict]) -> None:
     os.makedirs(_MEMORY_DIR, exist_ok=True)
     with open(_FALLBACK_PATH, "w", encoding="utf-8") as f:
         json.dump(facts, f, indent=2, ensure_ascii=False)
+
+
+def _fallback_merge_facts_unlocked(incoming: list[dict]) -> int:
+    """Merge imported facts into the JSON store without duplicating text/ids."""
+    if not incoming:
+        return 0
+    facts = _fallback_read_all_unlocked()
+    seen_ids = {str(fact.get("id") or "") for fact in facts if fact.get("id")}
+    seen_text_scope = {
+        (
+            _normalize_fact_text(str(fact.get("text", ""))).lower(),
+            _fact_project(fact) or "",
+        )
+        for fact in facts
+    }
+    added = 0
+    for raw in incoming:
+        text = _normalize_fact_text(str(raw.get("text", "")))
+        if not text:
+            continue
+        project = (str(raw.get("project") or "").strip()) or None
+        fact_id = str(raw.get("id") or "").strip() or str(uuid.uuid4())
+        text_scope = (text.lower(), project or "")
+        if fact_id in seen_ids or text_scope in seen_text_scope:
+            continue
+        now = _now_iso()
+        facts.append({
+            "id": fact_id,
+            "text": text,
+            "category": raw.get("category") if raw.get("category") in _CATEGORIES else "general",
+            "source": str(raw.get("source") or "legacy_chroma"),
+            "project": project,
+            "created_at": str(raw.get("created_at") or now),
+            "last_seen": str(raw.get("last_seen") or now),
+            "archived": bool(raw.get("archived", False)),
+        })
+        seen_ids.add(fact_id)
+        seen_text_scope.add(text_scope)
+        added += 1
+    if added:
+        _fallback_write_all_unlocked(facts)
+    return added
+
+
+def _legacy_chroma_facts() -> list[dict]:
+    """Best-effort one-way import from the old Chroma-backed memory store."""
+    if not os.path.exists(os.path.join(_CHROMA_DIR, "chroma.sqlite3")):
+        return []
+    try:
+        import chromadb  # type: ignore
+
+        client = chromadb.PersistentClient(path=_CHROMA_DIR)
+        collection = client.get_collection(name="ltm_facts")
+        results = collection.get(
+            where={"archived": {"$eq": False}},
+            include=["documents", "metadatas"],
+        )
+        facts: list[dict] = []
+        for doc, meta, fid in zip(
+            results.get("documents", []),
+            results.get("metadatas", []),
+            results.get("ids", []),
+        ):
+            meta = meta or {}
+            facts.append({
+                "id": fid,
+                "text": doc,
+                "category": meta.get("category", "general"),
+                "source": meta.get("source", "legacy_chroma"),
+                "project": meta.get("project", ""),
+                "created_at": meta.get("created_at", ""),
+                "last_seen": meta.get("last_seen", ""),
+                "archived": False,
+            })
+        return facts
+    except Exception as exc:
+        print(f"[memory] legacy Chroma import skipped: {exc}")
+        return []
+
+
+def _migrate_legacy_chroma_to_json() -> int:
+    with _FALLBACK_LOCK:
+        return _fallback_merge_facts_unlocked(_legacy_chroma_facts())
+
+
+def _maybe_migrate_legacy_chroma_to_json() -> int:
+    global _LEGACY_CHROMA_MIGRATION_ATTEMPTED
+    if _LEGACY_CHROMA_MIGRATION_ATTEMPTED:
+        return 0
+    _LEGACY_CHROMA_MIGRATION_ATTEMPTED = True
+    return _migrate_legacy_chroma_to_json()
 
 
 def add_fact_manual_lightweight(
@@ -377,60 +460,28 @@ class MemoryManager:
     Manages short-term (in-session) and long-term (persisted) memory.
 
     Thread-safety: all STM mutations are guarded by _stm_lock.
-    chromadb calls are inherently thread-safe in embedded mode.
+    Long-term facts are stored in the JSON fallback file guarded by
+    _FALLBACK_LOCK. The old ChromaDB store is imported once when present.
     """
 
     def __init__(self) -> None:
         try:
-            os.makedirs(_CHROMA_DIR, exist_ok=True)
+            os.makedirs(_MEMORY_DIR, exist_ok=True)
         except OSError as exc:
             print(f"[memory] storage directory unavailable; continuing without persistent store: {exc}")
         self._stm_lock = threading.Lock()
         self._stm: list[dict] = []          # turns + compressed blocks
         self._compressing = False           # guard against concurrent compression
-        self._collection = None             # chromadb collection (None = unavailable)
-        self._chroma_ok = False
         self._ltm_lock = threading.RLock()
         self._consolidation_timer: threading.Timer | None = None
         self._ctx_router = None
         self._ctx_router_lock = threading.Lock()
         self._ctx_router_fact_count = -1
 
-        self._init_chromadb()
+        imported = _maybe_migrate_legacy_chroma_to_json()
+        if imported:
+            print(f"[memory] Imported {imported} legacy Chroma fact(s) into JSON memory.")
         self._sync_consolidation_timer()
-
-    # ------------------------------------------------------------------
-    # chromadb initialisation
-    # ------------------------------------------------------------------
-
-    def _init_chromadb(self) -> None:
-        if not macos_safety.chromadb_enabled():
-            print("[memory] chromadb disabled in macOS safe mode - using plain JSON fallback.")
-            self._chroma_ok = False
-            self._collection = None
-            return
-        try:
-            import chromadb
-            from chromadb.utils import embedding_functions
-
-            ef = embedding_functions.DefaultEmbeddingFunction()
-            client = chromadb.PersistentClient(path=_CHROMA_DIR)
-            self._collection = client.get_or_create_collection(
-                name="ltm_facts",
-                embedding_function=ef,
-                metadata={"hnsw:space": "cosine"},
-            )
-            self._chroma_ok = True
-            print(
-                f"[memory] chromadb ready. "
-                f"{self._collection.count()} fact(s) in long-term memory."
-            )
-        except Exception as exc:
-            print(
-                f"[memory] chromadb unavailable -” using plain JSON fallback: {exc}"
-            )
-            self._chroma_ok = False
-            self._collection = None
 
     # ------------------------------------------------------------------
     # Short-term memory
@@ -609,35 +660,32 @@ class MemoryManager:
     # Context router
     # ------------------------------------------------------------------
 
-    def _get_router(self):
+    def _get_router(self, facts: list[dict]):
         # Return the cached ContextRouter, rebuilding when fact count changes.
-        if not _HAS_ROUTER or not self._chroma_ok or self._collection is None:
+        if not _HAS_ROUTER:
             return None
         try:
-            count = self._collection.count()
+            active = [fact for fact in facts if not fact.get("archived")]
+            count = len(active)
             if count == 0:
                 return None
             with self._ctx_router_lock:
                 if self._ctx_router is None or count != self._ctx_router_fact_count:
-                    self._rebuild_router(count)
+                    self._rebuild_router(active, count)
                 return self._ctx_router
         except Exception:
             return None
 
-    def _rebuild_router(self, fact_count):
+    def _rebuild_router(self, facts: list[dict], fact_count: int):
         # Build a ContextRouter from LTM facts (call while holding _ctx_router_lock).
         try:
-            results = self._collection.get(
-                where={'archived': {'$eq': False}},
-                include=['documents', 'metadatas'],
-            )
             chunks = []
-            for doc, meta, fid in zip(
-                results.get('documents', []),
-                results.get('metadatas', []),
-                results.get('ids', []),
-            ):
-                source = meta.get('source', 'memory')
+            for fact in facts:
+                fid = str(fact.get("id") or "").strip()
+                doc = _normalize_fact_text(str(fact.get("text", "")))
+                if not fid or not doc:
+                    continue
+                source = str(fact.get("source") or "memory")
                 chunks.append(ContextChunk.from_text(fid, doc, source))
             if chunks:
                 self._ctx_router = ContextRouter(chunks)
@@ -660,16 +708,11 @@ class MemoryManager:
         k = top_k if top_k is not None else config.MEMORY_TOP_K
         if project_id is None:
             project_id = get_active_project()
+        facts = get_all_facts_lightweight()
         fast_block = _format_memory_block(
-            get_all_facts_lightweight(), query, top_k=k, project_id=project_id
+            facts, query, top_k=k, project_id=project_id
         )
-        if not _semantic_memory_query_enabled():
-            return fast_block
-
-        if not self._chroma_ok or self._collection is None:
-            return fast_block
-
-        router = self._get_router()
+        router = self._get_router([fact for fact in facts if _fact_in_scope(fact, project_id)])
         if router is not None:
             try:
                 result = router.route(query)
@@ -680,13 +723,15 @@ class MemoryManager:
 
                 if level == 'tiny':
                     k = min(1, k)
+                    return _format_memory_block(facts, query, top_k=k, project_id=project_id)
 
                 elif level in ('selected', 'full') and result.selected_chunk_ids:
-                    fetched = self._collection.get(
-                        ids=result.selected_chunk_ids,
-                        include=['documents'],
-                    )
-                    docs = fetched.get('documents', [])
+                    selected = set(result.selected_chunk_ids)
+                    docs = [
+                        _normalize_fact_text(str(fact.get("text", "")))
+                        for fact in facts
+                        if str(fact.get("id") or "") in selected and _fact_in_scope(fact, project_id)
+                    ]
                     if docs:
                         lines = ['- ' + d for d in docs]
                         if fast_block:
@@ -697,50 +742,11 @@ class MemoryManager:
                         return '[Memory]\n' + '\n'.join(lines)
 
             except Exception as exc:
-                print('[memory] Router error, falling back to chromadb: %s' % exc)
-
-        try:
-            count = self._collection.count()
-            if count == 0:
-                return fast_block
-            where: dict = {'archived': {'$eq': False}}
-            if project_id:
-                where = {'$and': [
-                    {'archived': {'$eq': False}},
-                    {'$or': [
-                        {'project': {'$eq': project_id}},
-                        {'project': {'$eq': ''}},
-                    ]},
-                ]}
-            results = self._collection.query(
-                query_texts=[query],
-                n_results=min(k, count),
-                where=where,
-                include=['documents', 'metadatas', 'distances'],
-            )
-            docs = results.get('documents', [[]])[0]
-            dists = results.get('distances', [[]])[0]
-            if not docs:
-                return fast_block
-            max_dist = config.MEMORY_RELEVANCE_MAX_DISTANCE
-            filtered = [
-                doc for doc, dist in zip(docs, dists)
-                if dist <= max_dist or _lexical_overlap(query, doc) > 0
-            ]
-            if not filtered:
-                return fast_block
-            lines = ['- ' + doc for doc in filtered[:k]]
-            if fast_block:
-                for line in fast_block.splitlines()[1:]:
-                    if line and line not in lines:
-                        lines.append(line)
-            return '[Memory]\n' + '\n'.join(lines)
-        except Exception as exc:
-            print('[memory] Retrieval error: %s' % exc)
-            return fast_block
+                print('[memory] Router error, using lexical memory block: %s' % exc)
+        return fast_block
 
     def _fallback_all_facts(self, query: str = "") -> str:
-        """Return all active facts as a plain list when chromadb is unavailable."""
+        """Return all active JSON facts as a plain list."""
         return _format_memory_block(_fallback_get_all_from_path(), query)
 
     # ------------------------------------------------------------------
@@ -836,9 +842,8 @@ class MemoryManager:
         project: Optional[str] = None,
     ) -> bool:
         """
-        Insert a fact into LTM.  If a semantically similar fact already exists
-        (cosine similarity â‰¥ 0.85, i.e. distance < 0.15) it is archived and
-        the new fact replaces it.
+        Insert a fact into LTM. If a similar fact already exists in the same
+        project scope, refresh that JSON fact instead of creating a duplicate.
         """
         project = (project or "").strip() or None
         text = _normalize_fact_text(text)
@@ -846,75 +851,9 @@ class MemoryManager:
             print(f"[memory] Ignored low-value fact candidate: {text!r}")
             return False
 
-        if not self._chroma_ok or self._collection is None:
-            self._fallback_upsert(text, category, source, project)
-            return True
-
-        now = _now_iso()
-
-        # Conflict check -” only against facts in the same project scope so a
-        # global fact and a project fact with similar wording can coexist.
-        scope_filter: dict = {"archived": {"$eq": False}}
-        if project is not None:
-            scope_filter = {"$and": [scope_filter, {"project": {"$eq": project}}]}
-        try:
-            count = self._collection.count()
-            if count > 0:
-                results = self._collection.query(
-                    query_texts=[text],
-                    n_results=min(3, count),
-                    where=scope_filter,
-                    include=["documents", "metadatas", "distances"],
-                )
-                ids: list[str] = results.get("ids", [[]])[0]
-                dists: list[float] = results.get("distances", [[]])[0]
-                docs_list: list[str] = results.get("documents", [[]])[0]
-                metas: list[dict] = results.get("metadatas", [[]])[0]
-
-                for i, (fact_id, dist) in enumerate(zip(ids, dists)):
-                    if dist < 0.08:
-                        archived_meta = dict(metas[i])
-                        archived_meta["last_seen"] = now
-                        self._collection.update(
-                            ids=[fact_id],
-                            metadatas=[archived_meta],
-                        )
-                        return False
-                    if dist < 0.15:          # similarity > 0.85
-                        archived_meta = dict(metas[i])
-                        archived_meta["archived"] = True
-                        archived_meta["archived_superseded_by"] = text
-                        self._collection.update(
-                            ids=[fact_id],
-                            metadatas=[archived_meta],
-                        )
-                        print(
-                            f"[memory] Archived similar fact "
-                            f"(dist={dist:.3f}): {docs_list[i]!r}"
-                        )
-        except Exception as exc:
-            print(f"[memory] Conflict-check error: {exc}")
-
-        fact_id = str(uuid.uuid4())
-        try:
-            self._collection.add(
-                documents=[text],
-                ids=[fact_id],
-                metadatas=[{
-                    "id": fact_id,
-                    "category": category,
-                    "source": source,
-                    "project": project or "",
-                    "created_at": now,
-                    "last_seen": now,
-                    "archived": False,
-                }],
-            )
-            self._invalidate_router()
-            return True
-        except Exception as exc:
-            print(f"[memory] Upsert error: {exc}")
-            return False
+        self._fallback_upsert(text, category, source, project)
+        self._invalidate_router()
+        return True
 
     def _fallback_upsert(
         self, text: str, category: str, source: str, project: Optional[str] = None
@@ -929,33 +868,7 @@ class MemoryManager:
 
     def get_all_facts(self) -> list[dict]:
         """Return all non-archived facts for the memory viewer."""
-        fallback_facts = self._fallback_get_all()
-        if not self._chroma_ok or self._collection is None:
-            return fallback_facts
-        try:
-            results = self._collection.get(
-                where={"archived": {"$eq": False}},
-                include=["documents", "metadatas"],
-            )
-            facts: list[dict] = []
-            for doc, meta, fid in zip(
-                results.get("documents", []),
-                results.get("metadatas", []),
-                results.get("ids", []),
-            ):
-                facts.append({
-                    "id": fid,
-                    "text": doc,
-                    "category": meta.get("category", "personal"),
-                    "source": meta.get("source", "summarizer"),
-                    "project": meta.get("project", ""),
-                    "created_at": meta.get("created_at", ""),
-                    "last_seen": meta.get("last_seen", ""),
-                })
-            return _merge_fact_lists(fallback_facts, facts)
-        except Exception as exc:
-            print(f"[memory] get_all_facts error: {exc}")
-            return fallback_facts
+        return self._fallback_get_all()
 
     def _fallback_get_all(self) -> list[dict]:
         with _FALLBACK_LOCK:
@@ -969,14 +882,8 @@ class MemoryManager:
     def delete_fact(self, fact_id: str) -> None:
         """Hard-delete a fact (viewer action -” user explicitly removed it)."""
         with self._ltm_lock:
-            if not self._chroma_ok or self._collection is None:
-                self._fallback_delete(fact_id)
-                return
-            try:
-                self._collection.delete(ids=[fact_id])
-                self._invalidate_router()
-            except Exception as exc:
-                print(f"[memory] delete_fact error: {exc}")
+            self._fallback_delete(fact_id)
+            self._invalidate_router()
 
     def update_fact(
         self,
@@ -992,32 +899,8 @@ class MemoryManager:
         relabels without touching scope.
         """
         with self._ltm_lock:
-            if not self._chroma_ok or self._collection is None:
-                self._fallback_update(fact_id, new_text, new_category, project)
-                return
-            try:
-                existing = self._collection.get(
-                    ids=[fact_id],
-                    include=["documents", "metadatas"],
-                )
-                if not existing.get("ids"):
-                    return
-                meta = dict(existing["metadatas"][0])
-                meta["last_seen"] = _now_iso()
-                if project is not _UNCHANGED:
-                    proj = (project or "").strip()
-                    meta["project"] = proj
-                    meta["category"] = "project_context" if proj else "general"
-                elif new_category and new_category in _CATEGORIES:
-                    meta["category"] = new_category
-                self._collection.update(
-                    ids=[fact_id],
-                    documents=[new_text],
-                    metadatas=[meta],
-                )
-                self._invalidate_router()
-            except Exception as exc:
-                print(f"[memory] update_fact error: {exc}")
+            self._fallback_update(fact_id, new_text, new_category, project)
+            self._invalidate_router()
 
     def add_fact_manual(self, text: str, category: str = "general", project: Optional[str] = None) -> None:
         """Add a fact directly from the viewer (manual entry).
@@ -1039,30 +922,10 @@ class MemoryManager:
         This is intentionally conservative for manual/explicit facts.
         """
         with self._ltm_lock:
-            if not self._chroma_ok or self._collection is None:
-                return self._fallback_prune_low_value()
-            try:
-                results = self._collection.get(
-                    where={"archived": {"$eq": False}},
-                    include=["documents", "metadatas"],
-                )
-                ids: list[str] = results.get("ids", [])
-                docs: list[str] = results.get("documents", [])
-                metas: list[dict] = results.get("metadatas", [])
-                archived = 0
-                for fact_id, doc, meta in zip(ids, docs, metas):
-                    source = str(meta.get("source", "summarizer"))
-                    if _is_memory_worthy_fact(doc, source=source):
-                        continue
-                    new_meta = dict(meta)
-                    new_meta["archived"] = True
-                    new_meta["archived_reason"] = "low_value_cleanup"
-                    self._collection.update(ids=[fact_id], metadatas=[new_meta])
-                    archived += 1
-                return archived
-            except Exception as exc:
-                print(f"[memory] prune_low_value_facts error: {exc}")
-                return 0
+            archived = self._fallback_prune_low_value()
+            if archived:
+                self._invalidate_router()
+            return archived
 
     def _fallback_prune_low_value(self) -> int:
         if not os.path.exists(_FALLBACK_PATH):
@@ -1208,59 +1071,14 @@ def get_loaded_manager() -> Optional[MemoryManager]:
 def get_all_facts_lightweight() -> list[dict]:
     """
     Return active facts for read-only UI surfaces without constructing
-    MemoryManager.  MemoryManager startup can initialize Chroma embedding
-    machinery, which is unnecessary when Settings only needs to list facts.
+    MemoryManager. Imports old Chroma facts into JSON when possible, but does
+    not use Chroma for live memory reads.
     """
-    facts = _fallback_get_all_from_path()
-    if _chroma_embedding_count() == 0:
-        return facts
-
     try:
-        import chromadb
-
-        client = chromadb.PersistentClient(path=_CHROMA_DIR)
-        collection = client.get_collection(name="ltm_facts")
-        results = collection.get(
-            where={"archived": {"$eq": False}},
-            include=["documents", "metadatas"],
-        )
-        chroma_facts = []
-        for doc, meta, fid in zip(
-            results.get("documents", []),
-            results.get("metadatas", []),
-            results.get("ids", []),
-        ):
-            meta = meta or {}
-            chroma_facts.append({
-                "id": fid,
-                "text": doc,
-                "category": meta.get("category", "general"),
-                "source": meta.get("source", "summarizer"),
-                "project": meta.get("project", ""),
-                "created_at": meta.get("created_at", ""),
-                "last_seen": meta.get("last_seen", ""),
-            })
-        facts = _merge_fact_lists(facts, chroma_facts)
+        _maybe_migrate_legacy_chroma_to_json()
     except Exception as exc:
-        if facts:
-            return facts
-        print(f"[memory] lightweight fact list unavailable: {exc}")
-    return facts
-
-
-def _chroma_embedding_count() -> int | None:
-    db_path = os.path.join(_CHROMA_DIR, "chroma.sqlite3")
-    if not os.path.exists(db_path):
-        return 0
-    try:
-        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1.0)
-        try:
-            row = con.execute("select count(*) from embeddings").fetchone()
-        finally:
-            con.close()
-        return int(row[0]) if row is not None else 0
-    except Exception:
-        return None
+        print(f"[memory] legacy migration unavailable: {exc}")
+    return _fallback_get_all_from_path()
 
 
 def _fallback_get_all_from_path() -> list[dict]:

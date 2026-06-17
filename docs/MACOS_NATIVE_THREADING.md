@@ -43,12 +43,11 @@ Known protected boundaries:
   segfault during `stream=True`; set `WISP_MACOS_OPENAI_COMPAT_STREAMING=1` only
   while validating a fix. Live OpenAI-compatible context tools are separately
   gated behind `WISP_MACOS_ENABLE_OPENAI_TOOLS=1`.
-- `core.memory_store.store`: ChromaDB-backed semantic memory and background
-  memory LLM jobs are explicit opt-ins on macOS, even when
-  `WISP_MACOS_SAFE_MODE=0`. The memory UI and explicit facts still work through
-  the plain JSON fallback; set `WISP_MACOS_ENABLE_CHROMADB=1` or
-  `WISP_MACOS_ENABLE_MEMORY_BACKGROUND_LLM=1` only while validating those
-  native/background paths.
+- `core.memory_store.store`: long-term memory uses the plain JSON store plus
+  lexical/router matching. Background memory LLM jobs remain an explicit opt-in
+  on macOS, even when `WISP_MACOS_SAFE_MODE=0`; set
+  `WISP_MACOS_ENABLE_MEMORY_BACKGROUND_LLM=1` only while validating that
+  background path.
 - `core.system.sdk_clients`: OpenAI/Anthropic/httpx clients disable environment
   proxy discovery in macOS safe mode, and startup installs a process-wide urllib
   proxy guard for SDKs that build their own HTTP clients. This avoids Python's

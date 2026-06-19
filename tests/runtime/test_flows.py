@@ -1798,8 +1798,8 @@ def test_voice_flow_uses_voice_caller_config():
 
     query = brain.last_call("brain.query")["params"]
     assert query["use_tools"] is True
-    assert set(query["allowed_tools"]) == {"web_search", "get_context.browser", "alpha", "beta"}
-    assert query["pinned_tools"] == ["web_search", "get_context", "alpha"]
+    assert set(query["allowed_tools"]) == {"web_search", "get_context.browser", "retrieve_website", "alpha", "beta"}
+    assert query["pinned_tools"] == ["web_search", "get_context", "retrieve_website", "alpha"]
     assert query["memory_enabled"] is False
     # The record-start path must not wait on the slow browser page fetch.
     snapshot = native.calls_for("native.context.snapshot")[0]["params"]
@@ -1944,12 +1944,13 @@ def test_off_tool_override_beats_context_dropdown():
             "context_tools": True,
             "context_screenshot": "model",
             "context_clipboard": False,
-            # web_search and get_context forced off despite browser/docs
+            # web_search, get_context, and retrieve_website forced off despite browser/docs
             # granting them; git_status forced off drops it from the
             # frontload list; capture_screen off kills the screenshot tool.
             "tools": {
                 "web_search": "off",
                 "get_context": "off",
+                "retrieve_website": "off",
                 "git_status": "off",
                 "capture_screen": "off",
             },
@@ -2374,8 +2375,8 @@ def test_hotkey_followup_keeps_current_tools_separate_from_active_chat_tools():
         ui.emit("ui.intent.chosen", {"custom": "Use page and edit that file"})
 
     query = brain.last_call("brain.query")["params"]
-    assert query["allowed_tools"] == ["get_context.documents", "web_search", "get_context.browser"]
-    assert query["pinned_tools"] == ["get_context", "web_search"]
+    assert query["allowed_tools"] == ["get_context.documents", "web_search", "get_context.browser", "retrieve_website"]
+    assert query["pinned_tools"] == ["get_context", "web_search", "retrieve_website"]
     assert query["file_access_mode"] == "off"
     assert query["use_tools"] is True
 

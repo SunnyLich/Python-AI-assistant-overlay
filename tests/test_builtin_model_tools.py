@@ -20,6 +20,7 @@ class BuiltinModelToolsTests(unittest.TestCase):
         names = {schema["name"] for schema in llm._TOOL_REGISTRY.schemas()}
 
         self.assertTrue(self._GIT_TOOLS <= names)
+        self.assertIn("retrieve_website", names)
 
     def test_git_and_github_tools_surface_for_relevant_prompt(self):
         # These tools are keyword-gated (see tool_keywords.json): an empty prompt
@@ -51,6 +52,25 @@ class BuiltinModelToolsTests(unittest.TestCase):
         self.assertIn("web_search", names)
         self.assertIn("get_context", names)
         self.assertTrue(self._GIT_TOOLS.isdisjoint(names))
+
+    def test_retrieve_website_is_browser_scoped(self):
+        """Verify retrieve_website follows explicit Browser/Web tool grants."""
+        names = {
+            schema["name"]
+            for schema in llm._get_tool_schemas(
+                "read this website",
+                allowed_tools=["retrieve_website"],
+                pinned_tools=["retrieve_website"],
+            )
+        }
+        blocked = llm._execute_model_tool(
+            "retrieve_website",
+            {"url": "https://example.com"},
+            allowed_tools=["get_context.documents"],
+        )
+
+        self.assertIn("retrieve_website", names)
+        self.assertIn("disabled", blocked)
 
     def test_memory_search_is_opt_in(self):
         """Verify memory search is opt in behavior."""

@@ -57,7 +57,7 @@ def allowed_model_tools(caller: dict[str, Any]) -> list[str]:
     if context_mode(caller, "documents") == "model":
         allowed.append("get_context.documents")
     if context_mode(caller, "browser") == "model":
-        allowed.extend(["web_search", "get_context.browser"])
+        allowed.extend(["web_search", "get_context.browser", "retrieve_website"])
     if context_mode(caller, "github") == "model":
         allowed.extend(["git_status", "git_diff", "github_repo", "github_issue"])
     memory_mode = context_mode(caller, "memory")
@@ -89,7 +89,7 @@ def pinned_model_tools(caller: dict[str, Any]) -> list[str]:
     if context_mode(caller, "documents") == "model":
         pinned.append("get_context")
     if context_mode(caller, "browser") == "model":
-        pinned.extend(["web_search", "get_context"])
+        pinned.extend(["web_search", "get_context", "retrieve_website"])
     if context_mode(caller, "github") == "model":
         pinned.extend(["git_status", "git_diff", "github_repo", "github_issue"])
     if context_mode(caller, "memory") == "model":

@@ -1635,7 +1635,7 @@ def test_tool_access_dialog_round_trips_overrides():
         combos = dlg._combos
         # Every context tool gets its own selector now.
         assert {
-            "web_search", "get_context", "git_status", "git_diff",
+            "web_search", "get_context", "retrieve_website", "git_status", "git_diff",
             "github_repo", "github_issue", "memory_search", "capture_screen",
             "list_files", "read_file", "create_file", "edit_file", "write_file",
         } <= set(combos)

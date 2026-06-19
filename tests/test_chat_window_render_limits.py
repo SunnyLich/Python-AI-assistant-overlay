@@ -303,7 +303,8 @@ def test_chat_context_policy_controls_are_compact_menu_chips(monkeypatch):
 
         browser_chip = window._context_controls["browser"]
         assert browser_chip.objectName() == "chatContextChip_browser"
-        assert "\n" in browser_chip.text()
+        assert browser_chip.text().count("\n") == 2
+        assert browser_chip.property("context_tokens") == "0 tok"
         assert window._context_controls["selection"].property("context_state") == "off"
 
         window._show_context_policy_menu("browser")
@@ -315,6 +316,8 @@ def test_chat_context_policy_controls_are_compact_menu_chips(monkeypatch):
 
         assert conversations[0]["context_policy"]["context_browser_mode"] == "auto"
         assert browser_chip.property("context_state") == "on"
+        assert browser_chip.property("context_tokens") == "? tok"
+        assert "Token estimate" in browser_chip.toolTip()
     finally:
         window.close()
         app.processEvents()

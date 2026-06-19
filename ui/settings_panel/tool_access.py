@@ -31,6 +31,7 @@ from ui.shared.window_utils import enable_standard_window_controls
 CONTEXT_GOVERNED_TOOLS: dict[str, str] = {
     "web_search":     "Browser/Web",
     "get_context":    "Open docs / Browser/Web",
+    "retrieve_website": "Browser/Web",
     "git_status":     "Git/GitHub",
     "git_diff":       "Git/GitHub",
     "github_repo":    "Git/GitHub",

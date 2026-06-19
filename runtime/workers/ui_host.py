@@ -1438,8 +1438,8 @@ class QtProtocolHost:
         self._agent_history_dialog: MacAgentHistoryDialog | None = None
         from core.conversation_store import store as conversation_store
         self._active_project_id = conversation_store.GENERAL_PROJECT_ID
-        # Conversation hotkey/voice prompts continue. None on startup so the
-        # first prompt opens a fresh conversation; not persisted across restarts.
+        # Conversation hotkey/voice prompts continue when the intent overlay or
+        # chat window selects a target. None means the next prompt starts fresh.
         self._active_conversation_idx: int | None = None
         try:
             self._all_conversations: list[dict] = conversation_store.load_conversations()
@@ -1784,18 +1784,24 @@ class QtProtocolHost:
             caller_idx=caller_idx,
             target_hwnd=target_hwnd,
             context_items=context_items,
+            conversation_options=self._intent_conversation_options(),
         )
-        self._intent.intent_chosen.connect(
-            lambda intent, custom: self.emit(
+        def _chosen(intent: str, custom: str) -> None:
+            overlay = self._intent
+            conversation_choice = overlay.conversation_choice() if overlay else {"mode": "new"}
+            applied_choice = self._apply_intent_conversation_choice(conversation_choice)
+            self.emit(
                 "ui.intent.chosen",
                 {
                     "caller_idx": caller_idx,
                     "intent": intent,
                     "custom": custom,
-                    "context_choices": self._intent.context_choices() if self._intent else [],
+                    "context_choices": overlay.context_choices() if overlay else [],
+                    "conversation_choice": applied_choice,
                 },
             )
-        )
+
+        self._intent.intent_chosen.connect(_chosen)
         self._intent.cancelled.connect(lambda: self.emit("ui.intent.cancelled", {"caller_idx": caller_idx}))
         self._intent.destroyed.connect(lambda: setattr(self, "_intent", None))
         self._intent.show()
@@ -2069,6 +2075,56 @@ class QtProtocolHost:
                 return text[:limit] + ("..." if len(text) > limit else "")
         return t("New chat")
 
+    def _chat_conversation_subtitle(self, idx: int) -> str:
+        """Return a short display timestamp for an intent overlay chat option."""
+        if not (0 <= idx < len(self._all_conversations)):
+            return ""
+        conv = self._all_conversations[idx]
+        raw = str(conv.get("updated_at") or conv.get("created_at") or "").strip()
+        if not raw:
+            return ""
+        return raw.replace("T", " ").split("+", 1)[0].split(".", 1)[0]
+
+    def _intent_conversation_options(self, limit: int = 12) -> list[dict[str, Any]]:
+        """Return latest-first chat history options for the intent overlay."""
+        if not self._all_conversations:
+            return []
+        selected_idx = (
+            self._active_conversation_idx
+            if isinstance(self._active_conversation_idx, int)
+            and 0 <= self._active_conversation_idx < len(self._all_conversations)
+            else len(self._all_conversations) - 1
+        )
+        options: list[dict[str, Any]] = []
+        for idx in range(len(self._all_conversations) - 1, -1, -1):
+            options.append(
+                {
+                    "index": idx,
+                    "title": self._chat_notice_title(idx, limit=72) or t("Conversation"),
+                    "subtitle": self._chat_conversation_subtitle(idx),
+                    "selected": idx == selected_idx,
+                }
+            )
+            if len(options) >= limit:
+                break
+        return options
+
+    def _apply_intent_conversation_choice(self, choice: dict[str, Any] | None) -> dict[str, Any]:
+        """Apply the intent overlay's new/continue selection before prompting."""
+        choice = choice or {}
+        if str(choice.get("mode") or "").strip().lower() == "new":
+            self._active_conversation_idx = None
+            return {"mode": "new"}
+        try:
+            idx = int(choice.get("index"))
+        except (TypeError, ValueError):
+            idx = len(self._all_conversations) - 1 if self._all_conversations else -1
+        if 0 <= idx < len(self._all_conversations):
+            self._active_conversation_idx = idx
+            return {"mode": "continue", "index": idx}
+        self._active_conversation_idx = None
+        return {"mode": "new"}
+
     def _chat_active_history(self) -> dict[str, Any]:
         """Return prior turns + memory project for the active conversation.
 
@@ -2275,9 +2331,9 @@ class QtProtocolHost:
     ) -> dict[str, Any]:
         """Handle chat add conversation for qt protocol host."""
         import uuid as _uuid
-        from datetime import UTC, datetime
+        from datetime import datetime, timezone
 
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         user_msg: dict[str, Any] = {
             "id": str(_uuid.uuid4()),
             "role": "user",

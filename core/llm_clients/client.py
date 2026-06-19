@@ -269,13 +269,7 @@ def _execute_get_context(inputs: dict) -> str:
     """Built-in context tool: fetch a browser page or open document text."""
     url = inputs.get("url", "").strip()
     if url:
-        from core.context_fetcher import fetch_browser_content_for_tool
-        result = fetch_browser_content_for_tool(url)
-        _log_context(
-            f"tool: get_context (browser) -” {url!r}",
-            result or "",
-        )
-        return result or f"Could not fetch content from {url!r}."
+        return _execute_retrieve_website({"url": url}, tool_name="get_context")
 
     from core.context_fetcher import get_all_open_document_paths
 
@@ -287,6 +281,21 @@ def _execute_get_context(inputs: dict) -> str:
     if text:
         return text
     return "Open document windows were detected, but none of their file types were readable."
+
+
+def _execute_retrieve_website(inputs: dict, *, tool_name: str = "retrieve_website") -> str:
+    """Fetch the visible text of a URL as an explicit model tool."""
+    url = str((inputs or {}).get("url") or "").strip()
+    if not url:
+        return "retrieve_website requires a URL."
+    from core.context_fetcher import fetch_browser_content_for_tool
+
+    result = fetch_browser_content_for_tool(url)
+    _log_context(
+        f"tool: {tool_name} (browser) - {url!r}",
+        result or "",
+    )
+    return result or f"Could not fetch content from {url!r}."
 
 
 def _execute_memory_search(inputs: dict) -> str:
@@ -533,6 +542,27 @@ def _register_builtin_tools() -> None:
                 "required": [],
             },
             executor=_execute_get_context,
+        )
+    )
+    _TOOL_REGISTRY.register_builtin(
+        ToolSpec(
+            name="retrieve_website",
+            description=(
+                "Fetch the full readable text of a specific web page URL on demand. "
+                "Use this when the user asks about a website/page and the passive "
+                "browser preview is missing, partial, stale, or not enough."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The http:// or https:// page URL to fetch.",
+                    }
+                },
+                "required": ["url"],
+            },
+            executor=_execute_retrieve_website,
         )
     )
     _TOOL_REGISTRY.register_builtin(
@@ -3431,7 +3461,7 @@ def stream_response(
                           core.memory -” injected into system prompt before the
                           ambient context block.
         use_tools:        If True and provider is Anthropic, expose
-                  web_search + get_context tools so Claude can
+                  web_search + get_context/retrieve_website tools so Claude can
                   pull extra context when it decides to. The model
                   must use the actual tool call interface rather than
                   describing or simulating tool calls in text.

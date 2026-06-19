@@ -281,7 +281,10 @@ def test_intent_overlay_cycles_context_chip(monkeypatch):
             Qt.MouseButton.LeftButton,
             pos=QPoint(
                 intent_overlay._PAD_H + intent_overlay._CTX_CHIP_W // 2,
-                intent_overlay._PAD_V + intent_overlay._CTX_TOP + intent_overlay._CTX_CHIP_H // 2,
+                intent_overlay._PAD_V
+                + intent_overlay._CONV_H
+                + intent_overlay._CTX_TOP
+                + intent_overlay._CTX_CHIP_H // 2,
             ),
         )
         app.processEvents()
@@ -291,6 +294,35 @@ def test_intent_overlay_cycles_context_chip(monkeypatch):
         assert overlay.context_choices()[0]["state"] == "off"
     finally:
         config.CALLER_ROWS[:] = old_rows
+        overlay.close()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_intent_overlay_conversation_choice_toggles_new_and_continue():
+    """Verify the intent overlay exposes the selected conversation mode."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    import ui.intent_overlay as intent_overlay
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    overlay = intent_overlay.IntentOverlay(
+        caller_idx=0,
+        conversation_options=[
+            {"index": 1, "title": "Latest chat", "selected": True},
+            {"index": 0, "title": "Older chat"},
+        ],
+    )
+    try:
+        assert overlay.conversation_choice() == {"mode": "continue", "index": 1}
+
+        overlay._toggle_conversation_mode()
+        assert overlay.conversation_choice() == {"mode": "new"}
+
+        overlay._set_conversation_choice(0)
+        assert overlay.conversation_choice() == {"mode": "continue", "index": 0}
+    finally:
         overlay.close()
         app.processEvents()
 

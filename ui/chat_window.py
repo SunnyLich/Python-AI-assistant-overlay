@@ -14,7 +14,7 @@ import re
 import threading
 import uuid
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from PySide6.QtCore import QMimeData, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
@@ -75,9 +75,38 @@ _SIDEBAR_MENU_W = 32
 _SIDEBAR_FADE_W = 34
 
 
+def _estimate_context_tokens(text: str) -> int:
+    """Fast token estimate matching the intent overlay preview."""
+    cjk = 0
+    for ch in text or "":
+        code = ord(ch)
+        if (
+            0x3040 <= code <= 0x30FF
+            or 0x3400 <= code <= 0x4DBF
+            or 0x4E00 <= code <= 0x9FFF
+            or 0xAC00 <= code <= 0xD7AF
+            or 0xFF00 <= code <= 0xFFEF
+        ):
+            cjk += 1
+    return max(0, round(cjk * 0.85 + (len(text or "") - cjk) / 4))
+
+
+def _token_label(text: str) -> str:
+    tokens = _estimate_context_tokens(text)
+    if tokens <= 0:
+        return "0 tok"
+    if tokens >= 1000:
+        return f"~{tokens / 1000:.1f}k tok"
+    return f"~{tokens} tok"
+
+
+def _deferred_token_label() -> str:
+    return "? tok"
+
+
 def _now_iso() -> str:
     """Return current UTC time for conversation metadata."""
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _parse_iso_datetime(value: str | None) -> datetime | None:
@@ -781,6 +810,8 @@ class ChatWindow(QWidget):
         self._context_control_options: dict[str, list[tuple[str, str]]] = {}
         self._context_control_labels: dict[str, str] = {}
         self._context_control_keys: dict[str, str] = {}
+        self._context_control_tokens: dict[str, str] = {}
+        self._context_control_warnings: dict[str, str] = {}
         self._context_controls_updating = False
         self._conversation_menu: QMenu | None = None
         self.setAcceptDrops(True)
@@ -1390,7 +1421,7 @@ class ChatWindow(QWidget):
         preview = " ".join(text.split())  # collapse newlines/runs to one line
         if len(preview) > 160:
             preview = preview[:160].rstrip() + "…"
-        body = f"{t('Context')} · {html.escape(preview)}"
+        body = f"{t('Context')} · {_token_label(text)} · {html.escape(preview)}"
         if truncated:
             body += f" <span style='color:#d6a04a;'>· {t('truncated')}</span>"
         lbl = QLabel(body)
@@ -1542,7 +1573,7 @@ class ChatWindow(QWidget):
             chip = QPushButton()
             chip.setObjectName(f"chatContextChip_{source}")
             chip.setCursor(Qt.CursorShape.PointingHandCursor)
-            chip.setFixedHeight(42)
+            chip.setFixedHeight(54)
             chip.setMinimumWidth(78)
             chip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             chip.clicked.connect(lambda _checked=False, source=source: self._show_context_policy_menu(source))
@@ -1597,14 +1628,35 @@ class ChatWindow(QWidget):
             "QPushButton::menu-indicator { image: none; width: 0; }"
         )
 
+    def _context_token_metadata(self, source: str, state: str) -> tuple[str, str]:
+        """Return (token label, warning) for one chat context/tool chip."""
+        if state == "off":
+            return "0 tok", ""
+        if source == "files":
+            return _deferred_token_label(), t("File context depends on which file tools are used.")
+        if source == "memory":
+            return _deferred_token_label(), t("Memory tokens are estimated after the prompt is known.")
+        if source == "screenshot":
+            return _deferred_token_label(), t("Screenshot image cost is not known until it is sent or requested.")
+        if source in {"ambient", "browser", "selection", "clipboard"}:
+            return _deferred_token_label(), t("This context is fetched when you send the message, so this token cost is not known yet.")
+        return _deferred_token_label(), ""
+
     def _update_context_chip(self, chip: QPushButton, source: str, state: str) -> None:
         """Paint one compact context chip from its current state."""
         key = self._context_control_keys.get(source, "")
         label = self._context_control_labels.get(source, source)
         state_label = self._state_label_for_context_source(source, state)
-        chip.setText(f"{key} {label}\n{state_label}")
-        chip.setToolTip(f"{label}: {state_label}")
+        tokens, warning = self._context_token_metadata(source, state)
+        self._context_control_tokens[source] = tokens
+        self._context_control_warnings[source] = warning
+        chip.setText(f"{key} {label}\n{state_label}\n{tokens}")
+        tooltip = f"{label}: {state_label}\n{t('Token estimate')}: {tokens}"
+        if warning:
+            tooltip += f"\n\n{warning}"
+        chip.setToolTip(tooltip)
         chip.setProperty("context_state", state)
+        chip.setProperty("context_tokens", tokens)
         chip.setStyleSheet(self._context_chip_style(state))
 
     def _show_context_policy_menu(self, source: str) -> None:

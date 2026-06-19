@@ -9,7 +9,7 @@ Press the matching key to pick, Escape to cancel.
 from __future__ import annotations
 import os
 import sys
-from PySide6.QtWidgets import QWidget, QApplication, QLineEdit, QToolTip
+from PySide6.QtWidgets import QWidget, QApplication, QLineEdit, QMenu, QToolTip
 from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QRect
 from PySide6.QtGui import QPainter, QColor, QFont, QPen, QBrush, QPainterPath, QFontMetrics
 import config
@@ -138,6 +138,8 @@ _BADGE_X       = 12       # badge left offset inside row
 _TEXT_X        = _BADGE_X + _BADGE_W + 12
 _AUTO_CLOSE_MS = 60000
 _INPUT_EXTRA   = 54
+_CONV_H        = 38
+_CONV_TOP      = 4
 _CTX_H         = 92
 _CTX_GAP       = 4
 _CTX_CHIP_H    = 58
@@ -252,6 +254,7 @@ class IntentOverlay(QWidget):
         caller_idx: int = 0,
         target_hwnd: int = 0,
         context_items: list[dict] | None = None,
+        conversation_options: list[dict] | None = None,
         parent=None,
     ):
         """Initialize the intent overlay instance."""
@@ -280,12 +283,23 @@ class IntentOverlay(QWidget):
             next_item.setdefault("default_state", next_item.get("state", "off"))
             next_item.setdefault("touched", False)
             self._context_items.append(next_item)
+        self._conversation_options = self._normalize_conversation_options(conversation_options or [])
+        selected = next(
+            (item for item in self._conversation_options if item.get("selected")),
+            self._conversation_options[0] if self._conversation_options else None,
+        )
+        self._conversation_mode = "continue" if selected is not None else "new"
+        self._conversation_index = int(selected["index"]) if selected is not None else None
+        self._conversation_mode_rect = QRect()
+        self._conversation_list_rect = QRect()
+        self._conversation_menu: QMenu | None = None
         self._warning_rects: list[tuple[QRect, str]] = []
         self._last_warning_idx: int | None = None
         self._auto_custom_mode = self._custom_row_index_without_key()
         n_rows = len(self._rows)
+        conversation_h = _CONV_H if self._show_conversation_selector else 0
         context_h = _CTX_H if self._context_items else 0
-        h = _PAD_V * 2 + context_h + _ROW_H * n_rows + 26   # 26px ESC hint
+        h = _PAD_V * 2 + conversation_h + context_h + _ROW_H * n_rows + 26   # 26px ESC hint
         self._normal_h = h
         self.setFixedSize(_W, h)
         self._target_hwnd = target_hwnd
@@ -408,6 +422,55 @@ class IntentOverlay(QWidget):
         """Return the current per-prompt context source states."""
         return [dict(item) for item in self._context_items]
 
+    @staticmethod
+    def _normalize_conversation_options(options: list[dict]) -> list[dict]:
+        """Return compact history options for the overlay selector."""
+        normalized: list[dict] = []
+        for raw in options or []:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                idx = int(raw.get("index"))
+            except (TypeError, ValueError):
+                continue
+            title = " ".join(str(raw.get("title") or "").split()).strip()
+            if not title:
+                title = t("Conversation")
+            subtitle = " ".join(str(raw.get("subtitle") or "").split()).strip()
+            normalized.append(
+                {
+                    "index": idx,
+                    "title": title,
+                    "subtitle": subtitle,
+                    "selected": bool(raw.get("selected")),
+                }
+            )
+        return normalized
+
+    @property
+    def _show_conversation_selector(self) -> bool:
+        return True
+
+    def conversation_choice(self) -> dict:
+        """Return the selected chat continuation mode for this prompt."""
+        if self._conversation_mode == "continue" and self._conversation_index is not None:
+            return {"mode": "continue", "index": int(self._conversation_index)}
+        return {"mode": "new"}
+
+    def _selected_conversation_option(self) -> dict | None:
+        if self._conversation_index is None:
+            return None
+        for option in self._conversation_options:
+            if int(option.get("index", -1)) == int(self._conversation_index):
+                return option
+        return None
+
+    def _selected_conversation_title(self) -> str:
+        option = self._selected_conversation_option()
+        if option is None:
+            return t("Latest conversation") if self._conversation_options else t("No history yet")
+        return str(option.get("title") or t("Conversation"))
+
     def update_context_items(self, items: list[dict]) -> None:
         """Refresh context chip metadata while preserving user-toggled states."""
         if not items:
@@ -458,6 +521,9 @@ class IntentOverlay(QWidget):
 
         y = _PAD_V
         self._warning_rects = []
+        if self._show_conversation_selector:
+            self._paint_conversation_selector(p, y, hint_font, ctx_label_font, palette)
+            y += _CONV_H
         if self._context_items:
             self._paint_context_items(p, y, ctx_label_font, ctx_state_font, ctx_token_font, palette)
             y += _CTX_H
@@ -526,6 +592,54 @@ class IntentOverlay(QWidget):
         p.drawText(0, esc_y, _W, 18, Qt.AlignmentFlag.AlignCenter, t("ESC to cancel"))
 
         p.end()
+
+    def _paint_conversation_selector(
+        self,
+        p: QPainter,
+        y: int,
+        label_font: QFont,
+        value_font: QFont,
+        palette: dict[str, QColor],
+    ) -> None:
+        """Paint the chat continuation selector row."""
+        top = y + _CONV_TOP
+        mode_rect = QRect(_PAD_H, top, 164, 28)
+        list_rect = QRect(mode_rect.right() + 6, top, _W - _PAD_H - mode_rect.right() - 6, 28)
+        self._conversation_mode_rect = mode_rect
+        self._conversation_list_rect = list_rect
+
+        for rect, active in (
+            (mode_rect, self._conversation_mode == "continue"),
+            (list_rect, self._conversation_mode == "continue" and self._conversation_index is not None),
+        ):
+            path = QPainterPath()
+            path.addRoundedRect(rect, 7, 7)
+            bg = QColor(palette["badge_hl"] if active else palette["badge_bg"])
+            bg.setAlpha(58 if active else 200)
+            p.fillPath(path, QBrush(bg))
+            p.setPen(QPen(palette["border"], 1))
+            p.drawPath(path)
+
+        mode_text = t("Continuing conversation") if self._conversation_mode == "continue" else t("New conversation")
+        p.setFont(label_font)
+        p.setPen(QPen(palette["ctx_text"]))
+        p.drawText(mode_rect.adjusted(8, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, mode_text)
+
+        value = (
+            self._selected_conversation_title()
+            if self._conversation_mode == "continue"
+            else t("Start a new chat")
+        )
+        if self._conversation_mode == "continue" and self._conversation_options:
+            value += "  ▾"
+        p.setFont(value_font)
+        p.setPen(QPen(palette["ctx_sub"] if self._conversation_mode == "new" else palette["ctx_text"]))
+        elided = QFontMetrics(value_font).elidedText(
+            value,
+            Qt.TextElideMode.ElideRight,
+            max(20, list_rect.width() - 14),
+        )
+        p.drawText(list_rect.adjusted(8, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided)
 
     def _paint_context_items(
         self,
@@ -625,7 +739,7 @@ class IntentOverlay(QWidget):
         if not self._context_items:
             return None
         x = _PAD_H
-        top = _PAD_V + _CTX_TOP
+        top = _PAD_V + (_CONV_H if self._show_conversation_selector else 0) + _CTX_TOP
         for item in self._context_items:
             rect = QRect(x, top, _CTX_CHIP_W, _CTX_CHIP_H)
             if rect.contains(pos):
@@ -634,6 +748,61 @@ class IntentOverlay(QWidget):
             if x + _CTX_CHIP_W > _W - _PAD_H:
                 break
         return None
+
+    def _toggle_conversation_mode(self) -> bool:
+        """Swap between continuing the selected chat and starting fresh."""
+        if self._conversation_mode == "continue":
+            self._conversation_mode = "new"
+        elif self._conversation_options:
+            self._conversation_mode = "continue"
+            if self._conversation_index is None:
+                self._conversation_index = int(self._conversation_options[0]["index"])
+        else:
+            self._conversation_mode = "new"
+        self.update()
+        return True
+
+    def _show_conversation_menu(self) -> None:
+        """Open the chat history selector menu."""
+        if not self._conversation_options:
+            return
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background: rgba(22,22,32,248); color: #eeeef8; border: 1px solid rgba(255,255,255,30); }"
+            "QMenu::item:selected { background: rgba(160,160,255,34); }"
+        )
+        current = self._conversation_index
+        for option in self._conversation_options:
+            idx = int(option["index"])
+            title = str(option.get("title") or t("Conversation"))
+            subtitle = str(option.get("subtitle") or "")
+            label = title if not subtitle else f"{title}  ·  {subtitle}"
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(idx == current and self._conversation_mode == "continue")
+            action.triggered.connect(lambda _checked=False, idx=idx: self._set_conversation_choice(idx))
+        self._conversation_menu = menu
+        menu.aboutToHide.connect(lambda: setattr(self, "_conversation_menu", None))
+        menu.popup(self.mapToGlobal(self._conversation_list_rect.bottomLeft()))
+
+    def _set_conversation_choice(self, idx: int) -> None:
+        self._conversation_mode = "continue"
+        self._conversation_index = int(idx)
+        self.update()
+
+    def _handle_conversation_click(self, pos: QPoint) -> bool:
+        """Handle clicks in the continuation selector."""
+        if not self._show_conversation_selector:
+            return False
+        if self._conversation_mode_rect.contains(pos):
+            return self._toggle_conversation_mode()
+        if self._conversation_list_rect.contains(pos):
+            if self._conversation_mode == "new" and self._conversation_options:
+                self._conversation_mode = "continue"
+            self._show_conversation_menu()
+            self.update()
+            return True
+        return False
 
     def _cycle_context_at(self, pos: QPoint) -> bool:
         """Cycle a context chip at a mouse position."""
@@ -686,6 +855,9 @@ class IntentOverlay(QWidget):
     def mousePressEvent(self, event):  # noqa: N802
         """Toggle context chips when clicked."""
         if event.button() == Qt.MouseButton.LeftButton:
+            if self._handle_conversation_click(event.position().toPoint()):
+                event.accept()
+                return
             if self._cycle_context_at(event.position().toPoint()):
                 event.accept()
                 return
@@ -810,6 +982,8 @@ class IntentOverlay(QWidget):
     def _cancel_if_focus_left(self) -> None:
         """Cancel when focus has moved outside the overlay."""
         if self._handled or not self.isVisible():
+            return
+        if self._conversation_menu is not None and self._conversation_menu.isVisible():
             return
         focus = QApplication.focusWidget()
         if focus is not None and (focus is self or self.isAncestorOf(focus)):

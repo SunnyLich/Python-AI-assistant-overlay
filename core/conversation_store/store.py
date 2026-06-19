@@ -19,7 +19,7 @@ import json
 import os
 import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from core.system.paths import CHATS_DIR, CONVERSATIONS_FILE, PROJECTS_FILE
 
@@ -31,7 +31,7 @@ _lock = threading.RLock()
 
 def _now_iso() -> str:
     """Handle now iso for conversation store store."""
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _read_json(path, default):

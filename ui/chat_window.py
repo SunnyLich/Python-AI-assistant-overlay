@@ -244,7 +244,7 @@ def _truncate_segments_for_display(
 
 class _StreamSignals(QObject):
     """Model stream signals."""
-    chunk     = Signal(str)
+    chunk     = Signal(object)
     final     = Signal(str)
     metadata  = Signal(object)
     finished  = Signal()
@@ -1472,6 +1472,8 @@ class ChatWindow(QWidget):
                         self._signals.final.emit(str(item.get("text") or ""))
                     elif isinstance(item, dict) and item.get("type") == "metadata":
                         self._signals.metadata.emit(item)
+                    elif isinstance(item, dict) and item.get("type") == "chunk":
+                        self._signals.chunk.emit(item)
                     else:
                         self._signals.chunk.emit(str(item or ""))
             finally:
@@ -1479,8 +1481,20 @@ class ChatWindow(QWidget):
 
         threading.Thread(target=_stream, daemon=True).start()
 
-    def _on_chunk(self, chunk: str):
+    def _on_chunk(self, chunk: object):
         """Handle chunk events."""
+        if isinstance(chunk, dict):
+            text = str(chunk.get("text") or "")
+            if bool(chunk.get("is_thought")):
+                _merge_display_segments(self._current_ai_segments, text, True)
+                if self._current_ai_label:
+                    self._current_ai_label.setHtml(
+                        _assistant_segments_to_html(_truncate_segments_for_display(self._current_ai_segments))
+                    )
+                self._scroll_bottom()
+                return
+            chunk = text
+        chunk = str(chunk or "")
         self._current_ai_text += chunk
         if self._current_ai_parser is None:
             self._current_ai_parser = ThoughtStreamParser()

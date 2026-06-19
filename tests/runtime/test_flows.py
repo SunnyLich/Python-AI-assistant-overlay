@@ -1037,6 +1037,40 @@ def test_tts_speaks_short_progress_before_final_answer():
     assert ui.last_call("ui.chat.add_conversation")["params"]["assistant"] == final
 
 
+def test_thought_chunks_show_without_becoming_final_answer():
+    """Verify structured thought chunks render early but do not pollute final text."""
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents": False,
+            "context_tools": False,
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+
+    def stream(_params: dict[str, Any], on_event) -> dict[str, Any]:
+        """Emit thought text before the visible answer."""
+        on_event("reply.chunk", {"text": "Thinking first.", "is_thought": True}, 1)
+        on_event("reply.chunk", {"text": "Answer."}, 1)
+        on_event("reply.done", {"text": "Answer."}, 1)
+        return {"text": "Answer."}
+
+    brain = FakeWorker(stream_handlers={"brain.query": stream})
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="")})
+    with caller_config(rows):
+        _flow, _native, ui, _brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "Explain"})
+
+    chunks = [call["params"] for call in ui.calls_for("ui.reply.chunk")]
+    assert {"text": "Thinking first.", "is_thought": True, "is_progress": False} in chunks
+    assert {"text": "Answer.", "is_thought": False, "is_progress": False} in chunks
+    assert len(ui.calls_for("ui.reply.reset")) == 1
+    assert ui.last_call("ui.chat.add_conversation")["params"]["assistant"] == "Answer."
+
+
 def test_model_screenshot_mode_precaptures_through_native_worker():
     """Verify model screenshot mode precaptures through native worker behavior."""
     image_bytes = b"fake screenshot"
@@ -1321,6 +1355,40 @@ def test_rewrite_flow_pastes_back_to_original_pid():
     assert ui.calls_for("ui.reply.done"), "bubble should be finished after paste"
     assert not ui.calls_for("ui.reply.notice"), "rewrite status must not go in the bubble"
     assert not native.calls_for("native.notify"), "successful paste should not notify"
+
+
+def test_paste_back_file_prompt_routes_to_local_file_tools():
+    """Verify paste-back callers can edit files instead of clipboard-pasting."""
+    rows = [
+        {
+            "paste_back": True,
+            "context_ambient": True,
+            "context_documents": False,
+            "context_tools": False,
+            "context_screenshot": "off",
+            "context_clipboard": False,
+            "file_access": "off",
+        },
+    ]
+    native = FakeWorker(
+        {
+            "native.context.snapshot": context_handler(selected="selected text", pid=777, focus_token=9),
+            "native.paste_text": lambda _params: {"ok": True},
+        }
+    )
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("edited file")})
+    with caller_config(rows):
+        _flow, native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        native.emit("native.hotkey", {"kind": "caller", "index": 0})
+        ui.emit("ui.intent.chosen", {"custom": "Edit local file notes.md to say hi"})
+
+    assert not brain.calls_for("brain.rewrite")
+    assert not native.calls_for("native.paste_text")
+    params = brain.last_call("brain.query")["params"]
+    assert params["file_access_mode"] == "ask"
+    assert set(params["allowed_tools"]) >= {"list_files", "read_file", "create_file", "edit_file", "write_file"}
+    assert set(params["pinned_tools"]) >= {"list_files", "read_file", "create_file", "edit_file", "write_file"}
+    assert ui.calls_for("ui.chat.add_conversation")
 
 
 def test_rewrite_falls_back_to_clipboard_when_focus_not_confirmed():

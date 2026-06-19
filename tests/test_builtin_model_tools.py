@@ -617,6 +617,37 @@ class BuiltinModelToolsTests(unittest.TestCase):
             config.TOOL_FILE_BLOCKED_GLOBS = old_blocked
             llm.set_live_file_access_mode(None)
 
+    def test_responses_reasoning_summary_deltas_stream_as_thoughts(self):
+        """Verify Responses reasoning deltas are surfaced as thought chunks."""
+        events = [
+            SimpleNamespace(type="response.reasoning_summary_text.delta", delta="Thinking "),
+            SimpleNamespace(type="response.reasoning_text.delta", delta="through it."),
+            SimpleNamespace(type="response.output_text.delta", delta="Done."),
+        ]
+
+        class FakeStream:
+            def __enter__(self):
+                return iter(events)
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeResponses:
+            def stream(self, **_kwargs):
+                return FakeStream()
+
+        chunks = list(
+            llm._response_stream_text(
+                SimpleNamespace(responses=FakeResponses()),
+                {"model": "gpt-test", "input": "hi"},
+                provider="chatgpt",
+                model="gpt-test",
+            )
+        )
+
+        self.assertEqual(chunks, ["Thinking ", "through it.", "Done."])
+        self.assertEqual([getattr(chunk, "kind", "answer") for chunk in chunks], ["thought", "thought", "answer"])
+
     def test_codex_responses_tool_loop_falls_back_when_tool_output_loses_state(self):
         """Verify tool output fallback handles routes that do not retain prior calls."""
         old_roots = getattr(config, "TOOL_FILE_ROOTS", [])

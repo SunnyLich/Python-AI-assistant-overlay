@@ -2,10 +2,10 @@
 id = "hi-notepad-test"
 name = "Hi Notepad Test"
 version = "1.0.0"
-description = "Test addon that opens Notepad and asks Wisp to say hi when the prompt contains standalone hi."
+description = "Test addon that opens Notepad with hi from wisp when the prompt contains standalone hi."
 entry = "__init__.py"
 api_version = "1"
 priority = 10
 
 [permissions]
-query = "modify"
+query = "read"

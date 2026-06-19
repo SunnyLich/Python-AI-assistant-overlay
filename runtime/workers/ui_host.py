@@ -2104,12 +2104,17 @@ class QtProtocolHost:
                 while True:
                     kind, payload = stream.get()
                     if kind == "chunk":
+                        is_thought = False
                         if isinstance(payload, dict):
                             chunk = str(payload.get("text") or "")
+                            is_thought = bool(payload.get("is_thought"))
                         else:
                             chunk = str(payload or "")
-                        streamed_text += chunk
-                        yield chunk
+                        if not is_thought:
+                            streamed_text += chunk
+                            yield chunk
+                        else:
+                            yield {"type": "chunk", "text": chunk, "is_thought": True}
                     elif kind == "done":
                         final_text = ""
                         file_context = []
@@ -2142,11 +2147,26 @@ class QtProtocolHost:
         with self._chat_streams_lock:
             return self._chat_streams.get(str(request_id))
 
-    def _chat_chunk(self, request_id: str = "", text: str = "", is_progress: bool = False) -> dict[str, Any]:
+    def _chat_chunk(
+        self,
+        request_id: str = "",
+        text: str = "",
+        is_progress: bool = False,
+        is_thought: bool = False,
+    ) -> dict[str, Any]:
         """Handle chat chunk for qt protocol host."""
         stream = self._chat_stream(request_id)
         if stream is not None:
-            stream.put(("chunk", {"text": text, "is_progress": bool(is_progress)}))
+            stream.put(
+                (
+                    "chunk",
+                    {
+                        "text": text,
+                        "is_progress": bool(is_progress),
+                        "is_thought": bool(is_thought),
+                    },
+                )
+            )
         return {"queued": stream is not None}
 
     def _chat_done(

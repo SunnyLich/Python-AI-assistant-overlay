@@ -1289,6 +1289,7 @@ def brain_query(
     from core.query_pipeline import ContextInputs, build_context
     import config
 
+    query_started = time.monotonic()
     _reload_config_for_live_file_tools(
         use_tools=use_tools,
         allowed_tools=allowed_tools,
@@ -1346,6 +1347,12 @@ def brain_query(
 
     parts: list[str] = []
     file_context: list[dict[str, Any]] = []
+    _log(
+        "brain.query stream starting after "
+        f"{time.monotonic() - query_started:.2f}s "
+        f"tools={bool(use_tools)} file_access={file_access_mode or 'off'}"
+    )
+    first_chunk_seen = False
     for chunk in _stream_query_reply(
         built,
         memory_context,
@@ -1362,10 +1369,15 @@ def brain_query(
         if ctx.cancelled:
             break
         text = str(chunk)
-        is_progress = _stream_chunk_kind(chunk) == "progress"
-        if not is_progress:
+        kind = _stream_chunk_kind(chunk)
+        if not first_chunk_seen:
+            first_chunk_seen = True
+            _log(f"brain.query first stream chunk after {time.monotonic() - query_started:.2f}s kind={kind}")
+        is_progress = kind == "progress"
+        is_thought = kind == "thought"
+        if not (is_progress or is_thought):
             parts.append(text)
-        ctx.emit("reply.chunk", {"text": text, "is_progress": is_progress})
+        ctx.emit("reply.chunk", {"text": text, "is_progress": is_progress, "is_thought": is_thought})
 
     full = "".join(parts)
     done_payload: dict[str, Any] = {"text": full}
@@ -1625,10 +1637,12 @@ def brain_chat(
         if ctx.cancelled:
             break
         text = str(chunk)
-        is_progress = _stream_chunk_kind(chunk) == "progress"
-        if not is_progress:
+        kind = _stream_chunk_kind(chunk)
+        is_progress = kind == "progress"
+        is_thought = kind == "thought"
+        if not (is_progress or is_thought):
             parts.append(text)
-        ctx.emit("reply.chunk", {"text": text, "is_progress": is_progress})
+        ctx.emit("reply.chunk", {"text": text, "is_progress": is_progress, "is_thought": is_thought})
 
     full = "".join(parts)
     done_payload: dict[str, Any] = {"text": full}

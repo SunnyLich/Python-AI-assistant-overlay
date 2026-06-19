@@ -444,9 +444,14 @@ class _Win32Impl:
 
     def stop(self) -> None:
         """Post WM_QUIT to the pump thread, unregistering the hotkeys and stopping."""
+        thread = self._pump_thread
         if self._pump_tid:
             _user32.PostThreadMessageW(self._pump_tid, WM_QUIT, 0, 0)
             self._pump_tid = 0
+        if thread is not None and thread is not threading.current_thread() and thread.is_alive():
+            thread.join(timeout=2.0)
+        if thread is not None and not thread.is_alive():
+            self._pump_thread = None
 
     def _message_pump(self) -> None:
         """Handle message pump for win32 impl."""

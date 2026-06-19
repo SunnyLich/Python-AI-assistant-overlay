@@ -6,6 +6,7 @@ import base64
 import itertools
 import logging
 import queue
+import re
 import sys
 import threading
 import time
@@ -37,6 +38,18 @@ _BROWSER_APP_NAMES = {
     "opera",
     "vivaldi",
 }
+_LOCAL_FILE_ACTION_RE = re.compile(
+    r"\b(?:append|change|create|edit|fix|modify|patch|replace|save|update|write)\b",
+    re.IGNORECASE,
+)
+_LOCAL_FILE_TARGET_RE = re.compile(
+    r"\b(?:file|folder|local\s+file|path|project|workspace)\b",
+    re.IGNORECASE,
+)
+_LOCAL_FILE_PATH_RE = re.compile(
+    r"(?:[A-Za-z]:[\\/][^\s]+|[^\s]+\.(?:cfg|css|csv|html|ini|js|json|log|md|py|toml|ts|txt|xml|yaml|yml))",
+    re.IGNORECASE,
+)
 
 
 def _file_context_text(items: list | None) -> str:
@@ -509,6 +522,19 @@ class FlowController:
         if not text:
             return []
         is_progress = bool((data or {}).get("is_progress"))
+        payload_is_thought = bool((data or {}).get("is_thought"))
+        if payload_is_thought:
+            self._safe_call(
+                self.ui,
+                "ui.reply.chunk",
+                {
+                    "text": text,
+                    "is_thought": True,
+                    "is_progress": is_progress,
+                },
+                timeout=30.0,
+            )
+            return [(text, True, is_progress)]
         parser = self._reply_thought_parser
         if parser is None:
             self._safe_call(
@@ -703,7 +729,14 @@ class FlowController:
         pending.caller = self._apply_intent_context_choices(pending.caller, context_choices or [])
         if not prompt:
             prompt = "What is this?"
-        if pending.caller.get("paste_back"):
+        if pending.caller.get("paste_back") and self._is_local_file_request(prompt):
+            caller = dict(pending.caller)
+            caller["paste_back"] = False
+            if tool_modes.local_file_access_mode(caller) in {"off", "read"}:
+                caller["file_access"] = "ask"
+            pending.caller = caller
+            self._query(prompt, pending)
+        elif pending.caller.get("paste_back"):
             self._rewrite_and_paste(prompt, pending)
         else:
             self._query(prompt, pending)
@@ -953,6 +986,7 @@ class FlowController:
                         "request_id": request_id,
                         "text": str((payload or {}).get("text") or ""),
                         "is_progress": bool((payload or {}).get("is_progress")),
+                        "is_thought": bool((payload or {}).get("is_thought")),
                     },
                     timeout=30.0,
                 )
@@ -1481,7 +1515,7 @@ class FlowController:
                 if not first_chunk_seen:
                     first_chunk_seen = True
                     log.info("query first reply chunk after %.2fs", time.monotonic() - query_started)
-                if not bool((payload or {}).get("is_progress")):
+                if not bool((payload or {}).get("is_progress")) and not bool((payload or {}).get("is_thought")):
                     streamed_reply_parts.append(str((payload or {}).get("text") or ""))
                 for segment, is_thought, is_progress in self._on_reply_chunk(payload):
                     if tts_segmenter is not None and is_progress and not is_thought:
@@ -1675,6 +1709,14 @@ class FlowController:
     def _paste_shortcut() -> str:
         """Paste shortcut."""
         return "Cmd+V" if sys.platform == "darwin" else "Ctrl+V"
+
+    @staticmethod
+    def _is_local_file_request(prompt: str) -> bool:
+        """Return True when a paste-back prompt is really asking for disk edits."""
+        text = str(prompt or "")
+        if not _LOCAL_FILE_ACTION_RE.search(text):
+            return False
+        return bool(_LOCAL_FILE_TARGET_RE.search(text) or _LOCAL_FILE_PATH_RE.search(text))
 
     def _native_notify(self, title: str, message: str) -> None:
         """Best-effort system notification (keeps status out of the reply bubble)."""

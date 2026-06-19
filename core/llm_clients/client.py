@@ -77,6 +77,11 @@ def _progress_chunk(text: str) -> StreamTextChunk:
     return StreamTextChunk(text, kind="progress")
 
 
+def _thought_chunk(text: str) -> StreamTextChunk:
+    """Return a reasoning/thought chunk that is visible but not final answer text."""
+    return StreamTextChunk(text, kind="thought")
+
+
 def _log_context(
     reason: str,
     text: str,
@@ -2617,7 +2622,22 @@ def _response_stream_text(
             if cap is not None:
                 cap.supports_stream = True
             for event in stream:
-                if getattr(event, "type", "") == "response.output_text.delta":
+                event_type = str(getattr(event, "type", "") or "")
+                if event_type in {
+                    "response.reasoning_summary_text.delta",
+                    "response.reasoning_text.delta",
+                }:
+                    delta = getattr(event, "delta", "")
+                    if delta:
+                        yield _thought_chunk(delta)
+                    continue
+                if event_type == "response.reasoning_summary_part.added":
+                    part = getattr(event, "part", None)
+                    text = str(getattr(part, "text", "") or "")
+                    if text:
+                        yield _thought_chunk(text)
+                    continue
+                if event_type == "response.output_text.delta":
                     delta = getattr(event, "delta", "")
                     if delta:
                         yield delta

@@ -119,6 +119,35 @@ def test_chat_request_reuses_active_conversation_tool_context() -> None:
     ]
 
 
+def test_chat_stream_preserves_structured_thought_chunks() -> None:
+    """Verify chat stream yields thought metadata instead of flattening it."""
+    from runtime.workers.ui_host import QtProtocolHost
+
+    host = QtProtocolHost.__new__(QtProtocolHost)
+    host._active_conversation_idx = None
+    host._all_conversations = []
+    host._chat_request_ids = iter([1])
+    host._chat_streams = {}
+    import threading
+
+    host._chat_streams_lock = threading.Lock()
+
+    def emit(_event, payload):
+        request_id = payload["request_id"]
+        host._chat_chunk(request_id=request_id, text="Thinking first.", is_thought=True)
+        host._chat_chunk(request_id=request_id, text="Answer.")
+        host._chat_done(request_id=request_id, text="Answer.")
+
+    host.emit = emit  # type: ignore[method-assign]
+
+    result = list(host._make_chat_send_fn()([{"role": "user", "content": "hi"}]))
+
+    assert result == [
+        {"type": "chunk", "text": "Thinking first.", "is_thought": True},
+        "Answer.",
+    ]
+
+
 def test_active_history_includes_context_and_user_images() -> None:
     """Verify selected conversation replay includes ambient context and images."""
     from runtime.workers.ui_host import QtProtocolHost

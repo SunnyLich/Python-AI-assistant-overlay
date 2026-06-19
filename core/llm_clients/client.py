@@ -1807,6 +1807,8 @@ def _log_model_route(kind: str, provider: str, model: str, use_tools: bool = Fal
 # Ceiling used when a caller asks for "no app cap" (max_tokens == 0) on a
 # provider that, unlike the OpenAI-compatible APIs, requires an explicit limit.
 _ANTHROPIC_UNCAPPED_MAX_TOKENS = 8192
+_QUERY_DEFAULT_MAX_TOKENS = 4096
+_CHAT_DEFAULT_MAX_TOKENS = 4096
 
 # All providers that go through the OpenAI-compatible chat completions API.
 _OPENAI_COMPAT_PROVIDER_SET = frozenset({
@@ -3945,7 +3947,7 @@ def _stream_openai_compat(
     # max_tokens == 0 means "no app-imposed cap": omit the field so the provider
     # uses its own per-model maximum. None means "unspecified" -> a safe default.
     if max_tokens != 0:
-        _apply_max_output(kwargs, model, max_tokens or 2048)
+        _apply_max_output(kwargs, model, max_tokens or _QUERY_DEFAULT_MAX_TOKENS)
     if tools:
         kwargs["tools"] = tools
         if cap.supports_parallel_tools is True:
@@ -4177,7 +4179,7 @@ def _stream_openai_compat(
         }
         _apply_sampling(follow_up_kwargs, current_model, 0.5 if temperature is None else temperature)
         if max_tokens != 0:
-            _apply_max_output(follow_up_kwargs, current_model, max_tokens or 2048)
+            _apply_max_output(follow_up_kwargs, current_model, max_tokens or _QUERY_DEFAULT_MAX_TOKENS)
         if tools and not vision_mode:
             follow_up_kwargs["tools"] = tools
         follow_up = client.chat.completions.create(**follow_up_kwargs)
@@ -4528,8 +4530,8 @@ def _stream_anthropic(
 
     # Anthropic requires an explicit max_tokens, so "no app cap" (0) maps to a
     # generous per-request ceiling rather than being truly unlimited.
-    anthropic_max_tokens = _ANTHROPIC_UNCAPPED_MAX_TOKENS if max_tokens == 0 else (max_tokens or 2048)
-    anthropic_tool_max_tokens = _ANTHROPIC_UNCAPPED_MAX_TOKENS if max_tokens == 0 else (max_tokens or 512)
+    anthropic_max_tokens = _ANTHROPIC_UNCAPPED_MAX_TOKENS if max_tokens == 0 else (max_tokens or _QUERY_DEFAULT_MAX_TOKENS)
+    anthropic_tool_max_tokens = _ANTHROPIC_UNCAPPED_MAX_TOKENS if max_tokens == 0 else (max_tokens or _QUERY_DEFAULT_MAX_TOKENS)
 
     if image_base64:
         content = [
@@ -4983,7 +4985,7 @@ def _stream_single_history_route(
             route_name=route_name,
             allowed_tools=allowed_tools,
             pinned_tools=pinned_tools,
-            max_tokens=1024,
+            max_tokens=_CHAT_DEFAULT_MAX_TOKENS,
             temperature=chat_temperature,
             history=history,
             system_prompt=system_msg,
@@ -5000,7 +5002,7 @@ def _stream_single_history_route(
             "stream": not _use_macos_openai_compat_non_streaming(provider),
         }
         _apply_sampling(kwargs, model, 0.7)
-        _apply_max_output(kwargs, model, 1024)
+        _apply_max_output(kwargs, model, _CHAT_DEFAULT_MAX_TOKENS)
         yield from _stream_openai_compat_plain(provider, model, kwargs)
         return
     elif provider == "anthropic":
@@ -5029,7 +5031,7 @@ def _stream_single_history_route(
         _mark_anthropic_history_cache(turns)
         with client.messages.stream(
             model=model,
-            max_tokens=1024,
+            max_tokens=_CHAT_DEFAULT_MAX_TOKENS,
             system=system,
             messages=turns,
             **({"tools": chat_tools} if chat_tools else {}),
@@ -5041,7 +5043,14 @@ def _stream_single_history_route(
         if final.stop_reason != "tool_use":
             return
 
-        yield from _run_anthropic_tool_loop(client, turns, final, model, system, max_tokens=1024)
+        yield from _run_anthropic_tool_loop(
+            client,
+            turns,
+            final,
+            model,
+            system,
+            max_tokens=_CHAT_DEFAULT_MAX_TOKENS,
+        )
     elif provider == "chatgpt":
         # For the chat history path, extract the last user message and use Responses API.
         # The full history is packed into a single user turn with prior turns prefixed.

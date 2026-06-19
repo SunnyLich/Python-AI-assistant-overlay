@@ -166,14 +166,34 @@ def _ensure_conversation_metadata(conv: dict) -> None:
             _ensure_message_metadata(msg, fallback_created_at=stamp)
 
 
+def _message_context_text(raw: object) -> str:
+    """Normalize one message-scoped hidden context value."""
+    if isinstance(raw, list):
+        return "\n\n---\n".join(
+            str(item or "").strip()
+            for item in raw
+            if str(item or "").strip()
+        )
+    return str(raw or "").strip()
+
+
 def _chat_model_messages(messages: list[dict]) -> list[dict[str, str]]:
-    """Return only role/content turns for the model."""
+    """Return only model-relevant turn payload, with attachments anchored to users."""
     turns: list[dict[str, str]] = []
     for msg in messages:
         role = str(msg.get("role") or "").strip()
         content = msg.get("content")
         if role in {"system", "user", "assistant"} and isinstance(content, str) and content.strip():
-            turn: dict[str, str] = {"role": role, "content": content}
+            model_content = content
+            context_text = _message_context_text(msg.get("context")) if role == "user" else ""
+            if context_text:
+                model_content = (
+                    f"{content.rstrip()}\n\n"
+                    "[Attached context for this message]\n"
+                    "Use this when the user refers to the attached file, document, image, or context.\n"
+                    f"{context_text}"
+                )
+            turn: dict[str, str] = {"role": role, "content": model_content}
             image = msg.get("image_base64")
             if role == "user" and image:
                 turn["image_base64"] = str(image)
@@ -268,17 +288,23 @@ def _context_from_messages(messages: list) -> str:
     for msg in messages or []:
         if not isinstance(msg, dict):
             continue
-        raw = msg.get("context")
-        if isinstance(raw, list):
-            for item in raw:
-                text = str(item or "").strip()
-                if text:
-                    blocks.append(text)
-        else:
-            text = str(raw or "").strip()
-            if text:
-                blocks.append(text)
+        text = _message_context_text(msg.get("context"))
+        if text:
+            blocks.append(text)
     return "\n\n---\n".join(blocks)
+
+
+def _context_not_anchored_to_messages(context: str, messages: list) -> str:
+    """Return conversation context blocks not already carried by message turns."""
+    text = str(context or "").strip()
+    if not text:
+        return ""
+    message_context = _context_from_messages(messages)
+    if not message_context:
+        return text
+    blocks = [block.strip() for block in re.split(r"\n\s*---\s*\n", text) if block.strip()]
+    missing = [block for block in blocks if block not in message_context]
+    return "\n\n---\n".join(missing)
 
 
 def _context_mode(value: object, default: str = "off") -> str:
@@ -1375,8 +1401,11 @@ class ChatWindow(QWidget):
         layout.setSpacing(10)
         layout.addStretch()
 
+        _ensure_conversation_metadata(conv)
         stamp = self._conversation_time_label(conv)
-        hint = self._context_hint(conv.get("context", ""))
+        hint = self._context_hint(
+            _context_not_anchored_to_messages(conv.get("context", ""), conv.get("messages", []))
+        )
         insert_at = 0
         if stamp is not None:
             layout.insertWidget(insert_at, stamp)
@@ -1385,7 +1414,6 @@ class ChatWindow(QWidget):
             layout.insertWidget(insert_at, hint)  # sits above the first message
 
         last_ai: _MessageTextView | None = None
-        _ensure_conversation_metadata(conv)
         for msg_idx, msg in enumerate(conv["messages"]):
             display_text = msg.get("display_content", msg["content"])
             view = self._bubble(
@@ -1397,6 +1425,10 @@ class ChatWindow(QWidget):
                 conversation_index=idx,
                 message_index=msg_idx,
             )
+            if msg["role"] == "user":
+                msg_hint = self._message_context_hint(msg.get("context"))
+                if msg_hint is not None:
+                    layout.insertWidget(layout.count() - 1, msg_hint)
             if msg["role"] == "assistant":
                 last_ai = view
 
@@ -1436,6 +1468,44 @@ class ChatWindow(QWidget):
             f"QLabel {{ background: rgba(160,160,255,12); color: {_HINT};"
             f" font-size: 8pt; border: 1px solid {_BORDER}; border-radius: 6px;"
             f" padding: 5px 9px; }}"
+        )
+        return lbl
+
+    def _message_context_hint(self, context: object) -> QLabel | None:
+        """Small transcript chip for context attached to one user message."""
+        text = _message_context_text(context)
+        if not text:
+            return None
+        lines = text.splitlines()
+        title = t("Attached")
+        preview_text = text
+        if lines:
+            first = lines[0].strip()
+            if first.startswith("[") and first.endswith("]"):
+                title = first[1:-1].strip() or title
+                preview_text = "\n".join(lines[1:]).strip() or text
+        preview = " ".join(preview_text.split())
+        if len(preview) > 140:
+            preview = preview[:140].rstrip() + "…"
+        truncated = "truncated]" in text
+        body = f"{html.escape(title)} · {_token_label(text)}"
+        if preview:
+            body += f" · {html.escape(preview)}"
+        if truncated:
+            body += f" <span style='color:#d6a04a;'>· {t('truncated')}</span>"
+        lbl = QLabel(body)
+        lbl.setObjectName("messageAttachmentContextHint")
+        lbl.setTextFormat(Qt.TextFormat.RichText)
+        lbl.setWordWrap(True)
+        tooltip = _truncate_for_display(text, _CONTEXT_TOOLTIP_CHAR_LIMIT, "attached context tooltip")
+        lbl.setToolTip(
+            tooltip + f"\n\n[{t('context was truncated to fit the limit')}]" if truncated else tooltip
+        )
+        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lbl.setStyleSheet(
+            f"QLabel {{ background: rgba(160,160,255,10); color: {_HINT};"
+            f" font-size: 8pt; border: 1px solid {_BORDER}; border-radius: 6px;"
+            f" padding: 4px 8px; margin-left: 4px; margin-right: 4px; }}"
         )
         return lbl
 
@@ -2106,6 +2176,9 @@ class ChatWindow(QWidget):
                 conversation_index=self._active_idx,
                 message_index=len(conv["messages"]),
             )
+            msg_hint = self._message_context_hint(attachment_context_block)
+            if msg_hint is not None:
+                layout.insertWidget(layout.count() - 1, msg_hint)
         user_message = {"role": "user", "content": text, "created_at": now}
         _ensure_message_metadata(user_message, fallback_created_at=now)
         if attachment_image:
@@ -2123,9 +2196,9 @@ class ChatWindow(QWidget):
         self._current_ai_label = self._bubble(layout, "...", "assistant", created_at=_now_iso()) if layout else None
         self._scroll_bottom()
 
-        # Inject stored context into system prompt so it is available for every
-        # follow-up without being repeated inside the conversation turns.
-        ctx = conv.get("context", "")
+        # Keep legacy/global context in the system prompt, while message-scoped
+        # attachments ride next to the user turns that mention them.
+        ctx = _context_not_anchored_to_messages(conv.get("context", ""), conv["messages"])
         sys_content = config.get_system_prompt()
         if ctx:
             sys_content += f"\n\n---\n{ctx}"

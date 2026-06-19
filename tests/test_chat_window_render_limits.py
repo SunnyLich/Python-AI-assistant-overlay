@@ -10,6 +10,7 @@ from ui.chat_window import (
     _CHAT_RENDER_CHAR_LIMIT,
     ChatWindow,
     _chat_model_messages,
+    _context_not_anchored_to_messages,
     _file_context_text,
     _format_conversation_datetime,
     _latest_tool_context_from_messages,
@@ -51,11 +52,12 @@ def test_conversation_datetime_formats_for_history_display():
 
 
 def test_chat_model_messages_excludes_timestamp_metadata():
-    """Verify model payload only carries role/content and screenshots."""
+    """Verify model payload excludes metadata but carries user attachments."""
     messages = [
         {
             "role": "user",
             "content": "hi",
+            "context": "[Attached · notes.txt]\nline one\nline two",
             "id": "m1",
             "created_at": "2026-06-19T15:52:16+00:00",
         },
@@ -68,10 +70,21 @@ def test_chat_model_messages_excludes_timestamp_metadata():
         },
     ]
 
-    assert _chat_model_messages(messages) == [
-        {"role": "user", "content": "hi"},
-        {"role": "assistant", "content": "hello"},
-    ]
+    result = _chat_model_messages(messages)
+
+    assert result[0]["role"] == "user"
+    assert result[0]["content"].startswith("hi\n\n[Attached context for this message]")
+    assert "line one\nline two" in result[0]["content"]
+    assert "created_at" not in result[0]
+    assert result[1] == {"role": "assistant", "content": "hello"}
+
+
+def test_conversation_context_skips_message_anchored_blocks():
+    """Verify system context does not duplicate message-scoped attachments."""
+    messages = [{"role": "user", "content": "use it", "context": "[Attached]\nattached text"}]
+    context = "[Attached]\nattached text\n\n---\nAmbient context"
+
+    assert _context_not_anchored_to_messages(context, messages) == "Ambient context"
 
 
 def test_message_timestamp_formats_from_metadata():
@@ -602,7 +615,7 @@ def test_chat_rewind_current_chat_requires_confirmation(monkeypatch):
 def test_chat_window_drop_attachments_feed_next_message_context_and_image():
     """Verify dropped files/images attach to the next outgoing chat message."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QLabel
 
     app = QApplication.instance() or QApplication(sys.argv)
     captured = []
@@ -627,10 +640,12 @@ def test_chat_window_drop_attachments_feed_next_message_context_and_image():
                 break
 
         assert captured
-        assert "remember this text" in captured[0][0]["content"]
+        assert "remember this text" not in captured[0][0]["content"]
+        assert "remember this text" in captured[0][-1]["content"]
         assert captured[0][-1]["image_base64"] == "IMAGEB64"
         assert conversations[0]["messages"][0]["image_base64"] == "IMAGEB64"
         assert "remember this text" in conversations[0]["context"]
+        assert window.findChild(QLabel, "messageAttachmentContextHint") is not None
     finally:
         window.close()
         app.processEvents()
@@ -666,7 +681,8 @@ def test_chat_attachment_button_path_feeds_next_message_context(tmp_path):
                 break
 
         assert captured
-        assert "button-added context" in captured[0][0]["content"]
+        assert "button-added context" not in captured[0][0]["content"]
+        assert "button-added context" in captured[0][-1]["content"]
         assert "button-added context" in conversations[0]["context"]
     finally:
         window.close()

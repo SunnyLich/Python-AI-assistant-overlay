@@ -286,7 +286,7 @@ class IntentOverlay(QWidget):
         self._conversation_options = self._normalize_conversation_options(conversation_options or [])
         selected = next(
             (item for item in self._conversation_options if item.get("selected")),
-            self._conversation_options[0] if self._conversation_options else None,
+            None,
         )
         self._conversation_mode = "continue" if selected is not None else "new"
         self._conversation_index = int(selected["index"]) if selected is not None else None
@@ -799,6 +799,8 @@ class IntentOverlay(QWidget):
         if self._conversation_list_rect.contains(pos):
             if self._conversation_mode == "new" and self._conversation_options:
                 self._conversation_mode = "continue"
+                if self._conversation_index is None:
+                    self._conversation_index = int(self._conversation_options[0]["index"])
             self._show_conversation_menu()
             self.update()
             return True

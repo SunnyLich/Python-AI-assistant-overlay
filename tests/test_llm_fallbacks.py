@@ -649,15 +649,18 @@ class LlmFallbackTests(unittest.TestCase):
             """Test case for fake messages behavior."""
             def stream(self, **kwargs):
                 """Verify stream behavior."""
+                calls.append(("stream", kwargs))
                 return FakeStream()
 
             def create(self, **kwargs):
                 """Verify create behavior."""
+                calls.append(("create", kwargs))
                 return SimpleNamespace(
                     stop_reason="stop",
                     content=[SimpleNamespace(type="text", text="Here is what I can see.")],
                 )
 
+        calls = []
         fake_client = SimpleNamespace(messages=FakeMessages())
 
         with patch.object(llm, "_capture_screen_b64", return_value="image-b64"):
@@ -674,6 +677,8 @@ class LlmFallbackTests(unittest.TestCase):
         self.assertEqual(chunks, ["I need a screenshot.", "Here is what I can see."])
         self.assertEqual(getattr(chunks[0], "kind", ""), "progress")
         self.assertEqual(getattr(chunks[1], "kind", "answer"), "answer")
+        self.assertEqual(calls[0][1]["max_tokens"], llm._QUERY_DEFAULT_MAX_TOKENS)
+        self.assertEqual(calls[1][1]["max_tokens"], llm._QUERY_DEFAULT_MAX_TOKENS)
 
     def test_dynamic_openai_client_uses_google_base_url(self):
         """Verify dynamic openai client uses google base url behavior."""
@@ -1338,6 +1343,7 @@ class LlmFallbackTests(unittest.TestCase):
         )
         self.assertIn("Chat rules.", calls[0]["messages"][0]["content"])
         self.assertEqual(calls[0]["temperature"], 0.7)
+        self.assertEqual(calls[0]["max_tokens"], llm._CHAT_DEFAULT_MAX_TOKENS)
         self.assertEqual(
             [message["role"] for message in calls[0]["messages"][1:]],
             ["user", "assistant", "user"],
@@ -1441,6 +1447,7 @@ class LlmFallbackTests(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertEqual(stdlib_calls[0][0], "openai")
         self.assertEqual(stdlib_calls[0][1]["stream"], False)
+        self.assertEqual(stdlib_calls[0][1]["max_tokens"], llm._QUERY_DEFAULT_MAX_TOKENS)
         self.assertNotIn("tools", stdlib_calls[0][1])
 
     def test_macos_openai_compat_route_skips_sdk_client_construction(self):

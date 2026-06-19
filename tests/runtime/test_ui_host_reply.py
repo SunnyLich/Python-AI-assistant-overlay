@@ -141,6 +141,28 @@ def test_selecting_chat_shows_overlay_continuation_notice() -> None:
     assert notices == [("Continuing: new chat", 2500)]
 
 
+def test_intent_conversation_options_start_new_until_chat_is_active() -> None:
+    """Verify loaded history is listed but not continued by default on app start."""
+    from runtime.workers.ui_host import QtProtocolHost
+
+    host = QtProtocolHost.__new__(QtProtocolHost)
+    host._active_conversation_idx = None
+    host._all_conversations = [
+        {"messages": [{"role": "user", "content": "old chat"}]},
+        {"messages": [{"role": "user", "content": "latest chat"}]},
+    ]
+
+    options = host._intent_conversation_options()
+
+    assert [option["index"] for option in options[:2]] == [1, 0]
+    assert not any(option["selected"] for option in options)
+
+    host._active_conversation_idx = 0
+    selected_options = host._intent_conversation_options()
+
+    assert [option for option in selected_options if option["selected"]][0]["index"] == 0
+
+
 def test_chat_stream_preserves_structured_thought_chunks() -> None:
     """Verify chat stream yields thought metadata instead of flattening it."""
     from runtime.workers.ui_host import QtProtocolHost

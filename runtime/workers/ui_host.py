@@ -2093,20 +2093,31 @@ class QtProtocolHost:
             self._active_conversation_idx
             if isinstance(self._active_conversation_idx, int)
             and 0 <= self._active_conversation_idx < len(self._all_conversations)
-            else len(self._all_conversations) - 1
+            else None
         )
         options: list[dict[str, Any]] = []
+        seen: set[int] = set()
         for idx in range(len(self._all_conversations) - 1, -1, -1):
             options.append(
                 {
                     "index": idx,
                     "title": self._chat_notice_title(idx, limit=72) or t("Conversation"),
                     "subtitle": self._chat_conversation_subtitle(idx),
-                    "selected": idx == selected_idx,
+                    "selected": selected_idx is not None and idx == selected_idx,
                 }
             )
+            seen.add(idx)
             if len(options) >= limit:
                 break
+        if selected_idx is not None and selected_idx not in seen:
+            options.append(
+                {
+                    "index": selected_idx,
+                    "title": self._chat_notice_title(selected_idx, limit=72) or t("Conversation"),
+                    "subtitle": self._chat_conversation_subtitle(selected_idx),
+                    "selected": True,
+                }
+            )
         return options
 
     def _apply_intent_conversation_choice(self, choice: dict[str, Any] | None) -> dict[str, Any]:

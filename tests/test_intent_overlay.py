@@ -328,6 +328,32 @@ def test_intent_overlay_conversation_choice_toggles_new_and_continue():
 
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_intent_overlay_defaults_to_new_when_history_has_no_active_selection():
+    """Verify loaded history does not imply continuation on app start."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    import ui.intent_overlay as intent_overlay
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    overlay = intent_overlay.IntentOverlay(
+        caller_idx=0,
+        conversation_options=[
+            {"index": 1, "title": "Latest chat"},
+            {"index": 0, "title": "Older chat"},
+        ],
+    )
+    try:
+        assert overlay.conversation_choice() == {"mode": "new"}
+
+        overlay._toggle_conversation_mode()
+        assert overlay.conversation_choice() == {"mode": "continue", "index": 1}
+    finally:
+        overlay.close()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
 def test_intent_overlay_dedupes_raw_and_qt_context_key(monkeypatch):
     """Verify a Windows raw-hook context key is not immediately toggled again by Qt."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

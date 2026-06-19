@@ -1,24 +1,30 @@
 """Tests for test chat window render limits."""
 
+import base64
+import importlib.util
 import os
 import sys
 import time
 
 import pytest
 
-from ui.chat_window import (
-    _CHAT_RENDER_CHAR_LIMIT,
-    ChatWindow,
-    _chat_model_messages,
-    _context_not_anchored_to_messages,
-    _file_context_text,
-    _format_conversation_datetime,
-    _latest_tool_context_from_messages,
-    _merge_file_context_from_messages,
-    _message_timestamp_text,
-    _truncate_for_display,
-    _truncate_segments_for_display,
-)
+PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
+pytestmark = pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
+
+if PYSIDE6_AVAILABLE:
+    from ui.chat_window import (
+        _CHAT_RENDER_CHAR_LIMIT,
+        ChatWindow,
+        _chat_model_messages,
+        _context_not_anchored_to_messages,
+        _file_context_text,
+        _format_conversation_datetime,
+        _latest_tool_context_from_messages,
+        _merge_file_context_from_messages,
+        _message_timestamp_text,
+        _truncate_for_display,
+        _truncate_segments_for_display,
+    )
 
 
 def test_truncate_for_display_caps_large_text():
@@ -136,7 +142,7 @@ def test_hidden_context_rebuilds_from_retained_messages():
     assert _latest_tool_context_from_messages(messages) == tool_context
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_window_is_not_always_on_top():
     """Verify chat window behaves like a normal app window."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -152,7 +158,7 @@ def test_chat_window_is_not_always_on_top():
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_window_opens_large_last_chat_without_render_freeze():
     """Verify chat window opens large last chat without render freeze behavior."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -182,7 +188,7 @@ def test_chat_window_opens_large_last_chat_without_render_freeze():
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_sidebar_options_button_stays_visible_for_long_titles():
     """Verify chat sidebar options button stays visible for long titles behavior."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -216,7 +222,7 @@ def test_chat_sidebar_options_button_stays_visible_for_long_titles():
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_sidebar_shows_conversation_timestamp():
     """Verify history rows include conversation date/time metadata."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -241,7 +247,7 @@ def test_chat_sidebar_shows_conversation_timestamp():
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_bubble_header_shows_message_timestamp():
     """Verify each chat turn displays its own date/time metadata."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -269,7 +275,7 @@ def test_chat_bubble_header_shows_message_timestamp():
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_context_policy_controls_are_compact_menu_chips(monkeypatch):
     """Verify chat context controls render as compact chips with popup choices."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -336,7 +342,7 @@ def test_chat_context_policy_controls_are_compact_menu_chips(monkeypatch):
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_window_reports_initial_active_conversation():
     """Verify opening chat retargets follow-up prompts to the shown conversation."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -356,7 +362,7 @@ def test_chat_window_reports_initial_active_conversation():
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_window_selection_notice_names_continued_chat():
     """Verify switching chats shows which conversation will continue."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -378,7 +384,7 @@ def test_chat_window_selection_notice_names_continued_chat():
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_sidebar_options_menu_anchors_to_button(monkeypatch):
     """Verify chat sidebar options menu anchors to button behavior."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -408,7 +414,7 @@ def test_chat_sidebar_options_menu_anchors_to_button(monkeypatch):
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_final_text_replaces_partial_stream_before_persist():
     """Verify final chat text replaces an incomplete streamed draft."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -437,7 +443,7 @@ def test_chat_final_text_replaces_partial_stream_before_persist():
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_followup_injects_hidden_file_context():
     """Verify file metadata is sent as hidden system context, not message turns."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -479,7 +485,7 @@ def test_chat_followup_injects_hidden_file_context():
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_window_persists_returned_tool_context():
     """Verify returned tool policy metadata is stored with the conversation."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -506,7 +512,7 @@ def test_chat_window_persists_returned_tool_context():
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_branch_from_message_recomputes_hidden_context():
     """Verify branching keeps only retained message-scoped hidden context."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -582,7 +588,7 @@ def test_chat_branch_from_message_recomputes_hidden_context():
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_rewind_current_chat_requires_confirmation(monkeypatch):
     """Verify destructive rewind truncates only after confirmation."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -611,15 +617,20 @@ def test_chat_rewind_current_chat_requires_confirmation(monkeypatch):
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
-def test_chat_window_drop_attachments_feed_next_message_context_and_image():
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
+def test_chat_window_drop_attachments_feed_next_message_context_and_image(tmp_path, monkeypatch):
     """Verify dropped files/images attach to the next outgoing chat message."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from core.conversation_store import store as conversation_store
     from PySide6.QtWidgets import QApplication, QLabel
 
+    chats = tmp_path / "chats"
+    monkeypatch.setattr(conversation_store, "CHATS_DIR", chats)
+    monkeypatch.setattr(conversation_store, "CHAT_ATTACHMENTS_DIR", chats / "attachments")
     app = QApplication.instance() or QApplication(sys.argv)
     captured = []
     conversations = [{"messages": []}]
+    image_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\nshot").decode("ascii")
 
     def send_fn(messages):
         captured.append(messages)
@@ -629,7 +640,7 @@ def test_chat_window_drop_attachments_feed_next_message_context_and_image():
     try:
         added = window._add_attachment_items([
             ("notes.txt", "remember this text", "text"),
-            ("shot.png", "IMAGEB64", "image"),
+            ("shot.png", image_b64, "image"),
         ])
         assert added is True
 
@@ -642,16 +653,19 @@ def test_chat_window_drop_attachments_feed_next_message_context_and_image():
         assert captured
         assert "remember this text" not in captured[0][0]["content"]
         assert "remember this text" in captured[0][-1]["content"]
-        assert captured[0][-1]["image_base64"] == "IMAGEB64"
-        assert conversations[0]["messages"][0]["image_base64"] == "IMAGEB64"
-        assert "remember this text" in conversations[0]["context"]
+        assert captured[0][-1]["image_base64"] == image_b64
+        user_message = conversations[0]["messages"][0]
+        assert "image_base64" not in user_message
+        assert user_message["attachments"][0]["path"].startswith("attachments/")
+        assert "remember this text" in user_message["context"]
+        assert "remember this text" not in conversations[0].get("context", "")
         assert window.findChild(QLabel, "messageAttachmentContextHint") is not None
     finally:
         window.close()
         app.processEvents()
 
 
-@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_attachment_button_path_feeds_next_message_context(tmp_path):
     """Verify file-picker attachments use the same context path as drag/drop."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -683,7 +697,11 @@ def test_chat_attachment_button_path_feeds_next_message_context(tmp_path):
         assert captured
         assert "button-added context" not in captured[0][0]["content"]
         assert "button-added context" in captured[0][-1]["content"]
-        assert "button-added context" in conversations[0]["context"]
+        user_message = conversations[0]["messages"][0]
+        assert user_message["attachments"][0]["source"] == "external_path"
+        assert user_message["attachments"][0]["path"] == str(note)
+        assert "button-added context" not in conversations[0].get("context", "")
+        assert "button-added context" not in user_message.get("context", "")
     finally:
         window.close()
         app.processEvents()

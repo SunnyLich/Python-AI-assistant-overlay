@@ -213,7 +213,7 @@ def test_intent_context_uses_unknown_tokens_for_deferred_sources():
             "paste_back": False,
             "context_ambient": True,
             "context_documents_mode": "auto",
-            "context_memory_mode": "auto",
+            "context_memory_mode": "on",
             "context_screenshot": "model",
             "context_clipboard": True,
             "file_access": "ask",
@@ -426,7 +426,7 @@ def test_context_modes_map_to_auto_documents_and_allowed_tools():
     query = brain.last_call("brain.query")["params"]
     assert query["include_active_document"] is False
     assert query["use_tools"] is True
-    # memory defaults to "auto", which now also offers the memory_save write tool.
+    # memory defaults to "on", which also offers the memory_save write tool.
     assert query["allowed_tools"] == ["get_context.documents", "git_status", "git_diff", "github_repo", "github_issue", "memory_save"]
     assert query["pinned_tools"] == ["get_context", "git_status", "git_diff", "github_repo", "github_issue"]
     assert query["frontload_tools"] == []
@@ -453,7 +453,7 @@ def test_context_modes_map_on_browser_and_git_to_frontloaded_context():
         _ui.emit("ui.intent.chosen", {"custom": "Use context"})
 
     query = brain.last_call("brain.query")["params"]
-    # memory defaults to "auto" -> memory_save offered, so tools are active even
+    # memory defaults to "on" -> memory_save offered, so tools are active even
     # though browser/git context is frontloaded rather than offered as tools.
     assert query["use_tools"] is True
     assert query["allowed_tools"] == ["memory_save"]
@@ -2407,7 +2407,7 @@ def test_caller_memory_modes_map_to_injected_or_model_decided_access():
             "context_ambient": True,
             "context_documents": False,
             "context_tools": False,
-            "context_memory_mode": "auto",
+            "context_memory_mode": "on",
             "context_screenshot": "off",
             "context_clipboard": False,
         },

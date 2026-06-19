@@ -389,7 +389,7 @@ def test_apply_intent_context_choices_updates_caller_policy():
         "context_ambient": True,
         "context_documents_mode": "off",
         "context_browser_mode": "auto",
-        "context_memory_mode": "auto",
+        "context_memory_mode": "on",
         "context_screenshot": "auto",
         "file_access": "ask",
     }

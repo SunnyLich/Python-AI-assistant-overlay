@@ -219,6 +219,28 @@ def _lexical_overlap(query: str, fact: str) -> int:
     return len(q_words & f_words)
 
 
+def _is_memory_inventory_query(query: str) -> bool:
+    """Return true when the user is explicitly asking to inspect memory."""
+    q = re.sub(r"\s+", " ", (query or "").strip().lower())
+    if not q:
+        return False
+    return any(
+        phrase in q
+        for phrase in (
+            "what do you remember",
+            "what you remember",
+            "what do you know about me",
+            "what you know about me",
+            "show my memory",
+            "show me my memory",
+            "list my memory",
+            "list stored memory",
+            "stored memories",
+            "stored memory",
+        )
+    )
+
+
 def _merge_fact_lists(*fact_lists: list[dict]) -> list[dict]:
     """Merge fact lists."""
     merged: list[dict] = []
@@ -249,7 +271,7 @@ def _format_memory_block(
         fact for fact in in_scope
         if not fact.get("archived") and _lexical_overlap(query, fact.get("text", "")) > 0
     ]
-    if not active:
+    if not active and _is_memory_inventory_query(query):
         active = [fact for fact in in_scope if not fact.get("archived")]
     k = max(1, top_k if top_k is not None else config.MEMORY_TOP_K)
     lines: list[str] = []
@@ -737,13 +759,17 @@ class MemoryManager:
                 level = result.context_level
 
                 if level == 'none':
-                    return fast_block
+                    return fast_block if _is_memory_inventory_query(query) else ""
 
                 if level == 'tiny':
                     k = min(1, k)
                     return _format_memory_block(facts, query, top_k=k, project_id=project_id)
 
-                elif level in ('selected', 'full') and result.selected_chunk_ids:
+                elif (
+                    level in ('selected', 'full')
+                    and result.selected_chunk_ids
+                    and getattr(result, "match_type", "") != "uncertain"
+                ):
                     selected = set(result.selected_chunk_ids)
                     docs = [
                         _normalize_fact_text(str(fact.get("text", "")))

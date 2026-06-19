@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
 
 import config
 from core.assistant_text import ThoughtStreamParser, merge_segment_iterables, split_tagged_text
+from core.conversation_store import store as _conversation_store
 from core.conversation_store.store import GENERAL_PROJECT_ID as _GENERAL_PROJECT_ID
 from runtime.supervisor import tool_modes
 from ui.i18n import t
@@ -177,6 +178,21 @@ def _message_context_text(raw: object) -> str:
     return str(raw or "").strip()
 
 
+def _attachment_summary_context(attachments: object) -> str:
+    """Return a compact, persisted reference summary for message attachments."""
+    refs = _conversation_store.normalize_attachments(attachments)
+    if not refs:
+        return ""
+    lines = ["[Attached files]"]
+    for ref in refs:
+        name = str(ref.get("name") or "Attachment")
+        path = str(ref.get("path") or "")
+        source = str(ref.get("source") or "")
+        prefix = "managed" if source != "external_path" else "path"
+        lines.append(f"- {name} ({prefix}: {path})")
+    return "\n".join(lines)
+
+
 def _chat_model_messages(messages: list[dict]) -> list[dict[str, str]]:
     """Return only model-relevant turn payload, with attachments anchored to users."""
     turns: list[dict[str, str]] = []
@@ -185,16 +201,25 @@ def _chat_model_messages(messages: list[dict]) -> list[dict[str, str]]:
         content = msg.get("content")
         if role in {"system", "user", "assistant"} and isinstance(content, str) and content.strip():
             model_content = content
+            context_parts: list[str] = []
             context_text = _message_context_text(msg.get("context")) if role == "user" else ""
             if context_text:
+                context_parts.append(context_text)
+            if role == "user":
+                for ref in _conversation_store.normalize_attachments(msg.get("attachments")):
+                    ref_context = _conversation_store.attachment_context_text(ref)
+                    if ref_context:
+                        context_parts.append(ref_context)
+            if context_parts:
+                joined_context = "\n\n".join(context_parts)
                 model_content = (
                     f"{content.rstrip()}\n\n"
                     "[Attached context for this message]\n"
                     "Use this when the user refers to the attached file, document, image, or context.\n"
-                    f"{context_text}"
+                    f"{joined_context}"
                 )
             turn: dict[str, str] = {"role": role, "content": model_content}
-            image = msg.get("image_base64")
+            image = _conversation_store.first_image_base64_from_message(msg)
             if role == "user" and image:
                 turn["image_base64"] = str(image)
             turns.append(turn)
@@ -829,6 +854,7 @@ class ChatWindow(QWidget):
         self._current_tool_context: dict = {}
         self._pending_attachment_context = ""
         self._pending_attachment_image_b64: str | None = None
+        self._pending_attachments: list[dict] = []
         self._pending_attachment_labels: list[str] = []
         self._attachment_label: QLabel | None = None
         self._attach_btn: QPushButton | None = None
@@ -1048,7 +1074,7 @@ class ChatWindow(QWidget):
             return override
         first_user = next((m for m in conv["messages"] if m["role"] == "user"), None)
         raw = first_user["content"] if first_user else f"{t('Conversation')} {idx+1}"
-        has_image = bool(first_user and first_user.get("image_base64"))
+        has_image = bool(first_user and _conversation_store.first_image_base64_from_message(first_user))
         prefix = f"[{t('image')}] " if has_image else ""
         return prefix + str(raw).strip().replace("\n", " ")
 
@@ -1420,7 +1446,7 @@ class ChatWindow(QWidget):
                 layout,
                 display_text,
                 msg["role"],
-                msg.get("image_base64"),
+                _conversation_store.first_image_base64_from_message(msg),
                 created_at=msg.get("created_at") or conv.get("created_at"),
                 conversation_index=idx,
                 message_index=msg_idx,
@@ -2047,23 +2073,68 @@ class ChatWindow(QWidget):
 
     def _add_attachments_from_mime(self, mime) -> bool:
         """Convert dropped MIME data into next-message context/image attachments."""
+        external_names: set[str] = set()
+        for ref in self._attachment_refs_from_mime(mime):
+            self._add_pending_attachment_ref(ref)
+            external_names.add(str(ref.get("name") or ""))
         try:
             from ui.drop_zone import process_drop_mime
             raw_items = process_drop_mime(mime)
         except Exception:
             raw_items = []
-        return self._add_attachment_items(raw_items)
+        return self._add_attachment_items(raw_items, external_names=external_names) or bool(external_names)
 
-    def _add_attachment_items(self, raw_items: list[tuple[str, str, str]]) -> bool:
+    def _attachment_refs_from_mime(self, mime) -> list[dict]:
+        """Return path-only refs for local files in a drag/drop or picker MIME payload."""
+        refs: list[dict] = []
+        try:
+            urls = mime.urls() if mime and mime.hasUrls() else []
+        except Exception:
+            urls = []
+        for url in urls:
+            try:
+                if not url.isLocalFile():
+                    continue
+                path = str(url.toLocalFile() or "").strip()
+            except Exception:
+                path = ""
+            if not path:
+                continue
+            ref = _conversation_store.external_file_attachment(path)
+            if not any(existing.get("path") == ref.get("path") for existing in refs):
+                refs.append(ref)
+        return refs
+
+    def _add_pending_attachment_ref(self, ref: dict) -> None:
+        """Queue one attachment reference for the next outgoing message."""
+        normalized = _conversation_store.normalize_attachments([ref])
+        if not normalized:
+            return
+        item = normalized[0]
+        if not any(existing.get("path") == item.get("path") for existing in self._pending_attachments):
+            self._pending_attachments.append(item)
+        label = str(item.get("name") or item.get("path") or "Attachment")
+        if label and label not in self._pending_attachment_labels:
+            self._pending_attachment_labels.append(label)
+
+    def _add_attachment_items(
+        self,
+        raw_items: list[tuple[str, str, str]],
+        *,
+        external_names: set[str] | None = None,
+    ) -> bool:
         """Attach normalized drop-zone items to the next outgoing chat turn."""
         if not raw_items:
             return False
+        external_names = external_names or set()
         image_labels: list[str] = []
         context_items: list[tuple[str, str, str]] = []
         fallback_lines: list[str] = []
         for name, content, item_type in raw_items:
             label = str(name or "Attachment")
             kind = str(item_type or "text")
+            if label in external_names:
+                continue
             if kind == "image" and self._pending_attachment_image_b64 is None:
                 self._pending_attachment_image_b64 = str(content or "")
                 image_labels.append(label)
@@ -2124,16 +2195,18 @@ class ChatWindow(QWidget):
         self._attachment_label.setToolTip("\n".join(self._pending_attachment_labels))
         self._attachment_label.setVisible(True)
 
-    def _consume_pending_attachments(self) -> tuple[str, str | None, list[str]]:
+    def _consume_pending_attachments(self) -> tuple[str, str | None, list[str], list[dict]]:
         """Return and clear pending context/image attachments."""
         context = self._pending_attachment_context
         image = self._pending_attachment_image_b64
         labels = list(self._pending_attachment_labels)
+        attachments = list(self._pending_attachments)
         self._pending_attachment_context = ""
         self._pending_attachment_image_b64 = None
+        self._pending_attachments = []
         self._pending_attachment_labels = []
         self._refresh_attachment_label()
-        return context, image, labels
+        return context, image, labels, attachments
 
     # ------------------------------------------------------------------ Sending
 
@@ -2155,15 +2228,41 @@ class ChatWindow(QWidget):
         self._new_chat_btn.setEnabled(False)
 
         conv = self._conversations[self._active_idx]
-        attachment_context, attachment_image, attachment_labels = self._consume_pending_attachments()
+        _ensure_conversation_metadata(conv)
+        attachment_context, attachment_image, attachment_labels, attachment_refs = self._consume_pending_attachments()
+        now = _touch_conversation(conv)
+        user_message = {"role": "user", "content": text, "created_at": now}
+        _ensure_message_metadata(user_message, fallback_created_at=now)
+        if attachment_image:
+            try:
+                attachment_refs.append(
+                    _conversation_store.save_image_attachment(
+                        attachment_image,
+                        conversation_id=str(conv.get("id") or ""),
+                        message_id=str(user_message.get("id") or ""),
+                        source="pasted_image",
+                        name=(attachment_labels[0] if attachment_labels else "image.png"),
+                    )
+                )
+            except Exception:
+                # Keep the image available for this one live request, but do not
+                # allow the base64 blob into persisted conversation history.
+                user_message["image_base64"] = attachment_image
+        attachments = _conversation_store.normalize_attachments(attachment_refs)
+        if attachments:
+            user_message["attachments"] = attachments
         if attachment_context:
             label = ", ".join(attachment_labels) if attachment_labels else t("Attachments")
             attachment_context_block = f"[{t('Attached')} · {label}]\n{attachment_context.strip()}"
-            conv["context"] = _append_context_block(conv.get("context", ""), f"{t('Attached')} · {label}", attachment_context)
         else:
             attachment_context_block = ""
+        attachment_summary = _attachment_summary_context(attachments)
+        message_context = "\n\n".join(
+            part for part in (attachment_context_block, attachment_summary) if part.strip()
+        )
+        if message_context:
+            user_message["context"] = message_context
         context_policy = _ensure_conversation_context_policy(conv)
-        now = _touch_conversation(conv)
 
         layout = self._active_layout()
         if layout:
@@ -2171,20 +2270,14 @@ class ChatWindow(QWidget):
                 layout,
                 text,
                 "user",
-                attachment_image,
+                _conversation_store.first_image_base64_from_message(user_message),
                 created_at=now,
                 conversation_index=self._active_idx,
                 message_index=len(conv["messages"]),
             )
-            msg_hint = self._message_context_hint(attachment_context_block)
+            msg_hint = self._message_context_hint(message_context)
             if msg_hint is not None:
                 layout.insertWidget(layout.count() - 1, msg_hint)
-        user_message = {"role": "user", "content": text, "created_at": now}
-        _ensure_message_metadata(user_message, fallback_created_at=now)
-        if attachment_image:
-            user_message["image_base64"] = attachment_image
-        if attachment_context_block:
-            user_message["context"] = attachment_context_block
         conv["messages"].append(user_message)
 
         self._current_ai_text = ""

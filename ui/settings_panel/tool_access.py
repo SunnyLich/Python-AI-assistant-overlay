@@ -50,7 +50,7 @@ LOCAL_FILE_TOOL_ROWS: tuple[tuple[str, str], ...] = (
 LOCAL_FILE_TOOL_NAMES = {name for name, _note in LOCAL_FILE_TOOL_ROWS}
 
 _MODE_LABELS = [("Off", "off"), ("On", "on"), ("Let model decide", "model")]
-_MODE_DISPLAY = {"off": "Off", "auto": "On", "model": "Let model decide"}
+_MODE_DISPLAY = {"off": "Off", "auto": "On", "on": "On", "model": "Let model decide"}
 
 
 def _mode_tooltip() -> str:

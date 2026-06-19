@@ -137,6 +137,8 @@ def _normalized_context_policy(raw: Any) -> dict[str, Any]:
 
     def _mode(value: Any, default: str = "off") -> str:
         mode = str(value or default or "off").strip().lower()
+        if mode == "on":
+            return "auto"
         return mode if mode in {"off", "auto", "model"} else default
 
     tools = raw.get("tools")
@@ -1082,7 +1084,7 @@ class FlowController:
         messages = self._messages_with_chat_context(messages, caller)
         chat_params: dict[str, Any] = {
             "messages": messages,
-            "memory_enabled": self._context_mode(caller, "memory") == "auto",
+            "memory_enabled": self._context_mode(caller, "memory") == "on",
             "use_tools": bool(allowed_tools),
             "allowed_tools": allowed_tools,
             "pinned_tools": pinned_tools,
@@ -2413,7 +2415,7 @@ class FlowController:
             "selected": selected_text,
             "screenshot_b64": screenshot_b64,
             "ambient_text": ambient_text,
-            "memory_enabled": memory_mode == "auto",
+            "memory_enabled": memory_mode == "on",
             "use_tools": bool(allowed_tools),
             "allowed_tools": allowed_tools,
             "pinned_tools": pinned_tools,
@@ -2667,7 +2669,7 @@ class FlowController:
     def _mode_to_context_state(mode: str) -> str:
         """Map stored context mode to overlay state."""
         mode = (mode or "").strip().lower()
-        if mode == "auto":
+        if mode in {"auto", "on"}:
             return "on"
         if mode == "model":
             return "auto"
@@ -2842,7 +2844,7 @@ class FlowController:
                 updated["context_screenshot"] = "off" if state == "off" else ("model" if state == "auto" else "auto")
                 updated["_context_screenshot_enabled"] = state != "off"
             elif source == "memory":
-                updated["context_memory_mode"] = "off" if state == "off" else ("model" if state == "auto" else "auto")
+                updated["context_memory_mode"] = "off" if state == "off" else ("model" if state == "auto" else "on")
             elif source == "files":
                 if state == "off":
                     updated["file_access"] = "off"

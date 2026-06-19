@@ -11,6 +11,12 @@ def context_mode(caller: dict[str, Any], name: str) -> str:
     """Handle context mode for runtime supervisor tool modes."""
     key = f"context_{name}_mode"
     mode = str(caller.get(key) or "").strip().lower()
+    if name == "memory":
+        if mode == "auto":
+            return "on"
+        if mode in {"off", "on", "model"}:
+            return mode
+        return "on"
     if mode in {"off", "auto", "model"}:
         return mode
     if name == "documents":
@@ -21,7 +27,7 @@ def context_mode(caller: dict[str, Any], name: str) -> str:
     if name in {"browser", "github"} and caller.get("context_tools", False):
         return "model"
     if name == "memory":
-        return "auto"
+        return "on"
     return "off"
 
 
@@ -63,7 +69,7 @@ def allowed_model_tools(caller: dict[str, Any]) -> list[str]:
     memory_mode = context_mode(caller, "memory")
     if memory_mode == "model":
         allowed.append("memory_search")
-    if memory_mode in ("auto", "model"):
+    if memory_mode in ("on", "model"):
         allowed.append("memory_save")
     for name in file_tools_for_access(local_file_access_mode(caller)):
         if name not in allowed:

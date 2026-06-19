@@ -1656,6 +1656,10 @@ def _normalize_chat_messages(messages: list[dict[str, Any]]) -> list[dict[str, s
     """Normalize chat messages."""
     allowed_roles = {"system", "user", "assistant"}
     turns: list[dict[str, str]] = []
+    try:
+        from core.conversation_store import store as conversation_store
+    except Exception:
+        conversation_store = None
     for raw in messages:
         role = str(raw.get("role") or "").strip().lower()
         content = raw.get("content")
@@ -1663,9 +1667,11 @@ def _normalize_chat_messages(messages: list[dict[str, Any]]) -> list[dict[str, s
             continue
         text = str(content).strip()
         turn: dict[str, str] = {"role": role, "content": text}
-        # Carry attached screenshots forward so the model sees them on every
-        # follow-up turn, the way ChatGPT/Claude replay the full transcript.
+        # Carry attached screenshots/images forward by resolving references at
+        # model-call time, never by persisting base64 in conversation history.
         image = raw.get("image_base64")
+        if not image and role == "user" and conversation_store is not None:
+            image = conversation_store.first_image_base64_from_message(raw)
         if role == "user" and image:
             turn["image_base64"] = str(image)
         if text or turn.get("image_base64"):

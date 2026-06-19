@@ -134,6 +134,56 @@ def test_retrieve_relevant_returns_json_facts(monkeypatch):
     assert manager.retrieve_relevant("memory") == "[Memory]\n- I prefer fast memory settings"
 
 
+def test_memory_block_does_not_fallback_to_unmatched_facts():
+    """Verify unrelated prompts do not receive arbitrary memory facts."""
+    facts = [
+        {"id": "pref-1", "text": "I prefer concise answers", "category": "general"},
+        {"id": "proj-1", "text": "This project uses PySide6 widgets", "category": "project_context"},
+    ]
+
+    assert store._format_memory_block(facts, "weather tomorrow") == ""
+
+
+def test_memory_block_allows_explicit_memory_inventory_query():
+    """Verify users can still ask what memory contains."""
+    facts = [
+        {"id": "pref-1", "text": "I prefer concise answers", "category": "general"},
+        {"id": "proj-1", "text": "This project uses PySide6 widgets", "category": "project_context"},
+    ]
+
+    assert store._format_memory_block(facts, "what do you remember about me?") == (
+        "[Memory]\n- I prefer concise answers\n- This project uses PySide6 widgets"
+    )
+
+
+def test_retrieve_relevant_returns_empty_for_unmatched_query(monkeypatch):
+    """Verify retrieval only injects memory when a fact earns relevance."""
+    manager = store.MemoryManager.__new__(store.MemoryManager)
+    _seed_router_attrs(manager)
+    monkeypatch.setattr(
+        store,
+        "get_all_facts_lightweight",
+        lambda: [{"id": "json-1", "text": "I prefer fast memory settings", "category": "general"}],
+    )
+
+    assert manager.retrieve_relevant("weather tomorrow") == ""
+
+
+def test_retrieve_relevant_allows_explicit_memory_inventory_query(monkeypatch):
+    """Verify direct memory-inspection prompts can return stored facts."""
+    manager = store.MemoryManager.__new__(store.MemoryManager)
+    _seed_router_attrs(manager)
+    monkeypatch.setattr(
+        store,
+        "get_all_facts_lightweight",
+        lambda: [{"id": "json-1", "text": "I prefer fast memory settings", "category": "general"}],
+    )
+
+    assert manager.retrieve_relevant("what do you remember about me?") == (
+        "[Memory]\n- I prefer fast memory settings"
+    )
+
+
 def test_get_manager_is_thread_safe(monkeypatch):
     """Verify get manager is thread safe behavior."""
     created: list[object] = []

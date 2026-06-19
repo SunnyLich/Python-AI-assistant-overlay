@@ -55,14 +55,22 @@ class WarningHeaderLabel(QLabel):
         super().leaveEvent(event)
 
 
-def context_mode_combo(value: str, *, allow_auto: bool = True) -> NoScrollCombo:
+def context_mode_combo(
+    value: str,
+    *,
+    allow_auto: bool = True,
+    on_value: str = "auto",
+) -> NoScrollCombo:
     """Handle context mode combo for UI settings panel helpers."""
     combo = NoScrollCombo()
     combo.addItem("Off", "off")
     if allow_auto:
-        combo.addItem("On", "auto")
+        combo.addItem("On", on_value)
     combo.addItem("Let model decide", "model")
-    idx = combo.findData((value or "off").strip().lower())
+    normalized = (value or "off").strip().lower()
+    if normalized == "auto" and on_value == "on":
+        normalized = "on"
+    idx = combo.findData(normalized)
     combo.setCurrentIndex(idx if idx >= 0 else 0)
     return combo
 

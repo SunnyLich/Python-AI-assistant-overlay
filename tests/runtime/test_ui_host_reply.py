@@ -192,10 +192,18 @@ def test_chat_stream_preserves_structured_thought_chunks() -> None:
     ]
 
 
-def test_active_history_includes_context_and_user_images() -> None:
-    """Verify selected conversation replay includes ambient context and images."""
+def test_active_history_includes_context_and_attachment_refs() -> None:
+    """Verify selected conversation replay includes ambient context and refs."""
     from runtime.workers.ui_host import QtProtocolHost
 
+    attachment = {
+        "id": "att_1",
+        "kind": "image",
+        "source": "external_path",
+        "path": r"C:\Users\sunny\Downloads\shot.png",
+        "name": "shot.png",
+        "mime": "image/png",
+    }
     host = QtProtocolHost.__new__(QtProtocolHost)
     host._active_conversation_idx = 0
     host._active_project_id = "general"
@@ -204,7 +212,7 @@ def test_active_history_includes_context_and_user_images() -> None:
             "project_id": "general",
             "context": "Original ambient context",
             "messages": [
-                {"role": "user", "content": "what is this?", "image_base64": "abc123"},
+                {"role": "user", "content": "what is this?", "attachments": [attachment]},
                 {"role": "assistant", "content": "a screenshot"},
             ],
         }
@@ -213,4 +221,5 @@ def test_active_history_includes_context_and_user_images() -> None:
     history = host._chat_active_history()
 
     assert history["context"] == "Original ambient context"
-    assert history["history"][0]["image_base64"] == "abc123"
+    assert history["history"][0]["attachments"] == [attachment]
+    assert "image_base64" not in history["history"][0]

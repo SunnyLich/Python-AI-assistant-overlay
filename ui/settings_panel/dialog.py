@@ -179,23 +179,23 @@ _PRESET_DEFAULTS: dict[str, dict[str, str]] = {
 _PRESET_CONTEXT_DEFAULTS: dict[str, dict[str, str]] = {
     "fast": {
         "documents": "auto", "browser": "off", "github": "off",
-        "memory": "auto", "screenshot": "off",
+        "memory": "on", "screenshot": "off",
     },
     "best_quality": {
         "documents": "auto", "browser": "model", "github": "model",
-        "memory": "auto", "screenshot": "auto",
+        "memory": "on", "screenshot": "auto",
     },
     "private_local": {
         "documents": "auto", "browser": "off", "github": "off",
-        "memory": "auto", "screenshot": "off", "clear_tools": "true",
+        "memory": "on", "screenshot": "off", "clear_tools": "true",
     },
     "coding_assistant": {
         "documents": "auto", "browser": "model", "github": "auto",
-        "memory": "auto", "screenshot": "model",
+        "memory": "on", "screenshot": "model",
     },
     "low_cost": {
         "documents": "off", "browser": "off", "github": "off",
-        "memory": "auto", "screenshot": "off", "clear_tools": "true",
+        "memory": "on", "screenshot": "off", "clear_tools": "true",
     },
 }
 
@@ -2419,7 +2419,7 @@ class SettingsDialog(QDialog):
         context_documents_mode: str = "auto",
         context_browser_mode: str = "off",
         context_github_mode: str = "off",
-        context_memory_mode: str = "auto",
+        context_memory_mode: str = "on",
         context_screenshot: str = "off",
         file_access: str = "off",
     ) -> tuple[QWidget, dict]:
@@ -2456,7 +2456,8 @@ class SettingsDialog(QDialog):
             "On — read local git status and diff before sending the prompt.\n"
             "Let model decide — expose git status/diff and GitHub repo/issue tools."
         )
-        memory_combo = _context_mode_combo(context_memory_mode, allow_auto=True)
+        memory_combo = _context_mode_combo(context_memory_mode, allow_auto=True, on_value="on")
+        memory_combo.setProperty("legacy_auto_means_on", True)
         memory_combo.setToolTip(
             "Memory:\n"
             "Off — do not use stored facts for this caller.\n"
@@ -2556,7 +2557,7 @@ class SettingsDialog(QDialog):
         context_documents_mode: str | None = None,
         context_browser_mode: str = "off",
         context_github_mode: str = "off",
-        context_memory_mode: str = "auto",
+        context_memory_mode: str = "on",
         context_screenshot: str = "off",
         file_access: str = "off",
         tools: "dict[str, str] | None" = None,
@@ -3769,7 +3770,7 @@ class SettingsDialog(QDialog):
             )
             memory_mode = self._env.get(
                 f"CALLER_{n}_CONTEXT_MEMORY_MODE",
-                cr.get("context_memory_mode") or "auto",
+                cr.get("context_memory_mode") or "on",
             )
             file_access = self._env.get(
                 f"CALLER_{n}_FILE_ACCESS",
@@ -3823,7 +3824,7 @@ class SettingsDialog(QDialog):
         )
         _set(
             vb["context_memory_mode"],
-            self._env.get("VOICE_CONTEXT_MEMORY_MODE", vc.get("context_memory_mode") or "auto"),
+            self._env.get("VOICE_CONTEXT_MEMORY_MODE", vc.get("context_memory_mode") or "on"),
         )
         _set(
             vb["context_screenshot"],
@@ -5159,6 +5160,8 @@ def _sep(visible: bool = False) -> QFrame:
 def _set(widget, value: str):
     """Set *value* on a combo/line/text-edit widget, honoring custom-value rules."""
     if isinstance(widget, QComboBox):
+        if value == "auto" and widget.property("legacy_auto_means_on"):
+            value = "on"
         idx = widget.findData(value)
         if idx >= 0:
             widget.setCurrentIndex(idx)

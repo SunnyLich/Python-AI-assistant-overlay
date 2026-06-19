@@ -2154,16 +2154,18 @@ class QtProtocolHost:
             tool_context = self._normalized_tool_context(conv.get("tool_context") or {})
             context_policy = self._normalized_context_policy(conv.get("context_policy") or {})
             context = str(conv.get("context") or "")
-            history = [
-                {
-                    "role": m.get("role"),
-                    "content": m.get("content"),
-                    **({"image_base64": m.get("image_base64")} if m.get("image_base64") else {}),
-                }
-                for m in conv.get("messages", [])
-                if m.get("role") in ("user", "assistant")
-                and isinstance(m.get("content"), str) and m.get("content").strip()
-            ]
+            for m in conv.get("messages", []):
+                if (
+                    m.get("role") not in ("user", "assistant")
+                    or not isinstance(m.get("content"), str)
+                    or not m.get("content").strip()
+                ):
+                    continue
+                item = {"role": m.get("role"), "content": m.get("content")}
+                attachments = conversation_store.normalize_attachments(m.get("attachments"))
+                if attachments:
+                    item["attachments"] = attachments
+                history.append(item)
         else:
             project = self._active_project_id
             file_context = []
@@ -2336,6 +2338,7 @@ class QtProtocolHost:
         assistant: str = "",
         context: str = "",
         image_base64: str | None = None,
+        attachments: list | None = None,
         file_context: list | None = None,
         tool_context: dict | None = None,
         context_policy: dict | None = None,
@@ -2343,16 +2346,38 @@ class QtProtocolHost:
         """Handle chat add conversation for qt protocol host."""
         import uuid as _uuid
         from datetime import datetime, timezone
+        from core.conversation_store import store as conversation_store
 
         now = datetime.now(timezone.utc).isoformat()
+        idx = self._active_conversation_idx
+        if idx is not None and 0 <= idx < len(self._all_conversations):
+            conv_id = str(self._all_conversations[idx].get("id") or _uuid.uuid4())
+            self._all_conversations[idx]["id"] = conv_id
+        else:
+            conv_id = str(_uuid.uuid4())
         user_msg: dict[str, Any] = {
             "id": str(_uuid.uuid4()),
             "role": "user",
             "content": user,
             "created_at": now,
         }
+        normalized_attachments = conversation_store.normalize_attachments(attachments or [])
         if image_base64:
-            user_msg["image_base64"] = image_base64
+            try:
+                normalized_attachments.append(
+                    conversation_store.save_image_attachment(
+                        image_base64,
+                        conversation_id=conv_id,
+                        message_id=str(user_msg["id"]),
+                        source="screenshot",
+                        name="screenshot.png",
+                    )
+                )
+            except Exception:
+                log.exception("failed to persist chat image attachment")
+        normalized_attachments = conversation_store.normalize_attachments(normalized_attachments)
+        if normalized_attachments:
+            user_msg["attachments"] = normalized_attachments
         context_text = str(context or "").strip()
         if context_text:
             user_msg["context"] = context_text
@@ -2369,7 +2394,6 @@ class QtProtocolHost:
         if normalized_tool_context:
             assistant_msg["tool_context"] = normalized_tool_context
 
-        idx = self._active_conversation_idx
         if idx is not None and 0 <= idx < len(self._all_conversations):
             # Continue the active conversation (the one selected in the chat window).
             conv = self._all_conversations[idx]
@@ -2392,7 +2416,7 @@ class QtProtocolHost:
         # No active conversation (fresh start) -> open a new one and make it active.
         self._all_conversations.append(
             {
-                "id": str(_uuid.uuid4()),
+                "id": conv_id,
                 "project_id": self._active_project_id,
                 "messages": [user_msg, assistant_msg],
                 "context": context_text,

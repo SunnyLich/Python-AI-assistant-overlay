@@ -355,13 +355,36 @@ class ConfigEnvTests(unittest.TestCase):
             self.assertEqual(voice["context_documents_mode"], "auto")
             self.assertEqual(voice["context_browser_mode"], "off")
             self.assertEqual(voice["context_github_mode"], "off")
-            self.assertEqual(voice["context_memory_mode"], "auto")
+            self.assertEqual(voice["context_memory_mode"], "on")
             self.assertEqual(voice["context_screenshot"], "off")
             self.assertFalse(voice["paste_back"])
             self.assertEqual(voice["tools"], {})
         finally:
             config.VOICE_CALLER.clear()
             config.VOICE_CALLER.update(previous)
+
+    def test_memory_context_mode_accepts_legacy_auto_alias(self):
+        """Verify legacy memory auto mode loads as on."""
+        previous_rows = list(config.CALLER_ROWS)
+        previous_voice = dict(config.VOICE_CALLER)
+        try:
+            with patch("config.load_dotenv"), patch.dict(
+                os.environ,
+                {
+                    "CALLER_COUNT": "1",
+                    "CALLER_1_CONTEXT_MEMORY_MODE": "auto",
+                    "VOICE_CONTEXT_MEMORY_MODE": "auto",
+                },
+                clear=False,
+            ):
+                config.reload()
+
+            self.assertEqual(config.CALLER_ROWS[0]["context_memory_mode"], "on")
+            self.assertEqual(config.VOICE_CALLER["context_memory_mode"], "on")
+        finally:
+            config.CALLER_ROWS[:] = previous_rows
+            config.VOICE_CALLER.clear()
+            config.VOICE_CALLER.update(previous_voice)
 
     def test_voice_caller_loads_env_overrides_and_tools(self):
         """Verify voice caller loads env overrides and tools behavior."""

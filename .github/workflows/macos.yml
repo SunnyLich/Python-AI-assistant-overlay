@@ -63,11 +63,12 @@ jobs:
       - name: Verify macOS lock is current
         run: |
           tmp_lock="$(mktemp)"
+          python_minor="$(python -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
           uv pip compile requirements.txt \
             --constraints requirements-macos.lock \
             --no-header \
             --python "$(command -v python)" \
-            --python-version 3.12 \
+            --python-version "$python_minor" \
             --python-platform aarch64-apple-darwin \
             --output-file "$tmp_lock"
           diff -u requirements-macos.lock "$tmp_lock"

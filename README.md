@@ -102,26 +102,36 @@ Wisp: "That's a CAPTCHA verification step â€” click the checkbox
 ```bash
 git clone https://github.com/SunnyLich/Python-AI-assistant-overlay.git
 cd Python-AI-assistant-overlay
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # macOS / Linux
-
-pip install -r requirements.txt
 ```
 
-Copy `.env.example` to `.env` and fill in at least one LLM API key.
+For normal use, run the platform launcher and let it provision the pinned
+environment:
 
-```bash
-python -m runtime.supervisor.app
+```powershell
+.\Start Wisp.bat       # Windows
 ```
-
-Or use the platform launcher, which provisions dependencies and starts the same
-pure-Python worker supervisor:
 
 ```bash
 bash "Start Wisp.command"   # macOS
 bash "Start Wisp.sh"        # Linux
 ```
+
+For development, use the setup script instead of creating `.venv` by hand:
+
+```powershell
+.\scripts\setup_dev.ps1
+.\.venv\Scripts\python.exe scripts\check_dev_environment.py
+```
+
+```bash
+bash scripts/setup_dev.sh
+.venv/bin/python scripts/check_dev_environment.py
+```
+
+Copy `.env.example` to `.env` and fill in at least one LLM API key.
+
+The launchers and setup scripts verify the exact pinned Python version before
+Wisp runs.
 
 Use `Start Wisp Debug.command`, `Start Wisp Debug.sh`, or
 `Start Wisp Debug.bat` to keep full runtime logs while debugging.
@@ -148,12 +158,14 @@ bash scripts/setup_dev.sh     # macOS / Linux
 Then run checks from the repo root:
 
 ```powershell
+.\.venv\Scripts\python.exe scripts\check_dev_environment.py
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m ruff check core\context_hotkey.py core\llm_clients\messages.py runtime\supervisor\tool_modes.py ui\agent\combo_helpers.py ui\settings_panel\helpers.py tests\test_context_hotkey_snapshot.py
 .\.venv\Scripts\python.exe -m mypy core\settings_model.py core\llm_clients\logging_utils.py runtime\supervisor\tool_modes.py ui\agent\combo_helpers.py --follow-imports=skip
 ```
 
 ```bash
+.venv/bin/python scripts/check_dev_environment.py
 .venv/bin/python -m pytest
 .venv/bin/python -m ruff check core/context_hotkey.py core/llm_clients/messages.py runtime/supervisor/tool_modes.py ui/agent/combo_helpers.py ui/settings_panel/helpers.py tests/test_context_hotkey_snapshot.py
 .venv/bin/python -m mypy core/settings_model.py core/llm_clients/logging_utils.py runtime/supervisor/tool_modes.py ui/agent/combo_helpers.py --follow-imports=skip

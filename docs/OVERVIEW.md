@@ -91,6 +91,7 @@ callers and older addon code, but new work should use addon naming and
 Run the full test suite from the repository root:
 
 ```powershell
+.\.venv\Scripts\python.exe scripts\check_dev_environment.py
 .\.venv\Scripts\python.exe -m pytest
 ```
 

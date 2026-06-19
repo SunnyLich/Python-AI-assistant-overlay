@@ -5,9 +5,21 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-WANT="$(tr -d '[:space:]' < .python-version 2>/dev/null || true)"
-WANT="${WANT:-3.12.13}"
+if [ ! -s .python-version ]; then
+  echo "ERROR: .python-version is required and must contain an exact Python version like 3.12.13." >&2
+  exit 1
+fi
+WANT="$(tr -d '[:space:]' < .python-version)"
+if [[ ! "$WANT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "ERROR: .python-version must contain an exact Python version like 3.12.13." >&2
+  exit 1
+fi
 WANT_MM="$(printf '%s' "$WANT" | cut -d. -f1,2)"
+
+if [ ! -s requirements.txt ]; then
+  echo "ERROR: requirements.txt is required to compile the macOS lock." >&2
+  exit 1
+fi
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "uv is required to compile the macOS lock file." >&2
@@ -15,8 +27,8 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
-python_mm() {
-  "$1" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true
+python_version() {
+  "$1" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")' 2>/dev/null || true
 }
 
 find_python() {
@@ -28,7 +40,7 @@ find_python() {
     elif [ ! -x "$c" ]; then
       continue
     fi
-    if [ "$(python_mm "$c")" = "$WANT_MM" ]; then
+    if [ "$(python_version "$c")" = "$WANT" ]; then
       echo "$c"
       return 0
     fi
@@ -38,7 +50,7 @@ find_python() {
 
 PYTHON="$(find_python || true)"
 if [ -z "$PYTHON" ]; then
-  echo "Could not find Python $WANT_MM. Install Python $WANT or set PYTHON_BIN." >&2
+  echo "Could not find Python $WANT. Install Python $WANT or set PYTHON_BIN." >&2
   exit 1
 fi
 
@@ -49,4 +61,4 @@ uv pip compile requirements.txt \
   --python-platform aarch64-apple-darwin \
   --output-file requirements-macos.lock
 
-echo "Updated requirements-macos.lock for macOS arm64 / Python $WANT_MM."
+echo "Updated requirements-macos.lock for macOS arm64 / Python $WANT."

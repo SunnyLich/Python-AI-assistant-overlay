@@ -30,14 +30,23 @@ if [ "$(uname -s 2>/dev/null || true)" != "Darwin" ]; then
   exit 1
 fi
 
-WANT="$(tr -d '[:space:]' < .python-version 2>/dev/null || true)"
-WANT="${WANT:-3.12.13}"
+if [ ! -s .python-version ]; then
+  echo "ERROR: .python-version is required and must contain an exact Python version like 3.12.13." >&2
+  echo "Logs written to: $LOG_DIR"
+  exit 1
+fi
+WANT="$(tr -d '[:space:]' < .python-version)"
+if [[ ! "$WANT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "ERROR: .python-version must contain an exact Python version like 3.12.13." >&2
+  echo "Logs written to: $LOG_DIR"
+  exit 1
+fi
 WANT_MM="$(printf '%s' "$WANT" | cut -d. -f1,2)"
 REQ_FILE="$REPO_ROOT/requirements-macos.lock"
 VPY="$REPO_ROOT/.venv/bin/python"
 STAMP_FILE="$REPO_ROOT/.venv/.wisp-macos-python-deps.stamp"
 
-if [ ! -f "$REQ_FILE" ]; then
+if [ ! -s "$REQ_FILE" ]; then
   echo "ERROR: requirements-macos.lock is required for macOS setup." >&2
   echo "Logs written to: $LOG_DIR"
   exit 1
@@ -63,12 +72,12 @@ run_logged() {
   echo "PASS: $name"
 }
 
-python_mm() {
-  "$1" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true
+python_version() {
+  "$1" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")' 2>/dev/null || true
 }
 
 python_matches_want() {
-  [ -n "${1:-}" ] && [ "$(python_mm "$1")" = "$WANT_MM" ]
+  [ -n "${1:-}" ] && [ "$(python_version "$1")" = "$WANT" ]
 }
 
 try_python() {
@@ -175,9 +184,11 @@ setup_venv() {
   fi
 
   py="$(find_local_python || true)"
-  rm -rf "$REPO_ROOT/.venv"
 
   if [ -n "$py" ]; then
+    if [ -e "$REPO_ROOT/.venv" ]; then
+      rm -rf "$REPO_ROOT/.venv"
+    fi
     echo "Creating .venv with local Python: $py"
     run_logged "python-venv-create" "$py" -m venv "$REPO_ROOT/.venv"
     ensure_pip "$VPY"
@@ -189,6 +200,9 @@ setup_venv() {
     if [ -z "$uv" ]; then
       echo "ERROR: could not find/install uv to provision Python $WANT." >&2
       exit 1
+    fi
+    if [ -e "$REPO_ROOT/.venv" ]; then
+      rm -rf "$REPO_ROOT/.venv"
     fi
     echo "Creating .venv with uv Python $WANT"
     run_logged "uv-venv-create" "$uv" venv --python "$WANT" "$REPO_ROOT/.venv"

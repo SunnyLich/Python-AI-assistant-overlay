@@ -10,5 +10,16 @@
 *.bat     text eol=crlf
 *.cmd     text eol=crlf
 
+# Source, docs, and config stay LF so cross-platform tooling and diffs are
+# stable even when a developer has core.autocrlf=true.
+.gitattributes text eol=lf
+*.md      text eol=lf
+*.py      text eol=lf
+*.toml    text eol=lf
+*.txt     text eol=lf
+*.ps1     text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+
 # Pin file used by pyenv to select the interpreter.
 .python-version text eol=lf

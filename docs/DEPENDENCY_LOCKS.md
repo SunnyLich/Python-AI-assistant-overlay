@@ -1,9 +1,9 @@
 # Dependency Locks
 
 Wisp keeps `requirements.txt` as the human-edited runtime dependency manifest.
-Developer-only tools live in `requirements-dev.txt`. macOS installs use
-`requirements-macos.lock`, an exact resolved runtime lock for Python `3.12.13`
-on Apple Silicon.
+Developer-only tools live in `requirements-dev.txt`, and packaging-only tools
+live in `requirements-build.txt`. macOS installs use `requirements-macos.lock`,
+an exact resolved runtime lock for Python `3.12.13` on Apple Silicon.
 
 The lock matters because Wisp crosses several native macOS boundaries:
 PySide6/Qt Cocoa, PortAudio through `sounddevice`, PyObjC Quartz/AppKit,
@@ -16,7 +16,8 @@ has not changed.
 
 1. Edit `requirements.txt` when adding, removing, or intentionally upgrading a
    runtime dependency. Edit `requirements-dev.txt` for local tooling such as
-   pytest, Ruff, and MyPy.
+   pytest, Ruff, and MyPy. Edit `requirements-build.txt` for packaging tools
+   such as PyInstaller.
 2. Regenerate the macOS lock on a Mac, or from another machine with `uv`:
 
    ```bash
@@ -31,7 +32,8 @@ has not changed.
    ```
 
 4. Commit `requirements.txt` and `requirements-macos.lock` together. If tooling
-   changed, also commit `requirements-dev.txt` and `pyproject.toml`.
+   changed, also commit `requirements-dev.txt`, `requirements-build.txt`, and
+   `pyproject.toml`.
 
 The macOS CI workflow verifies that `requirements-macos.lock` can be regenerated
 from `requirements.txt` without changes, then installs from the lock file.

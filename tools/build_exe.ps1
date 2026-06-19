@@ -17,6 +17,7 @@ $PythonVersionFile = Join-Path $Root ".python-version"
 $SpecName = "Wisp.spec"
 $AppName = "Wisp"
 $RequirementsFile = "requirements.txt"
+$BuildRequirementsFile = "requirements-build.txt"
 $Spec = Join-Path $Root "packaging\$SpecName"
 $DistExe = Join-Path $Root "dist\$AppName\$AppName.exe"
 $IconPath = Join-Path $Root "assets\app.ico"
@@ -24,11 +25,73 @@ $IconSourcePng = Join-Path $Root "assets\doll\idle.png"
 
 Set-Location $Root
 
-$ExpectedPython = "3.12.13"
-if (Test-Path $PythonVersionFile) {
-    $ExpectedPython = (Get-Content $PythonVersionFile -Raw).Trim()
+$ExpectedPython = ""
+if (-not (Test-Path $PythonVersionFile)) {
+    throw ".python-version is required and must contain an exact Python version like 3.12.13."
 }
-$ExpectedMinor = (($ExpectedPython -split "\.")[0..1] -join ".")
+$ExpectedPython = (Get-Content $PythonVersionFile -TotalCount 1).Trim()
+if (-not $ExpectedPython) {
+    throw ".python-version is required and must contain an exact Python version like 3.12.13."
+}
+if ($ExpectedPython -notmatch '^\d+\.\d+\.\d+$') {
+    throw ".python-version must contain an exact Python version like 3.12.13."
+}
+$ExpectedMinor = ($ExpectedPython -split "\.")[0..1] -join "."
+
+function Require-PackagingFile {
+    param(
+        [string]$Path,
+        [string]$Name
+    )
+
+    if ((-not (Test-Path -LiteralPath $Path -PathType Leaf)) -or ((Get-Item -LiteralPath $Path).Length -eq 0)) {
+        throw "$Name is required for packaging."
+    }
+}
+
+function Require-PackagingDirectory {
+    param(
+        [string]$Path,
+        [string]$Name
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "$Name is required for packaging."
+    }
+    $FirstChild = Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $FirstChild) {
+        throw "$Name must contain files for packaging."
+    }
+}
+
+$RequiredBuildFiles = @(
+    @{ Path = (Join-Path $Root $RequirementsFile); Name = $RequirementsFile },
+    @{ Path = (Join-Path $Root $BuildRequirementsFile); Name = $BuildRequirementsFile }
+)
+foreach ($RequiredBuildFile in $RequiredBuildFiles) {
+    Require-PackagingFile -Path $RequiredBuildFile.Path -Name $RequiredBuildFile.Name
+}
+
+$RequiredPackagingFiles = @(
+    @{ Path = $Spec; Name = "packaging\$SpecName" },
+    @{ Path = (Join-Path $Root "runtime\supervisor\app.py"); Name = "runtime\supervisor\app.py" },
+    @{ Path = (Join-Path $Root ".env.example"); Name = ".env.example" }
+)
+foreach ($RequiredPackagingFile in $RequiredPackagingFiles) {
+    Require-PackagingFile -Path $RequiredPackagingFile.Path -Name $RequiredPackagingFile.Name
+}
+
+$RequiredPackagingDirectories = @(
+    @{ Path = (Join-Path $Root "assets"); Name = "assets" },
+    @{ Path = (Join-Path $Root "ui\locales"); Name = "ui\locales" }
+)
+foreach ($RequiredPackagingDirectory in $RequiredPackagingDirectories) {
+    Require-PackagingDirectory -Path $RequiredPackagingDirectory.Path -Name $RequiredPackagingDirectory.Name
+}
+
+if (-not (Test-Path -LiteralPath $IconPath -PathType Leaf)) {
+    Require-PackagingFile -Path $IconSourcePng -Name "assets\doll\idle.png"
+}
 
 # Force child Python processes (pip, PyInstaller) to stream their output line by
 # line so progress shows up promptly instead of arriving in buffered chunks.
@@ -48,25 +111,25 @@ function Invoke-CheckedPython {
     }
 }
 
-function Get-PythonMinor {
+function Get-PythonVersion {
     param(
         [string]$Python,
         [string[]]$PythonArgs = @()
     )
 
     try {
-        return (& $Python @PythonArgs -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')" 2>$null).Trim()
+        return (& $Python @PythonArgs -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}')" 2>$null).Trim()
     } catch {
         return ""
     }
 }
 
-function Assert-PythonMinor {
+function Assert-PythonVersion {
     param([string]$Python)
 
-    $ActualMinor = Get-PythonMinor -Python $Python
-    if ($ActualMinor -ne $ExpectedMinor) {
-        throw "$Python is Python $ActualMinor, but Wisp packaging is pinned to Python $ExpectedPython. Rebuild .venv with scripts\setup_dev.ps1 or rerun the launcher with Python $ExpectedPython installed."
+    $ActualVersion = Get-PythonVersion -Python $Python
+    if ($ActualVersion -ne $ExpectedPython) {
+        throw "$Python is Python $ActualVersion, but Wisp packaging is pinned to Python $ExpectedPython. Rebuild .venv with scripts\setup_dev.ps1 or rerun the launcher with Python $ExpectedPython installed."
     }
 }
 
@@ -76,16 +139,16 @@ function New-ProjectVenv {
 
     if (Get-Command py.exe -ErrorAction SilentlyContinue) {
         $PyLauncherArg = "-$ExpectedMinor"
-        $PyMinor = Get-PythonMinor -Python "py" -PythonArgs @($PyLauncherArg)
-        if ($PyMinor -eq $ExpectedMinor) {
+        $PyVersion = Get-PythonVersion -Python "py" -PythonArgs @($PyLauncherArg)
+        if ($PyVersion -eq $ExpectedPython) {
             & py $PyLauncherArg -m venv $VenvDir
             return
         }
     }
 
     if (Get-Command python -ErrorAction SilentlyContinue) {
-        $PythonMinor = Get-PythonMinor -Python "python"
-        if ($PythonMinor -eq $ExpectedMinor) {
+        $PythonVersion = Get-PythonVersion -Python "python"
+        if ($PythonVersion -eq $ExpectedPython) {
             & python -m venv $VenvDir
             return
         }
@@ -119,11 +182,11 @@ if (-not $UseGlobalPython) {
         }
     }
     $Python = $VenvPython
-    Assert-PythonMinor -Python $Python
+    Assert-PythonVersion -Python $Python
 } else {
     Write-Host "Using global Python because -UseGlobalPython was provided."
     $Python = "python"
-    Assert-PythonMinor -Python $Python
+    Assert-PythonVersion -Python $Python
 }
 
 if (Test-Path $DistExe) {
@@ -156,7 +219,7 @@ if (-not $SkipInstall) {
 
     Invoke-CheckedPython -Python $Python -CommandArgs @("-m", "pip", "install", "--upgrade", "pip") -StepName "pip upgrade"
     try {
-        Invoke-CheckedPython -Python $Python -CommandArgs @("-m", "pip", "install", "-r", $BuildRequirements, "-r", "requirements-build.txt") -StepName "dependency install"
+        Invoke-CheckedPython -Python $Python -CommandArgs @("-m", "pip", "install", "-r", $BuildRequirements, "-r", $BuildRequirementsFile) -StepName "dependency install"
     } finally {
         if ($FilteredRequirements -and (Test-Path $FilteredRequirements)) {
             Remove-Item -LiteralPath $FilteredRequirements -Force -ErrorAction SilentlyContinue

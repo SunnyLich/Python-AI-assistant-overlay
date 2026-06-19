@@ -22,12 +22,21 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 VENV_DIR="$ROOT/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
-WANT="$(cat "$ROOT/.python-version" 2>/dev/null || printf "3.12.13")"
-WANT_MM="${WANT%.*}"
+if [ ! -s "$ROOT/.python-version" ]; then
+    echo "ERROR: .python-version is required and must contain an exact Python version like 3.12.13." >&2
+    exit 1
+fi
+WANT="$(tr -d '[:space:]' < "$ROOT/.python-version")"
+if [[ ! "$WANT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "ERROR: .python-version must contain an exact Python version like 3.12.13." >&2
+    exit 1
+fi
+WANT_MM="$(printf '%s' "$WANT" | cut -d. -f1,2)"
 
 SPEC_NAME="WispLinux.spec"
 APP_NAME="Wisp"
-REQUIREMENTS_FILE="requirements.txt"
+REQUIREMENTS_FILE="$ROOT/requirements.txt"
+BUILD_REQUIREMENTS_FILE="$ROOT/requirements-build.txt"
 
 SPEC="$ROOT/packaging/$SPEC_NAME"
 DIST_BIN="$ROOT/dist/$APP_NAME/$APP_NAME"
@@ -36,14 +45,51 @@ ICON_SOURCE_PNG="$ROOT/assets/doll/idle.png"
 
 cd "$ROOT"
 
-py_minor() {
-    "$1" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true
+require_file() {
+    local path="$1"
+    local name="$2"
+    if [[ ! -f "$path" || ! -s "$path" ]]; then
+        echo "ERROR: $name is required for packaging." >&2
+        exit 1
+    fi
+}
+
+require_dir() {
+    local path="$1"
+    local name="$2"
+    local child
+    if [[ ! -d "$path" ]]; then
+        echo "ERROR: $name is required for packaging." >&2
+        exit 1
+    fi
+    for child in "$path"/* "$path"/.[!.]* "$path"/..?*; do
+        if [[ -e "$child" ]]; then
+            return 0
+        fi
+    done
+    echo "ERROR: $name must contain files for packaging." >&2
+    exit 1
+}
+
+require_file "$REQUIREMENTS_FILE" "requirements.txt"
+require_file "$BUILD_REQUIREMENTS_FILE" "requirements-build.txt"
+require_file "$SPEC" "packaging/$SPEC_NAME"
+require_file "$ROOT/runtime/supervisor/app.py" "runtime/supervisor/app.py"
+require_file "$ROOT/.env.example" ".env.example"
+require_dir "$ROOT/assets" "assets"
+require_dir "$ROOT/ui/locales" "ui/locales"
+if [[ ! -f "$ICON_PATH" ]]; then
+    require_file "$ICON_SOURCE_PNG" "assets/doll/idle.png"
+fi
+
+python_version() {
+    "$1" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")' 2>/dev/null || true
 }
 
 find_expected_python() {
     for cmd in "python$WANT_MM" python3 python; do
-        if command -v "$cmd" >/dev/null 2>&1 && [[ "$(py_minor "$cmd")" == "$WANT_MM" ]]; then
-            printf '%s\n' "$cmd"
+        if command -v "$cmd" >/dev/null 2>&1 && [[ "$(python_version "$(command -v "$cmd")")" == "$WANT" ]]; then
+            command -v "$cmd"
             return 0
         fi
     done
@@ -72,18 +118,17 @@ if ! $USE_GLOBAL_PYTHON; then
         fi
     fi
     PYTHON="$VENV_PYTHON"
-    HAVE_MM="$(py_minor "$PYTHON")"
-    if [[ "$HAVE_MM" != "$WANT_MM" ]]; then
-        echo "$PYTHON is Python $HAVE_MM, but Wisp packaging is pinned to Python $WANT." >&2
+    HAVE_VERSION="$(python_version "$PYTHON")"
+    if [[ "$HAVE_VERSION" != "$WANT" ]]; then
+        echo "$PYTHON is Python $HAVE_VERSION, but Wisp packaging is pinned to Python $WANT." >&2
         echo "Rebuild .venv with scripts/setup_dev.sh or rerun the launcher with Python $WANT installed." >&2
         exit 1
     fi
 else
     echo "Using global Python because --use-global-python was provided."
-    PYTHON="python3"
-    HAVE_MM="$(py_minor "$PYTHON")"
-    if [[ "$HAVE_MM" != "$WANT_MM" ]]; then
-        echo "$PYTHON is Python $HAVE_MM, but Wisp packaging is pinned to Python $WANT." >&2
+    PYTHON="$(find_expected_python || true)"
+    if [[ -z "$PYTHON" ]]; then
+        echo "Could not find Python $WANT for --use-global-python." >&2
         exit 1
     fi
 fi
@@ -118,7 +163,7 @@ fi
 if ! $SKIP_INSTALL; then
     if confirm "Install/update Python packages in $PYTHON before building?"; then
         "$PYTHON" -m pip install --upgrade pip
-        "$PYTHON" -m pip install -r "$REQUIREMENTS_FILE" -r requirements-build.txt
+        "$PYTHON" -m pip install -r "$REQUIREMENTS_FILE" -r "$BUILD_REQUIREMENTS_FILE"
     else
         echo "Skipping dependency install. Use --yes to install automatically or --skip-install to suppress this prompt."
     fi

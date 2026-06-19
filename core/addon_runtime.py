@@ -107,29 +107,58 @@ def provision_environment(addon_id: str, deps: AddonDependencies, *, force: bool
         return environment_status(addon_id, deps)
 
     root = env_path(addon_id)
-    if force and root.exists():
-        shutil.rmtree(root)
-
     status = environment_status(addon_id, deps)
-    if status.get("ready"):
+    if status.get("ready") and not force:
         return status
 
-    root.parent.mkdir(parents=True, exist_ok=True)
     uv = _find_uv()
-    if uv:
-        python_spec = deps.python or f"{sys.version_info.major}.{sys.version_info.minor}"
-        _run([uv, "venv", "--python", python_spec, str(root)])
-        if deps.packages:
-            _run([uv, "pip", "install", "--python", str(python_path(root)), *deps.packages])
-    else:
-        if getattr(sys, "frozen", False):
-            raise RuntimeError("uv is required to create addon dependency environments in packaged builds.")
-        _run([sys.executable, "-m", "venv", str(root)])
-        if deps.packages:
-            _run([str(python_path(root)), "-m", "pip", "install", *deps.packages])
+    if not uv and getattr(sys, "frozen", False):
+        raise RuntimeError("uv is required to create addon dependency environments in packaged builds.")
 
-    _write_marker(root, deps)
+    backup = _backup_existing_env(root) if force and root.exists() else None
+    root.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if uv:
+            python_spec = deps.python or f"{sys.version_info.major}.{sys.version_info.minor}"
+            _run([uv, "venv", "--python", python_spec, str(root)])
+            if deps.packages:
+                _run([uv, "pip", "install", "--python", str(python_path(root)), *deps.packages])
+        else:
+            _run([sys.executable, "-m", "venv", str(root)])
+            if deps.packages:
+                _run([str(python_path(root)), "-m", "pip", "install", *deps.packages])
+
+        _write_marker(root, deps)
+    except Exception:
+        _restore_env_backup(root, backup)
+        raise
+    else:
+        _discard_env_backup(backup)
     return environment_status(addon_id, deps)
+
+
+def _backup_existing_env(root: Path) -> Path:
+    """Move an existing addon env aside so a failed repair can restore it."""
+    backup = root.with_name(f"{root.name}.rebuild-backup")
+    if backup.exists():
+        shutil.rmtree(backup)
+    shutil.move(str(root), str(backup))
+    return backup
+
+
+def _restore_env_backup(root: Path, backup: Path | None) -> None:
+    """Restore a pre-repair addon env after a failed rebuild."""
+    if backup is None or not backup.exists():
+        return
+    if root.exists():
+        shutil.rmtree(root)
+    shutil.move(str(backup), str(root))
+
+
+def _discard_env_backup(backup: Path | None) -> None:
+    """Remove a pre-repair addon env backup after a successful rebuild."""
+    if backup is not None and backup.exists():
+        shutil.rmtree(backup)
 
 
 def _read_marker(root: Path) -> dict[str, Any]:

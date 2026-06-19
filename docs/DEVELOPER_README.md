@@ -16,6 +16,7 @@ On Windows:
 
 ```powershell
 .\scripts\setup_dev.ps1
+.\.venv\Scripts\python.exe scripts\check_dev_environment.py
 .\.venv\Scripts\python.exe -m pytest
 ```
 
@@ -23,6 +24,7 @@ On macOS or Linux:
 
 ```bash
 bash scripts/setup_dev.sh
+.venv/bin/python scripts/check_dev_environment.py
 .venv/bin/python -m pytest
 ```
 
@@ -110,6 +112,12 @@ feature flows.
   helpers under `core/auth/`.
 
 ## Tests And Checks
+
+Check that the local `.venv` uses the pinned Python and has runtime/developer tools:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\check_dev_environment.py
+```
 
 Run the full suite:
 

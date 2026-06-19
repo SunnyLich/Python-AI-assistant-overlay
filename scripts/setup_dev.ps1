@@ -6,19 +6,37 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$Want = "3.12.13"
+$Want = ""
 $PythonVersionFile = Join-Path $Root ".python-version"
-if (Test-Path $PythonVersionFile) {
-    $Want = (Get-Content $PythonVersionFile -TotalCount 1).Trim()
+if (-not (Test-Path $PythonVersionFile)) {
+    throw ".python-version is required and must contain an exact Python version like 3.12.13."
+}
+$Want = (Get-Content $PythonVersionFile -TotalCount 1).Trim()
+if (-not $Want) {
+    throw ".python-version is required and must contain an exact Python version like 3.12.13."
+}
+if ($Want -notmatch '^\d+\.\d+\.\d+$') {
+    throw ".python-version must contain an exact Python version like 3.12.13."
 }
 $WantMinor = ($Want -split "\.")[0..1] -join "."
 $VenvDir = Join-Path $Root ".venv"
+$VenvBackupDir = Join-Path $Root ".venv.rebuild-backup"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+$RequiredDependencyFiles = @(
+    (Join-Path $Root "requirements.txt"),
+    (Join-Path $Root "requirements-dev.txt")
+)
+foreach ($RequiredDependencyFile in $RequiredDependencyFiles) {
+    if ((-not (Test-Path $RequiredDependencyFile)) -or ((Get-Item $RequiredDependencyFile).Length -eq 0)) {
+        $Name = Split-Path -Leaf $RequiredDependencyFile
+        throw "$Name is required for developer setup."
+    }
+}
 
-function Get-PythonMinor {
+function Get-PythonVersion {
     param([string]$Python)
     try {
-        return (& $Python -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')" 2>$null).Trim()
+        return (& $Python -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}')" 2>$null).Trim()
     } catch {
         return ""
     }
@@ -26,53 +44,153 @@ function Get-PythonMinor {
 
 function Test-PythonMatches {
     param([string]$Python)
-    return (Test-Path $Python) -and ((Get-PythonMinor $Python) -eq $WantMinor)
+    return (Test-Path $Python) -and ((Get-PythonVersion $Python) -eq $Want)
+}
+
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory = $true)][string]$Description,
+        [Parameter(Mandatory = $true)][string]$Command,
+        [string[]]$Arguments = @()
+    )
+
+    & $Command @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Description failed with exit code $LASTEXITCODE."
+    }
+}
+
+function Find-Uv {
+    if (Get-Command uv -ErrorAction SilentlyContinue) {
+        return "uv"
+    }
+
+    $Candidates = @(
+        (Join-Path $env:USERPROFILE ".local\bin\uv.exe"),
+        (Join-Path $env:USERPROFILE ".cargo\bin\uv.exe")
+    )
+    foreach ($Candidate in $Candidates) {
+        if (Test-Path $Candidate) {
+            return $Candidate
+        }
+    }
+    return $null
+}
+
+function Ensure-Uv {
+    $Uv = Find-Uv
+    if ($null -ne $Uv) {
+        return $Uv
+    }
+
+    Write-Host "Installing uv to provision Python $Want..."
+    Invoke-Native "uv installer" "powershell" @(
+        "-ExecutionPolicy",
+        "ByPass",
+        "-NoProfile",
+        "-c",
+        "irm https://astral.sh/uv/install.ps1 | iex"
+    )
+    return Find-Uv
+}
+
+function Move-VenvForRebuild {
+    if (-not (Test-Path -LiteralPath $VenvDir)) {
+        return $false
+    }
+    if (Test-Path -LiteralPath $VenvBackupDir) {
+        throw ".venv.rebuild-backup already exists. Remove it after confirming no setup is in progress, then rerun this script."
+    }
+
+    Move-Item -LiteralPath $VenvDir -Destination $VenvBackupDir
+    return $true
+}
+
+function Restore-VenvBackup {
+    if (-not (Test-Path -LiteralPath $VenvBackupDir)) {
+        return
+    }
+
+    Write-Host "Restoring previous .venv after setup failure..."
+    if (Test-Path -LiteralPath $VenvDir) {
+        Remove-Item -LiteralPath $VenvDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Move-Item -LiteralPath $VenvBackupDir -Destination $VenvDir
+}
+
+function Remove-VenvBackup {
+    if (Test-Path -LiteralPath $VenvBackupDir) {
+        Remove-Item -LiteralPath $VenvBackupDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Set-Location $Root
 
-if (-not $UseGlobalPython) {
-    if ((Test-Path $VenvPython) -and -not (Test-PythonMatches $VenvPython)) {
-        Write-Host "Existing .venv is not Python $WantMinor; rebuilding it for development..."
-        Remove-Item -LiteralPath $VenvDir -Recurse -Force
-    }
-
-    if (-not (Test-Path $VenvPython)) {
-        $PyExe = $null
-        $PyArgs = @()
-        if (Get-Command py.exe -ErrorAction SilentlyContinue) {
-            try {
-                & py.exe "-$WantMinor" --version *> $null
-                if ($LASTEXITCODE -eq 0) {
-                    $PyExe = "py.exe"
-                    $PyArgs = @("-$WantMinor")
-                }
-            } catch {}
+$MovedVenvBackup = $false
+try {
+    if (-not $UseGlobalPython) {
+        $RebuildVenv = $false
+        if ((Test-Path $VenvPython) -and -not (Test-PythonMatches $VenvPython)) {
+            Write-Host "Existing .venv is not Python $Want; rebuilding it for development..."
+            $RebuildVenv = $true
         }
-        if ($null -eq $PyExe -and (Get-Command python -ErrorAction SilentlyContinue)) {
-            if ((Get-PythonMinor "python") -eq $WantMinor) {
-                $PyExe = "python"
-                $PyArgs = @()
+
+        if ((-not (Test-Path $VenvPython)) -or $RebuildVenv) {
+            $PyExe = $null
+            $PyArgs = @()
+            if (Get-Command py.exe -ErrorAction SilentlyContinue) {
+                try {
+                    & py.exe "-$WantMinor" (Join-Path $Root "scripts\check_python_version.py") $Want *> $null
+                    if ($LASTEXITCODE -eq 0) {
+                        $PyExe = "py.exe"
+                        $PyArgs = @("-$WantMinor")
+                    }
+                } catch {}
+            }
+            if ($null -eq $PyExe -and (Get-Command python -ErrorAction SilentlyContinue)) {
+                if ((Get-PythonVersion "python") -eq $Want) {
+                    $PyExe = "python"
+                    $PyArgs = @()
+                }
+            }
+            if ($null -ne $PyExe) {
+                if ($RebuildVenv) {
+                    $MovedVenvBackup = Move-VenvForRebuild
+                }
+                Write-Host "Creating development environment at $VenvDir..."
+                Invoke-Native "virtual environment creation" $PyExe ($PyArgs + @("-m", "venv", $VenvDir))
+            } else {
+                Write-Host "No local Python $Want found; using uv to provision it..."
+                $Uv = Ensure-Uv
+                if ($null -eq $Uv) {
+                    throw "Could not find or install uv. Install Python $Want or uv manually, then rerun this script."
+                }
+                if ($RebuildVenv) {
+                    $MovedVenvBackup = Move-VenvForRebuild
+                }
+                Invoke-Native "uv virtual environment creation" $Uv @("venv", "--python", $Want, $VenvDir)
             }
         }
-        if ($null -eq $PyExe) {
-            throw "Could not find Python. Install Python $WantMinor or run the app launcher once to provision .venv."
-        }
-        Write-Host "Creating development environment at $VenvDir..."
-        & $PyExe @PyArgs -m venv $VenvDir
+        $Python = $VenvPython
+    } else {
+        $Python = "python"
     }
-    $Python = $VenvPython
-} else {
-    $Python = "python"
-}
 
-$ActualMinor = Get-PythonMinor $Python
-if ($ActualMinor -ne $WantMinor) {
-    throw "Development setup requires Python $WantMinor, but $Python is $ActualMinor."
-}
+    $ActualVersion = Get-PythonVersion $Python
+    if ($ActualVersion -ne $Want) {
+        throw "Development setup requires Python $Want, but $Python is $ActualVersion."
+    }
 
-& $Python -m pip install --upgrade pip
-& $Python -m pip install -r requirements.txt -r requirements-dev.txt
+    Invoke-Native "pip upgrade" $Python @("-m", "pip", "install", "--upgrade", "pip")
+    Invoke-Native "dependency install" $Python @("-m", "pip", "install", "-r", "requirements.txt", "-r", "requirements-dev.txt")
+    Invoke-Native "developer environment preflight" $Python @("scripts\check_dev_environment.py")
+    Remove-VenvBackup
+} catch {
+    if ($MovedVenvBackup) {
+        Restore-VenvBackup
+    }
+    throw
+}
 
 Write-Host ""
 Write-Host "Developer environment ready."

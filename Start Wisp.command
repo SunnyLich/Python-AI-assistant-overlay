@@ -9,25 +9,41 @@ cd "$(dirname "$0")"
 REPO_ROOT="$(pwd)"
 OS_NAME="$(uname -s 2>/dev/null || true)"
 
-WANT="$(tr -d '[:space:]' < .python-version 2>/dev/null || true)"
-WANT="${WANT:-3.12.13}"
+if [ ! -s .python-version ]; then
+  echo "ERROR: .python-version is required and must contain an exact Python version like 3.12.13." >&2
+  exit 1
+fi
+WANT="$(tr -d '[:space:]' < .python-version)"
+if [[ ! "$WANT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "ERROR: .python-version must contain an exact Python version like 3.12.13." >&2
+  exit 1
+fi
 WANT_MM="$(printf '%s' "$WANT" | cut -d. -f1,2)"
 
 VPY="$REPO_ROOT/.venv/bin/python"
 REQ_FILE="$REPO_ROOT/requirements.txt"
 STAMP_FILE="$REPO_ROOT/.venv/.wisp-deps.stamp"
 
-if [ "$OS_NAME" = "Darwin" ] && [ -f "$REPO_ROOT/requirements-macos.lock" ]; then
+if [ "$OS_NAME" = "Darwin" ]; then
   REQ_FILE="$REPO_ROOT/requirements-macos.lock"
   STAMP_FILE="$REPO_ROOT/.venv/.wisp-macos-python-deps.stamp"
+  if [ ! -s "$REQ_FILE" ]; then
+    echo "ERROR: requirements-macos.lock is required for macOS setup." >&2
+    echo "Regenerate it with: bash scripts/compile_macos_lock.sh" >&2
+    exit 1
+  fi
+fi
+if [ ! -s "$REQ_FILE" ]; then
+  echo "ERROR: requirements.txt is required for setup." >&2
+  exit 1
 fi
 
-python_mm() {
-  "$1" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true
+python_version() {
+  "$1" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")' 2>/dev/null || true
 }
 
 python_matches_want() {
-  [ -n "${1:-}" ] && [ "$(python_mm "$1")" = "$WANT_MM" ]
+  [ -n "${1:-}" ] && [ "$(python_version "$1")" = "$WANT" ]
 }
 
 try_python() {
@@ -133,7 +149,8 @@ install_requirements() {
 }
 
 setup_venv() {
-  local py uv
+  local py uv rebuild_venv
+  rebuild_venv=0
   if venv_ready; then
     return 0
   fi
@@ -143,11 +160,17 @@ setup_venv() {
     install_requirements "$VPY"
     return 0
   fi
+  if [ -x "$VPY" ]; then
+    echo "Existing .venv is not Python $WANT; rebuilding it..."
+    rebuild_venv=1
+  fi
 
   py="$(find_local_python || true)"
-  rm -rf "$REPO_ROOT/.venv"
 
   if [ -n "$py" ]; then
+    if [ "$rebuild_venv" -eq 1 ] || [ -e "$REPO_ROOT/.venv" ]; then
+      rm -rf "$REPO_ROOT/.venv"
+    fi
     echo "Building environment with $py..."
     "$py" -m venv "$REPO_ROOT/.venv"
     install_requirements "$VPY"
@@ -157,11 +180,14 @@ setup_venv() {
   uv="$(ensure_uv || true)"
   if [ -z "$uv" ]; then
     echo "ERROR: setup failed and uv could not be installed." >&2
-    echo "Install Python $WANT_MM or uv manually, then rerun this launcher." >&2
+    echo "Install Python $WANT or uv manually, then rerun this launcher." >&2
     exit 1
   fi
 
   echo "Provisioning Python $WANT with uv..."
+  if [ "$rebuild_venv" -eq 1 ] || [ -e "$REPO_ROOT/.venv" ]; then
+    rm -rf "$REPO_ROOT/.venv"
+  fi
   "$uv" venv --python "$WANT" "$REPO_ROOT/.venv"
   "$uv" pip install --python "$VPY" -r "$REQ_FILE"
   req_hash > "$STAMP_FILE"

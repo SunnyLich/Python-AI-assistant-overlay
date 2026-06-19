@@ -558,12 +558,11 @@ class SettingsDialog(QDialog):
         # Never elide tab labels to "…"; macOS sizes the bold selected tab
         # tighter than Windows, so let each tab grow to fit its full text.
         tabs.setElideMode(Qt.TextElideMode.ElideNone)
+        tabs.addTab(self._tab_app(),       "App")
         tabs.addTab(self._tab_llm(),       "LLM")
         tabs.addTab(self._tab_tts(),       "TTS / Voice")
-        tabs.addTab(self._tab_prompt(),    "Prompts")
         tabs.addTab(self._tab_keybinds(),  "Keybinds")
-        tabs.addTab(self._tab_app(),       "App")
-        tabs.addTab(self._tab_memory(), "Memory")
+        tabs.addTab(self._tab_prompt(),    "Prompts")
         tabs.addTab(self._tab_tools(),     "Tools")
         tabs.addTab(self._tab_advanced(),  "Advanced")
         self._tabs = tabs
@@ -1401,13 +1400,13 @@ class SettingsDialog(QDialog):
             if provider == "custom":
                 continue
             alias = row["alias"].text().strip()
-            label = _PROVIDER_LABELS.get(provider, provider)
+            label = t(_PROVIDER_LABELS.get(provider, provider))
             display = f"{label} ({alias})" if alias else label
             options.append((display, provider))
         # OAuth/keychain providers — always available regardless of API key rows
-        options.append((_PROVIDER_LABELS.get("chatgpt", "Codex (ChatGPT)") + " [OAuth]", "chatgpt"))
-        options.append((_PROVIDER_LABELS.get("copilot", "GitHub Copilot") + " [OAuth]", "copilot"))
-        options.append((_PROVIDER_LABELS.get("custom", "Custom (OpenAI-compatible)"), "custom"))
+        options.append((t(_PROVIDER_LABELS.get("chatgpt", "Codex (ChatGPT)") + " [OAuth]"), "chatgpt"))
+        options.append((t(_PROVIDER_LABELS.get("copilot", "GitHub Copilot") + " [OAuth]"), "copilot"))
+        options.append((t(_PROVIDER_LABELS.get("custom", "Custom (OpenAI-compatible)")), "custom"))
         return options
 
     def _refresh_model_api_key_combos(self) -> None:
@@ -2789,7 +2788,13 @@ class SettingsDialog(QDialog):
         root.setSpacing(12)
         root.setContentsMargins(12, 12, 12, 12)
 
-        # --- Config card ---
+        root.addWidget(self._memory_settings_card())
+        root.addStretch()
+        scroll.setWidget(w)
+        return scroll
+
+    def _memory_settings_card(self) -> QWidget:
+        """Build the long-term memory settings card."""
         cfg_card, cfg_cv = self._card("Memory Settings")
         fw = QWidget()
         f = _expanding_form_layout(fw)
@@ -2807,10 +2812,7 @@ class SettingsDialog(QDialog):
         f.addRow("Retrieval top-k:", mem_topk)
 
         cfg_cv.addWidget(fw)
-        root.addWidget(cfg_card)
-        root.addStretch()
-        scroll.setWidget(w)
-        return scroll
+        return cfg_card
 
     def _tab_tools(self) -> QWidget:
         """Handle tab tools for settings dialog."""
@@ -2931,44 +2933,44 @@ class SettingsDialog(QDialog):
         f.setContentsMargins(0, 0, 0, 0)
 
         theme_combo = _NoScrollCombo()
-        theme_combo.addItem("System default", "system")
-        theme_combo.addItem("Light", "light")
-        theme_combo.addItem("Dark", "dark")
+        theme_combo.addItem(t("System default"), "system")
+        theme_combo.addItem(t("Light"), "light")
+        theme_combo.addItem(t("Dark"), "dark")
         self._fields["THEME_MODE"] = theme_combo
-        self._fields["TRUST_PRIVACY_MODE"] = QCheckBox("Trust/privacy mode")
+        self._fields["TRUST_PRIVACY_MODE"] = QCheckBox(t("Trust/privacy mode"))
         self._fields["TRUST_PRIVACY_MODE"].setToolTip(
-            "Default on. Redacts sensitive text patterns from context before model requests."
+            t("Default on. Redacts sensitive text patterns from context before model requests.")
         )
-        self._fields["ICON_AUTO_HIDE"] = QCheckBox("Auto-hide icon (only visible when active)")
-        self._fields["CHAT_AUTO_ELABORATE"] = QCheckBox("Auto-elaborate when opening chat")
+        self._fields["ICON_AUTO_HIDE"] = QCheckBox(t("Auto-hide icon (only visible when active)"))
+        self._fields["CHAT_AUTO_ELABORATE"] = QCheckBox(t("Auto-elaborate when opening chat"))
         self._fields["CHAT_ELABORATE_PROMPT"] = QLineEdit()
-        self._fields["CHAT_ELABORATE_PROMPT"].setPlaceholderText("e.g. Please elaborate on that.")
+        self._fields["CHAT_ELABORATE_PROMPT"].setPlaceholderText(t("e.g. Please elaborate on that."))
         app_language = _NoScrollCombo()
         for label, value in LANGUAGE_OPTIONS:
-            app_language.addItem(label, value)
-        app_language.setToolTip("Language used for the app's menus, dialogs, and controls.")
+            app_language.addItem(t(label), value)
+        app_language.setToolTip(t("Language used for the app's menus, dialogs, and controls."))
         self._fields["APP_LANGUAGE"] = app_language
         assistant_language = _NoScrollCombo()
         for label, value in _ASSISTANT_LANGUAGE_OPTIONS:
-            assistant_language.addItem(label, value)
+            assistant_language.addItem(t(label), value)
         assistant_language.setToolTip(
-            "Preferred response language. System default leaves the prompt unchanged."
+            t("Preferred response language. System default leaves the prompt unchanged.")
         )
         self._fields["ASSISTANT_LANGUAGE"] = assistant_language
 
         self._fields["ICON_SIZE"] = QLineEdit()
-        self._fields["ICON_SIZE"].setPlaceholderText("e.g. 80")
+        self._fields["ICON_SIZE"].setPlaceholderText(t("e.g. 80"))
         self._fields["BUBBLE_WIDTH"] = QLineEdit()
-        self._fields["BUBBLE_WIDTH"].setPlaceholderText("e.g. 340")
+        self._fields["BUBBLE_WIDTH"].setPlaceholderText(t("e.g. 340"))
         self._fields["BUBBLE_LINES"] = QLineEdit()
-        self._fields["BUBBLE_LINES"].setPlaceholderText("e.g. 3")
-        self._fields["BUBBLE_SCROLL_ENABLED"] = QCheckBox("Wheel-scroll text bubble")
+        self._fields["BUBBLE_LINES"].setPlaceholderText(t("e.g. 3"))
+        self._fields["BUBBLE_SCROLL_ENABLED"] = QCheckBox(t("Wheel-scroll text bubble"))
         self._fields["BUBBLE_SCROLL_ENABLED"].setToolTip(
-            "Let the mouse wheel scroll the bubble text while the pointer is over it."
+            t("Let the mouse wheel scroll the bubble text while the pointer is over it.")
         )
-        self._fields["BUBBLE_SCROLL_SNAP_ENABLED"] = QCheckBox("Snap bubble scroll back while speaking")
+        self._fields["BUBBLE_SCROLL_SNAP_ENABLED"] = QCheckBox(t("Snap bubble scroll back while speaking"))
         self._fields["BUBBLE_SCROLL_SNAP_ENABLED"].setToolTip(
-            "After manual scrolling, return to the current highlighted word if speech is still active."
+            t("After manual scrolling, return to the current highlighted word if speech is still active.")
         )
         _bg_row      = self._color_field("THEME_BG",      "e.g. #1c1e26", alpha=False)
         _surface_row = self._color_field("THEME_SURFACE", "e.g. #17181d", alpha=False)
@@ -2980,34 +2982,36 @@ class SettingsDialog(QDialog):
 
         for _key in ("THEME_BG", "THEME_SURFACE", "THEME_TEXT", "THEME_ACCENT"):
             self._fields[_key].setToolTip(
-                "Colors for the theme selected above. Light and Dark each keep their\n"
-                "own set — switching Theme swaps these to that mode's colors.\n"
-                "Cards, borders and buttons are shaded automatically from these four."
+                t(
+                    "Colors for the theme selected above. Light and Dark each keep their\n"
+                    "own set — switching Theme swaps these to that mode's colors.\n"
+                    "Cards, borders and buttons are shaded automatically from these four."
+                )
             )
         # Repaint the swatches/values whenever the user switches Theme mode, so the
         # four pickers always show the template for the currently selected mode.
         theme_combo.currentIndexChanged.connect(self._on_theme_mode_changed)
 
-        f.addRow("Theme", self._fields["THEME_MODE"])
-        f.addRow("Background color", _bg_row)
-        f.addRow("Surface color", _surface_row)
-        f.addRow("Text color", _text_row)
-        f.addRow("Accent color", _accent_row)
+        f.addRow(t("Theme"), self._fields["THEME_MODE"])
+        f.addRow(t("Background color"), _bg_row)
+        f.addRow(t("Surface color"), _surface_row)
+        f.addRow(t("Text color"), _text_row)
+        f.addRow(t("Accent color"), _accent_row)
         f.addRow("", self._fields["TRUST_PRIVACY_MODE"])
         f.addRow("", self._fields["ICON_AUTO_HIDE"])
         f.addRow("", self._fields["CHAT_AUTO_ELABORATE"])
-        f.addRow("Elaborate prompt", self._fields["CHAT_ELABORATE_PROMPT"])
-        f.addRow("App language", self._fields["APP_LANGUAGE"])
-        f.addRow("Assistant language", self._fields["ASSISTANT_LANGUAGE"])
+        f.addRow(t("Elaborate prompt"), self._fields["CHAT_ELABORATE_PROMPT"])
+        f.addRow(t("App language"), self._fields["APP_LANGUAGE"])
+        f.addRow(t("Assistant language"), self._fields["ASSISTANT_LANGUAGE"])
         f.addRow(_sep(), _sep())
-        f.addRow("Icon size (px)", self._fields["ICON_SIZE"])
-        f.addRow("Text bubble width (px)", self._fields["BUBBLE_WIDTH"])
-        f.addRow("Text bubble lines", self._fields["BUBBLE_LINES"])
+        f.addRow(t("Icon size (px)"), self._fields["ICON_SIZE"])
+        f.addRow(t("Text bubble width (px)"), self._fields["BUBBLE_WIDTH"])
+        f.addRow(t("Text bubble lines"), self._fields["BUBBLE_LINES"])
         f.addRow("", self._fields["BUBBLE_SCROLL_ENABLED"])
         f.addRow("", self._fields["BUBBLE_SCROLL_SNAP_ENABLED"])
-        f.addRow("Text bubble color", _bubble_color_row)
-        f.addRow("Text bubble text color", _bubble_text_color_row)
-        f.addRow("Read word color", _read_word_color_row)
+        f.addRow(t("Text bubble color"), _bubble_color_row)
+        f.addRow(t("Text bubble text color"), _bubble_text_color_row)
+        f.addRow(t("Read word color"), _read_word_color_row)
         cv.addWidget(fw)
         outer.addWidget(card)
         outer.addStretch()
@@ -3074,6 +3078,8 @@ class SettingsDialog(QDialog):
         local_file_f.addRow("Private file patterns", self._fields["TOOL_FILE_BLOCKED_GLOBS"])
         local_file_cv.addWidget(local_file_fw)
         outer.addWidget(local_file_card)
+
+        outer.addWidget(self._memory_settings_card())
 
         memory_card, memory_cv = self._card("Memory tuning")
         memory_fw = QWidget()
@@ -3866,8 +3872,9 @@ class SettingsDialog(QDialog):
 
         auto_elab = self._env.get("CHAT_AUTO_ELABORATE", str(cfg.CHAT_AUTO_ELABORATE)).lower() == "true"
         self._fields["CHAT_AUTO_ELABORATE"].setChecked(auto_elab)  # type: ignore
+        default_elaborate_prompt = t(cfg.CHAT_ELABORATE_PROMPT)
         _set(self._fields["CHAT_ELABORATE_PROMPT"],
-             self._env.get("CHAT_ELABORATE_PROMPT", cfg.CHAT_ELABORATE_PROMPT))
+             self._env.get("CHAT_ELABORATE_PROMPT", default_elaborate_prompt))
         _set(
             self._fields["APP_LANGUAGE"],
             self._env.get("APP_LANGUAGE", getattr(cfg, "APP_LANGUAGE", "")),
@@ -4521,16 +4528,14 @@ class SettingsDialog(QDialog):
                 "BUBBLE_WIDTH", "BUBBLE_LINES", "BUBBLE_COLOR", "BUBBLE_TEXT_COLOR",
                 "BUBBLE_READ_WORD_COLOR", "BUBBLE_SCROLL_ENABLED", "BUBBLE_SCROLL_SNAP_ENABLED",
             },
-            "Memory": {
-                "MEMORY_AUTO_CONSOLIDATE", "MEMORY_TOP_K",
-            },
             "Advanced": {
                 "CONTEXT_BROWSER_MAX_CHARS", "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS",
                 "CONTEXT_TOOL_DOCUMENT_MAX_CHARS", "TOOL_PLUGIN_DIR", "TOOL_GIT_ROOT",
                 "TOOL_FILE_ROOTS", "TOOL_FILE_MODE", "TOOL_FILE_BLOCKED_GLOBS",
-                "MEMORY_CONSOLIDATION_INTERVAL", "MEMORY_STM_TOKEN_BUDGET", "BUBBLE_HIDE_DELAY_MS",
-                "BUBBLE_REVEAL_WPM", "BUBBLE_HOLD_REVEAL_WPM", "BUBBLE_SCROLL_SNAP_DELAY_MS",
-                "TTS_PLAYBACK_RATE", "TTS_HOLD_PLAYBACK_RATE",
+                "MEMORY_AUTO_CONSOLIDATE", "MEMORY_TOP_K", "MEMORY_CONSOLIDATION_INTERVAL",
+                "MEMORY_STM_TOKEN_BUDGET", "BUBBLE_HIDE_DELAY_MS", "BUBBLE_REVEAL_WPM",
+                "BUBBLE_HOLD_REVEAL_WPM", "BUBBLE_SCROLL_SNAP_DELAY_MS", "TTS_PLAYBACK_RATE",
+                "TTS_HOLD_PLAYBACK_RATE",
             },
         }
         keys = set(exact.get(page, set()))

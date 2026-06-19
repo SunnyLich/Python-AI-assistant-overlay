@@ -7,32 +7,48 @@ continue that thread.
 Send message: Enter (Shift+Enter for newline).
 """
 from __future__ import annotations
+
 import html
+import inspect
 import re
 import threading
 import uuid
+from datetime import UTC, datetime
+
 import config
-from datetime import datetime, timezone
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
-    QLabel, QTextEdit, QPushButton, QFrame, QApplication, QTextBrowser,
-    QSizePolicy, QStackedWidget, QSplitter, QComboBox, QInputDialog,
-    QMenu, QMessageBox,
-)
-from PySide6.QtCore import Qt, Signal, QObject, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
     QFontMetrics,
+    QKeySequence,
     QLinearGradient,
     QPainter,
     QPen,
     QPixmap,
     QShortcut,
-    QKeySequence,
+)
+from PySide6.QtWidgets import (
+    QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
+    QStackedWidget,
+    QTextBrowser,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
 from core.assistant_text import ThoughtStreamParser, merge_segment_iterables, split_tagged_text
 from core.conversation_store.store import GENERAL_PROJECT_ID as _GENERAL_PROJECT_ID
+from runtime.supervisor import tool_modes
 from ui.i18n import t
 from ui.shared.window_utils import enable_standard_window_controls, fit_window_to_screen
 
@@ -58,7 +74,7 @@ _SIDEBAR_FADE_W = 34
 
 def _now_iso() -> str:
     """Return current UTC time for conversation metadata."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _parse_iso_datetime(value: str | None) -> datetime | None:
@@ -73,7 +89,7 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
     except ValueError:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt.astimezone()
 
 
@@ -84,6 +100,11 @@ def _format_conversation_datetime(value: str | None) -> str:
         return ""
     hour = dt.strftime("%I").lstrip("0") or "0"
     return f"{dt.strftime('%b')} {dt.day}, {dt.year} {hour}:{dt.strftime('%M %p')}"
+
+
+def _message_timestamp_text(msg: dict, fallback: str | None = None) -> str:
+    """Return display-only timestamp for one chat turn."""
+    return _format_conversation_datetime(msg.get("created_at") or msg.get("updated_at") or fallback)
 
 
 def _touch_conversation(conv: dict, *, now: str | None = None) -> str:
@@ -168,6 +189,131 @@ def _merge_tool_context(conv: dict, raw: dict) -> None:
     ctx = _normalized_tool_context(raw)
     if ctx:
         conv["tool_context"] = ctx
+
+
+def _context_mode(value: object, default: str = "off") -> str:
+    mode = str(value or default or "off").strip().lower()
+    return mode if mode in {"off", "auto", "model"} else default
+
+
+def _all_context_off_policy() -> dict:
+    return {
+        "context_ambient": False,
+        "context_documents": False,
+        "context_tools": False,
+        "context_documents_mode": "off",
+        "context_browser_mode": "off",
+        "context_github_mode": "off",
+        "context_memory_mode": "off",
+        "context_screenshot": "off",
+        "context_clipboard": False,
+        "_context_selection_enabled": False,
+        "file_access": "off",
+        "tools": {},
+    }
+
+
+def _default_context_policy() -> dict:
+    """Default chat policy: first caller row, or no context when none exists."""
+    rows = getattr(config, "CALLER_ROWS", [])
+    if not rows:
+        return _all_context_off_policy()
+    return _normalized_context_policy(rows[0])
+
+
+def _normalized_context_policy(raw: dict | None) -> dict:
+    """Normalize persisted chat context/tool policy metadata."""
+    if not isinstance(raw, dict):
+        return {}
+    base = _all_context_off_policy()
+    tools = raw.get("tools")
+    base.update(
+        {
+            "context_ambient": bool(raw.get("context_ambient", base["context_ambient"])),
+            "context_documents_mode": tool_modes.context_mode(raw, "documents"),
+            "context_browser_mode": tool_modes.context_mode(raw, "browser"),
+            "context_github_mode": tool_modes.context_mode(raw, "github"),
+            "context_memory_mode": tool_modes.context_mode(raw, "memory"),
+            "context_screenshot": _context_mode(raw.get("context_screenshot"), "off"),
+            "context_clipboard": bool(raw.get("context_clipboard", False)),
+            "file_access": tool_modes.local_file_access_mode(raw),
+            "tools": dict(tools) if isinstance(tools, dict) else {},
+        }
+    )
+    base["context_documents"] = base["context_documents_mode"] == "auto"
+    base["context_tools"] = any(
+        base[key] == "model"
+        for key in (
+            "context_documents_mode",
+            "context_browser_mode",
+            "context_github_mode",
+            "context_memory_mode",
+        )
+    )
+    base["_context_selection_enabled"] = bool(raw.get("_context_selection_enabled", False))
+    return base
+
+
+def _ensure_conversation_context_policy(conv: dict) -> dict:
+    policy = _normalized_context_policy(conv.get("context_policy"))
+    if not policy:
+        policy = _default_context_policy()
+        conv["context_policy"] = policy
+    return policy
+
+
+def _policy_state(policy: dict, source: str) -> str:
+    if source == "ambient":
+        if not policy.get("context_ambient") and tool_modes.context_mode(policy, "documents") == "off":
+            return "off"
+        return "auto" if tool_modes.context_mode(policy, "documents") == "model" else "on"
+    if source == "browser":
+        mode = tool_modes.context_mode(policy, "browser")
+        return "auto" if mode == "model" else ("on" if mode == "auto" else "off")
+    if source == "selection":
+        return "on" if policy.get("_context_selection_enabled", False) else "off"
+    if source == "clipboard":
+        return "on" if policy.get("context_clipboard") else "off"
+    if source == "screenshot":
+        mode = str(policy.get("context_screenshot") or "off").lower()
+        return "auto" if mode == "model" else ("on" if mode == "auto" else "off")
+    if source == "memory":
+        mode = tool_modes.context_mode(policy, "memory")
+        return "auto" if mode == "model" else ("on" if mode == "auto" else "off")
+    if source == "files":
+        return tool_modes.local_file_access_mode(policy)
+    return "off"
+
+
+def _apply_policy_state(policy: dict, source: str, state: str) -> dict:
+    updated = _normalized_context_policy(policy)
+    state = str(state or "off").lower()
+    if source == "ambient":
+        updated["context_ambient"] = state != "off"
+        updated["context_documents_mode"] = "off" if state == "off" else ("model" if state == "auto" else "auto")
+    elif source == "browser":
+        updated["context_browser_mode"] = "off" if state == "off" else ("model" if state == "auto" else "auto")
+    elif source == "selection":
+        updated["_context_selection_enabled"] = state != "off"
+    elif source == "clipboard":
+        updated["context_clipboard"] = state != "off"
+    elif source == "screenshot":
+        updated["context_screenshot"] = "off" if state == "off" else ("model" if state == "auto" else "auto")
+    elif source == "memory":
+        updated["context_memory_mode"] = "off" if state == "off" else ("model" if state == "auto" else "auto")
+    elif source == "files":
+        updated["file_access"] = state if state in {"off", "read", "ask", "auto"} else "off"
+    updated["context_documents"] = updated["context_documents_mode"] == "auto"
+    updated["context_tools"] = any(
+        updated[key] == "model"
+        for key in (
+            "context_documents_mode",
+            "context_browser_mode",
+            "context_github_mode",
+            "context_memory_mode",
+        )
+    )
+    return updated
 
 
 def _append_context_block(existing: str, title: str, body: str) -> str:
@@ -562,6 +708,11 @@ class ChatWindow(QWidget):
         self._pending_attachment_image_b64: str | None = None
         self._pending_attachment_labels: list[str] = []
         self._attachment_label: QLabel | None = None
+        self._context_controls: dict[str, QPushButton] = {}
+        self._context_control_options: dict[str, list[tuple[str, str]]] = {}
+        self._context_control_labels: dict[str, str] = {}
+        self._context_control_keys: dict[str, str] = {}
+        self._context_controls_updating = False
         self._conversation_menu: QMenu | None = None
         self.setAcceptDrops(True)
         if active_idx is not None and 0 <= active_idx < len(conversations):
@@ -961,6 +1112,7 @@ class ChatWindow(QWidget):
                 btn.setStyleSheet(self._btn_style(is_sel, real_idx == len(self._conversations) - 1))
         if self._on_select and 0 <= idx < len(self._conversations):
             self._on_select(idx)
+        self._refresh_context_controls()
 
     def sync_conversation(self, idx: int) -> None:
         """Rebuild and show a conversation a hotkey/voice prompt just appended to.
@@ -1028,6 +1180,7 @@ class ChatWindow(QWidget):
             "project_id": self._active_project_id,
             "messages": [],
             "context": "",
+            "context_policy": _default_context_policy(),
         }
         _touch_conversation(conv)
         self._conversations.append(conv)
@@ -1124,7 +1277,13 @@ class ChatWindow(QWidget):
         last_ai: _MessageTextView | None = None
         for msg in conv["messages"]:
             display_text = msg.get("display_content", msg["content"])
-            view = self._bubble(layout, display_text, msg["role"], msg.get("image_base64"))
+            view = self._bubble(
+                layout,
+                display_text,
+                msg["role"],
+                msg.get("image_base64"),
+                created_at=msg.get("created_at") or conv.get("created_at"),
+            )
             if msg["role"] == "assistant":
                 last_ai = view
 
@@ -1192,6 +1351,8 @@ class ChatWindow(QWidget):
         outer.setContentsMargins(10, 8, 10, 8)
         outer.setSpacing(6)
 
+        outer.addWidget(self._make_context_policy_controls())
+
         self._attachment_label = QLabel("")
         self._attachment_label.setWordWrap(True)
         self._attachment_label.setVisible(False)
@@ -1230,9 +1391,172 @@ class ChatWindow(QWidget):
         outer.addLayout(h)
         return frame
 
+    def _make_context_policy_controls(self) -> QWidget:
+        """Create per-conversation context/tool controls above the chat input."""
+        frame = QWidget()
+        frame.setStyleSheet(
+            "QWidget { background: transparent; }"
+            "QPushButton { text-align: center; }"
+        )
+        outer = QHBoxLayout(frame)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+
+        raw_keys = str(getattr(config, "INTENT_CONTEXT_TOGGLE_KEYS", "1234567") or "1234567")
+        keys: list[str] = []
+        for ch in raw_keys + "1234567":
+            if ch.isspace() or ch in keys:
+                continue
+            keys.append(ch)
+            if len(keys) == 7:
+                break
+        rows = [
+            (
+                "ambient",
+                f"{keys[0]} {t('App')}",
+                [("off", t("Off")), ("on", t("On")), ("auto", t("Let model decide"))],
+            ),
+            (
+                "browser",
+                f"{keys[1]} {t('Browser/Web')}",
+                [("off", t("Off")), ("on", t("On")), ("auto", t("Let model decide"))],
+            ),
+            ("selection", f"{keys[2]} {t('Selection')}", [("off", t("Off")), ("on", t("On"))]),
+            ("clipboard", f"{keys[3]} {t('Clipboard')}", [("off", t("Off")), ("on", t("On"))]),
+            (
+                "screenshot",
+                f"{keys[4]} {t('Screenshot')}",
+                [("off", t("Off")), ("on", t("On")), ("auto", t("Let model decide"))],
+            ),
+            (
+                "memory",
+                f"{keys[5]} {t('Memory')}",
+                [("off", t("Off")), ("on", t("On")), ("auto", t("Let model decide"))],
+            ),
+            (
+                "files",
+                f"{keys[6]} {t('Files')}",
+                [("off", t("Off")), ("read", t("Read only")), ("ask", t("Ask before write")), ("auto", t("Auto"))],
+            ),
+        ]
+        for source, label_text, options in rows:
+            key, _, label = label_text.partition(" ")
+            chip = QPushButton()
+            chip.setObjectName(f"chatContextChip_{source}")
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.setFixedHeight(42)
+            chip.setMinimumWidth(78)
+            chip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            chip.clicked.connect(lambda _checked=False, source=source: self._show_context_policy_menu(source))
+            self._context_controls[source] = chip
+            self._context_control_options[source] = options
+            self._context_control_labels[source] = label or label_text
+            self._context_control_keys[source] = key
+            outer.addWidget(chip, 1)
+        self._refresh_context_controls()
+        return frame
+
+    def _refresh_context_controls(self) -> None:
+        """Refresh controls from the active conversation's saved policy."""
+        if not self._context_controls:
+            return
+        self._context_controls_updating = True
+        try:
+            if 0 <= self._active_idx < len(self._conversations):
+                conv = self._conversations[self._active_idx]
+                policy = _ensure_conversation_context_policy(conv)
+            else:
+                policy = _all_context_off_policy()
+            for source, chip in self._context_controls.items():
+                state = _policy_state(policy, source)
+                self._update_context_chip(chip, source, state)
+        finally:
+            self._context_controls_updating = False
+
+    def _state_label_for_context_source(self, source: str, state: str) -> str:
+        """Return display label for a context chip state."""
+        for value, label in self._context_control_options.get(source, []):
+            if value == state:
+                return label
+        return state
+
+    def _context_chip_style(self, state: str) -> str:
+        """Return the compact intent-overlay-style chip CSS."""
+        color = {
+            "off": "#85889a",
+            "auto": "#d1b15f",
+            "model": "#d1b15f",
+            "on": _ACCENT,
+            "read": _ACCENT,
+            "ask": "#d1b15f",
+        }.get(state, _ACCENT)
+        alpha = "32" if state == "off" else "46"
+        return (
+            f"QPushButton {{ background: rgba(160,160,255,{alpha}); color: {_TEXT};"
+            f" border: 1px solid {color}; border-radius: 7px; padding: 3px 5px;"
+            " font-size: 8pt; }}"
+            f"QPushButton:hover {{ background: rgba(160,160,255,60); border-color: {_ACCENT}; }}"
+            "QPushButton::menu-indicator { image: none; width: 0; }"
+        )
+
+    def _update_context_chip(self, chip: QPushButton, source: str, state: str) -> None:
+        """Paint one compact context chip from its current state."""
+        key = self._context_control_keys.get(source, "")
+        label = self._context_control_labels.get(source, source)
+        state_label = self._state_label_for_context_source(source, state)
+        chip.setText(f"{key} {label}\n{state_label}")
+        chip.setToolTip(f"{label}: {state_label}")
+        chip.setProperty("context_state", state)
+        chip.setStyleSheet(self._context_chip_style(state))
+
+    def _show_context_policy_menu(self, source: str) -> None:
+        """Open a small state list for one context chip."""
+        if self._context_controls_updating:
+            return
+        chip = self._context_controls.get(source)
+        if chip is None:
+            return
+        menu = QMenu(chip)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {_TITLE_BG}; color: {_TEXT}; border: 1px solid {_BORDER}; }}"
+            f"QMenu::item:selected {{ background: {_SEL_BG}; }}"
+        )
+        current = str(chip.property("context_state") or "off")
+        for value, label in self._context_control_options.get(source, []):
+            action = menu.addAction(label)
+            action.setData(value)
+            action.setCheckable(True)
+            action.setChecked(value == current)
+            action.triggered.connect(
+                lambda _checked=False, source=source, value=value: self._set_context_policy_state(source, value)
+            )
+        menu.popup(chip.mapToGlobal(chip.rect().bottomLeft()))
+
+    def _set_context_policy_state(self, source: str, state: str) -> None:
+        """Persist one visible context/tool control change to the conversation."""
+        if self._context_controls_updating or not (0 <= self._active_idx < len(self._conversations)):
+            return
+        chip = self._context_controls.get(source)
+        if chip is None:
+            return
+        conv = self._conversations[self._active_idx]
+        policy = _ensure_conversation_context_policy(conv)
+        conv["context_policy"] = _apply_policy_state(policy, source, state)
+        _touch_conversation(conv)
+        self._update_context_chip(chip, source, _policy_state(conv["context_policy"], source))
+        self._persist()
+
     # ------------------------------------------------------------------ Bubbles
 
-    def _bubble(self, layout, text: str, role: str, image_b64: str | None = None) -> _MessageTextView:
+    def _bubble(
+        self,
+        layout,
+        text: str,
+        role: str,
+        image_b64: str | None = None,
+        *,
+        created_at: str | None = None,
+    ) -> _MessageTextView:
         """Handle bubble for chat window."""
         bg = '#3a3a5c' if role == 'user' else '#26263a'
         display_text = _truncate_for_display(text, _CHAT_RENDER_CHAR_LIMIT, "chat display")
@@ -1247,7 +1571,11 @@ class ChatWindow(QWidget):
         else:
             lbl.setPlainText(display_text)
 
-        role_lbl = QLabel(t("You" if role == "user" else "Assistant"))
+        role_text = t("You" if role == "user" else "Assistant")
+        stamp = _format_conversation_datetime(created_at)
+        if stamp:
+            role_text = f"{role_text} · {stamp}"
+        role_lbl = QLabel(role_text)
         role_lbl.setStyleSheet(f"color: {_HINT}; background: transparent; font-size: 8pt;")
 
         wrapper = QWidget()
@@ -1352,7 +1680,11 @@ class ChatWindow(QWidget):
                 context_items.append((label, str(content or ""), kind))
 
         context = self._attachment_context_from_items(context_items)
-        parts = [part for part in (self._pending_attachment_context, context, "\n".join(fallback_lines)) if part.strip()]
+        parts = [
+            part
+            for part in (self._pending_attachment_context, context, "\n".join(fallback_lines))
+            if part.strip()
+        ]
         self._pending_attachment_context = "\n\n".join(parts)
         if len(self._pending_attachment_context) > _ATTACHMENT_CONTEXT_CHAR_LIMIT:
             self._pending_attachment_context = (
@@ -1433,12 +1765,17 @@ class ChatWindow(QWidget):
         attachment_context, attachment_image, attachment_labels = self._consume_pending_attachments()
         if attachment_context:
             label = ", ".join(attachment_labels) if attachment_labels else t("Attachments")
-            conv["context"] = _append_context_block(conv.get("context", ""), f"{t('Attached')} · {label}", attachment_context)
+            conv["context"] = _append_context_block(
+                conv.get("context", ""),
+                f"{t('Attached')} · {label}",
+                attachment_context,
+            )
+        context_policy = _ensure_conversation_context_policy(conv)
         now = _touch_conversation(conv)
 
         layout = self._active_layout()
         if layout:
-            self._bubble(layout, text, "user", attachment_image)
+            self._bubble(layout, text, "user", attachment_image, created_at=now)
         user_message = {"role": "user", "content": text, "created_at": now}
         if attachment_image:
             user_message["image_base64"] = attachment_image
@@ -1450,7 +1787,7 @@ class ChatWindow(QWidget):
         self._current_ai_parser = ThoughtStreamParser()
         self._current_file_context = []
         self._current_tool_context = {}
-        self._current_ai_label = self._bubble(layout, "...", "assistant") if layout else None
+        self._current_ai_label = self._bubble(layout, "...", "assistant", created_at=_now_iso()) if layout else None
         self._scroll_bottom()
 
         # Inject stored context into system prompt so it is available for every
@@ -1467,7 +1804,17 @@ class ChatWindow(QWidget):
         def _stream():
             """Stream the chat window workflow."""
             try:
-                for item in self._send_fn(messages):
+                kwargs = {"context_policy": dict(context_policy)}
+                try:
+                    signature = inspect.signature(self._send_fn)
+                    accepts_policy = (
+                        "context_policy" in signature.parameters
+                        or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values())
+                    )
+                except (TypeError, ValueError):
+                    accepts_policy = False
+                source = self._send_fn(messages, **kwargs) if accepts_policy else self._send_fn(messages)
+                for item in source:
                     if isinstance(item, dict) and item.get("type") == "final":
                         self._signals.final.emit(str(item.get("text") or ""))
                     elif isinstance(item, dict) and item.get("type") == "metadata":

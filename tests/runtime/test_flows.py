@@ -307,6 +307,7 @@ def test_query_flow_streams_reply_and_adds_chat_conversation_with_context():
         ui.emit("ui.intent.chosen", {"custom": "Explain this"})
 
     query = brain.last_call("brain.query")["params"]
+    assert "context_policy" not in query
     assert query["intent_prompt"] == "Explain this"
     assert query["selected"] == "selected"
     assert query["use_tools"] is True
@@ -318,7 +319,10 @@ def test_query_flow_streams_reply_and_adds_chat_conversation_with_context():
     assert "Dropped context:" in query["ambient_text"]
     assert [c["params"]["text"] for c in ui.calls_for("ui.reply.chunk")] == ["he", "llo"]
     assert ui.calls_for("ui.reply.done")
-    assert ui.last_call("ui.chat.add_conversation")["params"]["assistant"] == "hello"
+    chat_params = ui.last_call("ui.chat.add_conversation")["params"]
+    assert chat_params["assistant"] == "hello"
+    assert chat_params["context_policy"]["context_clipboard"] is True
+    assert chat_params["context_policy"]["context_documents_mode"] == "auto"
     assert ui.calls_for("ui.context.summary")
     assert ui.calls_for("ui.context.clear")
 
@@ -639,6 +643,166 @@ def test_browser_app_captured_at_hotkey_time_fetches_text_via_applescript():
     ambient = brain.last_call("brain.query")["params"]["ambient_text"]
     assert "https://example.test/page" in ambient
     assert "Page text via Safari" in ambient
+
+
+def test_intent_enabled_browser_fetches_from_hotkey_time_target_when_setting_off():
+    """Verify a per-prompt Browser/Web toggle can use the original foreground tab."""
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "off",
+            "context_browser_mode": "off",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+
+    def snapshot_handler(params: dict[str, Any]) -> dict[str, Any]:
+        result = {
+            "selected_text": "",
+            "clipboard_text": "",
+            "active_app": {"name": "Browser", "pid": 42, "window_id": 777, "bundle_id": ""},
+        }
+        if params.get("include_browser_url"):
+            result["browser_url"] = "https://example.test/off-by-default"
+            result["browser_hwnd"] = 777
+        return result
+
+    native = FakeWorker(
+        {
+            "native.context.snapshot": snapshot_handler,
+            "native.context.browser_content": lambda params: {
+                "url": params.get("url"),
+                "content": f"Deferred page text {params.get('hwnd')}",
+            },
+        }
+    )
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("ok")})
+    with caller_config(rows):
+        _flow, native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        browser_chip = next(
+            item
+            for item in ui.last_call("ui.intent.context_items")["params"]["context_items"]
+            if item["id"] == "browser"
+        )
+        assert browser_chip["state"] == "off"
+        assert browser_chip["tokens"] == "? tok"
+        ui.emit(
+            "ui.intent.chosen",
+            {
+                "custom": "Use the page",
+                "context_choices": [{"id": "browser", "state": "on"}],
+            },
+        )
+
+    snapshot_params = native.calls_for("native.context.snapshot")[0]["params"]
+    assert snapshot_params["include_browser_url"] is True
+    assert snapshot_params["include_browser_content"] is False
+    assert len(native.calls_for("native.context.snapshot")) == 1
+    assert native.last_call("native.context.browser_content")["params"] == {
+        "url": "https://example.test/off-by-default",
+        "hwnd": 777,
+        "app": "",
+    }
+    ambient = brain.last_call("brain.query")["params"]["ambient_text"]
+    assert "https://example.test/off-by-default" in ambient
+    assert "Deferred page text 777" in ambient
+
+
+def test_intent_enabled_clipboard_uses_hotkey_time_clipboard_when_setting_off():
+    """Verify Clipboard can be enabled per prompt even when disabled in settings."""
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "off",
+            "context_browser_mode": "off",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+
+    def snapshot_handler(params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "selected_text": "",
+            "clipboard_text": "clipboard from hotkey time" if params.get("include_clipboard") else "",
+            "active_app": {"name": "Notes", "pid": 42, "bundle_id": "com.apple.Notes"},
+        }
+
+    native = FakeWorker({"native.context.snapshot": snapshot_handler})
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("ok")})
+    with caller_config(rows):
+        _flow, native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        clipboard_chip = next(
+            item
+            for item in ui.last_call("ui.intent.context_items")["params"]["context_items"]
+            if item["id"] == "clipboard"
+        )
+        assert clipboard_chip["state"] == "off"
+        assert clipboard_chip["tokens"].startswith("~")
+        ui.emit(
+            "ui.intent.chosen",
+            {
+                "custom": "Use clipboard",
+                "context_choices": [{"id": "clipboard", "state": "on"}],
+            },
+        )
+
+    assert native.calls_for("native.context.snapshot")[0]["params"]["include_clipboard"] is True
+    ambient = brain.last_call("brain.query")["params"]["ambient_text"]
+    assert "Clipboard:" in ambient
+    assert "clipboard from hotkey time" in ambient
+
+
+def test_intent_enabled_app_fetches_active_document_when_setting_off():
+    """Verify the App chip can enable document context for one prompt."""
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": False,
+            "context_documents_mode": "off",
+            "context_browser_mode": "off",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="")})
+    brain = FakeWorker(
+        handlers={"brain.context.active_document": lambda _params: {"text": "DOC TEXT"}},
+        stream_handlers={"brain.query": query_stream("ok")},
+    )
+    with caller_config(rows):
+        _flow, _native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        app_chip = next(
+            item
+            for item in ui.last_call("ui.intent.context_items")["params"]["context_items"]
+            if item["id"] == "ambient"
+        )
+        assert app_chip["state"] == "off"
+        ui.emit(
+            "ui.intent.chosen",
+            {
+                "custom": "Use open document",
+                "context_choices": [
+                    {"id": "ambient", "state": "on", "default_state": "off", "touched": True},
+                ],
+            },
+        )
+
+    query = brain.last_call("brain.query")["params"]
+    assert query["active_document_text"] == "DOC TEXT"
+    assert query["include_active_document"] is False
+    assert {"label": "Active document", "type": "file"} in ui.last_call("ui.context.summary")["params"]["items"]
 
 
 def test_context_priority_marks_browser_when_browser_was_active():
@@ -1884,8 +2048,147 @@ def test_chat_request_reuses_conversation_tool_context():
     assert ui.last_call("ui.chat.done")["params"]["tool_context"] == tool_context
 
 
-def test_chat_request_enables_ask_file_tools_when_caller_files_are_off():
-    """Verify chat can create files even when hotkey file access is off."""
+def test_chat_request_context_policy_is_absolute_over_legacy_tool_context():
+    """Verify visible chat policy does not inherit older hidden tool grants."""
+    rows = [
+        {
+            "file_access": "off",
+            "tools": {},
+            "context_documents_mode": "off",
+            "context_browser_mode": "off",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+        }
+    ]
+    tool_context = {
+        "allowed_tools": ["read_file", "edit_file"],
+        "pinned_tools": ["read_file", "edit_file"],
+        "file_access_mode": "ask",
+    }
+    context_policy = {
+        "context_ambient": False,
+        "context_documents_mode": "off",
+        "context_browser_mode": "off",
+        "context_github_mode": "off",
+        "context_memory_mode": "off",
+        "context_screenshot": "off",
+        "context_clipboard": False,
+        "file_access": "off",
+        "tools": {},
+    }
+    brain = FakeWorker(stream_handlers={"brain.chat": query_stream("chat reply")})
+
+    with caller_config(rows):
+        _flow, _native, ui, brain, _audio = make_flow(brain=brain)
+        ui.emit(
+            "ui.chat.request",
+            {
+                "request_id": "chat-1",
+                "messages": [{"role": "user", "content": "edit again"}],
+                "tool_context": tool_context,
+                "context_policy": context_policy,
+            },
+        )
+
+    params = brain.last_call("brain.chat")["params"]
+    assert params["allowed_tools"] == []
+    assert params["pinned_tools"] == []
+    assert params["file_access_mode"] == "off"
+
+
+def test_chat_request_all_off_policy_does_not_inject_selection_context():
+    """Verify all-off chat policy does not silently capture selected UI text."""
+    context_policy = {
+        "context_ambient": False,
+        "context_documents_mode": "off",
+        "context_browser_mode": "off",
+        "context_github_mode": "off",
+        "context_memory_mode": "off",
+        "context_screenshot": "off",
+        "context_clipboard": False,
+        "file_access": "off",
+        "tools": {},
+    }
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="selected chat bubble")})
+    brain = FakeWorker(stream_handlers={"brain.chat": query_stream("chat reply")})
+    _flow, native, ui, brain, _audio = make_flow(native=native, brain=brain)
+
+    ui.emit(
+        "ui.chat.request",
+        {
+            "request_id": "chat-1",
+            "messages": [{"role": "user", "content": "can you see the webpage?"}],
+            "context_policy": context_policy,
+        },
+    )
+
+    params = brain.last_call("brain.chat")["params"]
+    assert not native.calls_for("native.context.snapshot")
+    assert "selected chat bubble" not in "\n\n".join(str(msg.get("content") or "") for msg in params["messages"])
+
+
+def test_chat_request_browser_on_fetches_context_from_chat_policy():
+    """Verify chat Browser/Web On frontloads browser text independent of caller defaults."""
+    rows = [
+        {
+            "file_access": "off",
+            "tools": {},
+            "context_documents_mode": "off",
+            "context_browser_mode": "off",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+        }
+    ]
+    context_policy = {
+        "context_ambient": False,
+        "context_documents_mode": "off",
+        "context_browser_mode": "auto",
+        "context_github_mode": "off",
+        "context_memory_mode": "off",
+        "context_screenshot": "off",
+        "context_clipboard": False,
+        "file_access": "off",
+        "tools": {},
+    }
+    native = FakeWorker(
+        {
+            "native.context.snapshot": lambda params: {
+                "selected_text": "",
+                "clipboard_text": "",
+                "active_app": {"name": "Browser", "pid": 42},
+                "browser_url": "https://example.test/chat" if params.get("include_browser_url") else "",
+                "browser_hwnd": 777 if params.get("include_browser_url") else 0,
+            },
+            "native.context.browser_content": lambda params: {
+                "url": params.get("url") or "",
+                "content": "Fetched chat browser page",
+            },
+        }
+    )
+    brain = FakeWorker(stream_handlers={"brain.chat": query_stream("chat reply")})
+
+    with caller_config(rows):
+        _flow, native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        ui.emit(
+            "ui.chat.request",
+            {
+                "request_id": "chat-1",
+                "messages": [{"role": "user", "content": "summarize the page"}],
+                "context_policy": context_policy,
+            },
+        )
+
+    params = brain.last_call("brain.chat")["params"]
+    assert "Fetched chat browser page" in params["messages"][0]["content"]
+    assert native.last_call("native.context.browser_content")["params"] == {
+        "url": "https://example.test/chat",
+        "hwnd": 777,
+        "app": "",
+    }
+
+
+def test_chat_request_keeps_file_tools_off_when_caller_files_are_off():
+    """Verify chat does not grant hidden file tools when Files is off."""
     rows = [
         {
             "file_access": "off",
@@ -1902,10 +2205,9 @@ def test_chat_request_enables_ask_file_tools_when_caller_files_are_off():
         ui.emit("ui.chat.request", {"request_id": "chat-1", "messages": [{"role": "user", "content": "create a file"}]})
 
     params = brain.last_call("brain.chat")["params"]
-    assert params["use_tools"] is True
-    assert params["file_access_mode"] == "ask"
-    assert set(params["allowed_tools"]) >= {"list_files", "read_file", "create_file", "edit_file", "write_file"}
-    assert not ({"list_files", "read_file", "create_file", "edit_file", "write_file"} & set(params["pinned_tools"]))
+    assert params["use_tools"] is False
+    assert params["file_access_mode"] == "off"
+    assert not ({"list_files", "read_file", "create_file", "edit_file", "write_file"} & set(params["allowed_tools"]))
 
 
 def test_chat_request_inherits_first_caller_file_tools():
@@ -2030,9 +2332,52 @@ def test_hotkey_followup_injects_active_chat_file_context():
     assert "Original ambient context" in query["ambient_text"]
     assert "Conversation Context" in query["ambient_text"]
     assert "Conversation File Context" in query["ambient_text"]
-    assert query["allowed_tools"] == ["read_file", "edit_file"]
-    assert query["pinned_tools"] == ["read_file", "edit_file"]
-    assert query["file_access_mode"] == "ask"
+    assert query["allowed_tools"] == []
+    assert query["pinned_tools"] == []
+    assert query["file_access_mode"] == "off"
+
+
+def test_hotkey_followup_keeps_current_tools_separate_from_active_chat_tools():
+    """Verify chat tool grants are history context, not current hotkey tools."""
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "model",
+            "context_browser_mode": "model",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+            "file_access": "off",
+        }
+    ]
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="")})
+    ui = FakeWorker(
+        {
+            "ui.chat.active_history": lambda _params: {
+                "history": [{"role": "user", "content": "create a file"}],
+                "project_id": None,
+                "tool_context": {
+                    "allowed_tools": ["read_file", "edit_file"],
+                    "pinned_tools": ["read_file", "edit_file"],
+                    "file_access_mode": "ask",
+                },
+            }
+        }
+    )
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("done")})
+
+    with caller_config(rows):
+        _flow, _native, ui, brain, _audio = make_flow(native=native, ui=ui, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "Use page and edit that file"})
+
+    query = brain.last_call("brain.query")["params"]
+    assert query["allowed_tools"] == ["get_context.documents", "web_search", "get_context.browser"]
+    assert query["pinned_tools"] == ["get_context", "web_search"]
+    assert query["file_access_mode"] == "off"
+    assert query["use_tools"] is True
 
 
 def test_caller_memory_modes_map_to_injected_or_model_decided_access():
@@ -2247,11 +2592,13 @@ def test_settings_reload_refreshes_supervisor_brain_audio_and_hotkeys(monkeypatc
     assert reload_calls == ["supervisor"]
     assert brain.calls_for("brain.config.reload")
     assert audio.calls_for("audio.prewarm")
-    # The native worker must reload its own config before re-registering, else a
-    # changed hotkey only takes effect after an app restart.
-    assert native.calls_for("native.config.reload")
-    assert native.calls_for("native.hotkeys.stop")
-    assert native.calls_for("native.hotkeys.start")
+    # The native worker must reload its own config and replace registrations in
+    # one operation, else a changed hotkey can keep the old listener alive until
+    # a second Apply.
+    assert native.calls_for("native.hotkeys.reload")
+    assert not native.calls_for("native.config.reload")
+    assert not native.calls_for("native.hotkeys.stop")
+    assert not native.calls_for("native.hotkeys.start")
 
 
 def test_start_hotkeys_surfaces_failed_registration_to_user():

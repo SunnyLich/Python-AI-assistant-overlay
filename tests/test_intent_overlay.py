@@ -243,6 +243,8 @@ def test_intent_overlay_context_palette_uses_theme_settings():
 def test_intent_overlay_cycles_context_chip(monkeypatch):
     """Verify numeric context chips cycle independently of intent rows."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
 
     import config
@@ -256,11 +258,37 @@ def test_intent_overlay_cycles_context_chip(monkeypatch):
         context_items=[{"id": "browser", "key": "2", "label": "Browser", "state": "on"}],
     )
     try:
-        assert overlay._cycle_context_key("2") is True
-        assert overlay.context_choices()[0]["state"] == "off"
+        overlay.update_context_items(
+            [{"id": "browser", "key": "2", "label": "Browser", "state": "auto", "tokens": "? tok"}]
+        )
+        assert overlay.context_choices()[0]["state"] == "auto"
+        assert overlay.context_choices()[0]["touched"] is False
 
         assert overlay._cycle_context_key("2") is True
+        assert overlay.context_choices()[0]["state"] == "off"
+        assert overlay.context_choices()[0]["touched"] is True
+
+        overlay.update_context_items(
+            [{"id": "browser", "key": "2", "label": "Browser", "state": "auto", "tokens": "? tok"}]
+        )
+        assert overlay.context_choices()[0]["state"] == "off"
+        assert overlay.context_choices()[0]["touched"] is True
+
+        overlay.show()
+        app.processEvents()
+        QTest.mouseClick(
+            overlay,
+            Qt.MouseButton.LeftButton,
+            pos=QPoint(
+                intent_overlay._PAD_H + intent_overlay._CTX_CHIP_W // 2,
+                intent_overlay._PAD_V + intent_overlay._CTX_TOP + intent_overlay._CTX_CHIP_H // 2,
+            ),
+        )
+        app.processEvents()
         assert overlay.context_choices()[0]["state"] == "on"
+
+        assert overlay._cycle_context_key("2") is True
+        assert overlay.context_choices()[0]["state"] == "off"
     finally:
         config.CALLER_ROWS[:] = old_rows
         overlay.close()
@@ -301,6 +329,7 @@ def test_apply_intent_context_choices_updates_caller_policy():
 
     caller = {
         "context_ambient": True,
+        "context_documents_mode": "off",
         "context_browser_mode": "auto",
         "context_memory_mode": "auto",
         "context_screenshot": "auto",
@@ -314,10 +343,18 @@ def test_apply_intent_context_choices_updates_caller_policy():
             {"id": "selection", "state": "off"},
             {"id": "memory", "state": "auto"},
             {"id": "files", "state": "off"},
+            {"id": "ambient", "state": "on", "default_state": "off", "touched": True},
         ],
     )
 
+    assert updated["context_documents_mode"] == "auto"
     assert updated["context_browser_mode"] == "off"
     assert updated["_context_selection_enabled"] is False
     assert updated["context_memory_mode"] == "model"
     assert updated["file_access"] == "off"
+
+    unchanged = FlowController._apply_intent_context_choices(
+        caller,
+        [{"id": "ambient", "state": "on", "default_state": "on"}],
+    )
+    assert unchanged["context_documents_mode"] == "off"

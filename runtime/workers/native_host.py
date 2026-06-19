@@ -19,6 +19,7 @@ IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform == "win32"
 _emit: Callable[[str, Any, Any], None] | None = None
 _hotkeys = None
+_hotkeys_lock = threading.RLock()
 _last_context_window_debug: dict[str, Any] = {}
 
 
@@ -1143,6 +1144,25 @@ def native_config_reload() -> dict[str, Any]:
     return {"ok": True}
 
 
+def _stop_current_hotkeys() -> dict[str, Any]:
+    """Stop and forget the current hotkey backend."""
+    global _hotkeys
+    with _hotkeys_lock:
+        helper = _hotkeys
+        _hotkeys = None
+    if helper is None:
+        return {"stopped": True}
+    try:
+        helper.stop()
+        return {"stopped": True}
+    except Exception as exc:  # noqa: BLE001 - never keep stale live bindings referenced
+        print(f"[native] hotkey stop failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        return {
+            "stopped": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
 def hotkeys_start(addon_hotkeys: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Start global hotkeys in the native process.
 
@@ -1151,25 +1171,39 @@ def hotkeys_start(addon_hotkeys: list[dict[str, Any]] | None = None) -> dict[str
     back here.
     """
     global _hotkeys
-    if _hotkeys is not None:
-        return {"started": True, "backend": "existing"}
-    helper = _HotkeyHelper() if IS_MAC else _DirectHotkeys()
-    result = helper.start(addon_hotkeys=addon_hotkeys or [])
-    if result.get("started"):
-        _hotkeys = helper
+    with _hotkeys_lock:
+        if _hotkeys is not None:
+            return {"started": True, "backend": "existing"}
+        helper = _HotkeyHelper() if IS_MAC else _DirectHotkeys()
+        result = helper.start(addon_hotkeys=addon_hotkeys or [])
+        if result.get("started"):
+            _hotkeys = helper
+            return result
+        try:
+            helper.stop()
+        finally:
+            _hotkeys = None
         return result
-    helper.stop()
-    _hotkeys = None
-    return result
 
 
 def hotkeys_stop() -> dict[str, Any]:
     """Handle hotkeys stop for runtime workers native host."""
-    global _hotkeys
-    if _hotkeys is not None:
-        _hotkeys.stop()
-        _hotkeys = None
-    return {"stopped": True}
+    return _stop_current_hotkeys()
+
+
+def hotkeys_reload(addon_hotkeys: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Reload config and replace global hotkey registrations in one native call."""
+    config_result = native_config_reload()
+    stop_result = _stop_current_hotkeys()
+    start_result = hotkeys_start(addon_hotkeys=addon_hotkeys or [])
+    result = {
+        **start_result,
+        "reloaded": True,
+        "config": config_result,
+    }
+    if not stop_result.get("stopped"):
+        result["stop_error"] = stop_result.get("error") or "hotkey stop failed"
+    return result
 
 
 atexit.register(hotkeys_stop)
@@ -1180,6 +1214,7 @@ HANDLERS = {
     "native.config.reload": native_config_reload,
     "native.hotkeys.start": hotkeys_start,
     "native.hotkeys.stop": hotkeys_stop,
+    "native.hotkeys.reload": hotkeys_reload,
     "native.context.snapshot": context_snapshot,
     "native.context.browser_content": context_browser_content,
     "native.capture.fullscreen": capture_fullscreen,

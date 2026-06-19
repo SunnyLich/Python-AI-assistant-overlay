@@ -1,7 +1,9 @@
 """Tests for test config env."""
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import config
@@ -235,6 +237,41 @@ class ConfigEnvTests(unittest.TestCase):
             config.reload()
 
         refresh.assert_called_once_with()
+
+    def test_reload_clears_keys_removed_from_env_file(self):
+        """Removed .env keys should not stay live in long-running workers."""
+        old_env_file = config._ENV_FILE
+        old_loaded_keys = set(config._LOADED_DOTENV_KEYS)
+        old_env_value = os.environ.get("LLM_PROVIDER")
+        previous = {
+            "LLM_PROVIDER": config.LLM_PROVIDER,
+            "CHAT_LLM_PROVIDER": config.CHAT_LLM_PROVIDER,
+            "SETTINGS": config.SETTINGS,
+        }
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                env_file = Path(tmp) / ".env"
+                config._ENV_FILE = env_file
+                config._LOADED_DOTENV_KEYS = set()
+
+                env_file.write_text("LLM_PROVIDER=anthropic\n", encoding="utf-8")
+                config.reload()
+                self.assertEqual(os.environ.get("LLM_PROVIDER"), "anthropic")
+                self.assertEqual(config.LLM_PROVIDER, "anthropic")
+
+                env_file.write_text("", encoding="utf-8")
+                config.reload()
+                self.assertNotIn("LLM_PROVIDER", os.environ)
+                self.assertEqual(config.LLM_PROVIDER, "chatgpt")
+        finally:
+            config._ENV_FILE = old_env_file
+            config._LOADED_DOTENV_KEYS = old_loaded_keys
+            if old_env_value is None:
+                os.environ.pop("LLM_PROVIDER", None)
+            else:
+                os.environ["LLM_PROVIDER"] = old_env_value
+            for name, value in previous.items():
+                setattr(config, name, value)
 
     def test_caller_context_modes_load_from_new_env_keys(self):
         """Verify caller context modes load from new env keys behavior."""

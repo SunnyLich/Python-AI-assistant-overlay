@@ -196,7 +196,7 @@
     </message>
     <message>
       <source>APP SETTINGS</source>
-      <translation>應用設置</translation>
+      <translation>程式設置</translation>
     </message>
     <message>
       <source>Accent color</source>
@@ -352,11 +352,11 @@
     </message>
     <message>
       <source>App</source>
-      <translation>應用</translation>
+      <translation>程式</translation>
     </message>
     <message>
       <source>App language</source>
-      <translation>應用語言</translation>
+      <translation>程式語言</translation>
     </message>
     <message>
       <source>Apply</source>
@@ -718,7 +718,7 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     </message>
     <message>
       <source>Copy from app</source>
-      <translation>從應用複製</translation>
+      <translation>從程式複製</translation>
     </message>
     <message>
       <source>Could not load tools</source>
@@ -846,7 +846,7 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     </message>
     <message>
       <source>Developer OAuth app client ID override</source>
-      <translation>開發者 OAuth 應用客戶端 ID 覆蓋</translation>
+      <translation>開發者 OAuth 程式客戶端 ID 覆蓋</translation>
     </message>
     <message>
       <source>Device</source>
@@ -966,7 +966,7 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     </message>
     <message>
       <source>Fill the provider, model, and fallback models from the app's current LLM settings.</source>
-      <translation>從應用當前的 LLM 設置填入提供商、模型和備用模型。</translation>
+      <translation>從程式當前的 LLM 設置填入提供商、模型和備用模型。</translation>
     </message>
     <message>
       <source>Final Report</source>
@@ -1208,7 +1208,7 @@ Let model decide — expose git status/diff and GitHub repo/issue tools.</source
     </message>
     <message>
       <source>Language used for the app's menus, dialogs, and controls.</source>
-      <translation>應用菜單、對話框和控制項使用的語言。</translation>
+      <translation>程式菜單、對話框和控制項使用的語言。</translation>
     </message>
     <message>
       <source>Last chat</source>
@@ -1854,7 +1854,7 @@ Let model decide — expose an open-document tool during the answer.</source>
     </message>
     <message>
       <source>Retrieve additional context the user can see. Pass a URL to fetch a web page; omit it to read open local documents from supported apps (Word, Excel, PowerPoint, PDF, LibreOffice, Notepad, etc.).</source>
-      <translation>檢索使用者可見的額外上下文。傳入 URL 可擷取網頁；留空則讀取支援的應用中開啟的本地文件（Word、Excel、PowerPoint、PDF、LibreOffice、Notepad 等）。</translation>
+      <translation>檢索使用者可見的額外上下文。傳入 URL 可擷取網頁；留空則讀取支援的程式中開啟的本地文件（Word、Excel、PowerPoint、PDF、LibreOffice、Notepad 等）。</translation>
     </message>
     <message>
       <source>Retry</source>
@@ -2016,7 +2016,7 @@ Let model decide — expose an open-document tool during the answer.</source>
     </message>
     <message>
       <source>Sign in opens GitHub in your browser and links this app to your account.</source>
-      <translation>登入會在瀏覽器中開啟 GitHub，並將此應用程式連結到你的帳號。</translation>
+      <translation>登入會在瀏覽器中開啟 GitHub，並將此程式連結到你的帳號。</translation>
     </message>
     <message>
       <source>Sign in or save provider API keys and custom endpoint details before assigning models.</source>
@@ -2679,4 +2679,47 @@ Let model decide — expose an open-document tool during the answer.</source>
       <translation>私密檔案模式</translation>
     </message>
   <message><source>These folders are the only places the model can list or read files. Each keybind chooses whether local files are off, read-only, ask-before-write, or automatic.</source><translation>這些資料夾是模型唯一可以列出或讀取檔案的位置。每個快捷鍵都可以選擇本機檔案為關閉、唯讀、寫入前詢問或自動寫入。</translation></message><message><source>Read only</source><translation>唯讀</translation></message><message><source>Local files:</source><translation>本機檔案：</translation></message><message><source>No extra tools found. Enable addons that add model tools.</source><translation>找不到額外工具。請啟用會新增模型工具的擴充。</translation></message></context>
+  <context>
+    <name>Wisp</name>
+    <message>
+      <source>Trust/privacy mode</source>
+      <translation>信任／隱私模式</translation>
+    </message>
+    <message>
+      <source>Default on. Redacts sensitive text patterns from context before model requests.</source>
+      <translation>預設開啟。送出模型請求前，會從上下文中遮蔽敏感文字模式。</translation>
+    </message>
+    <message>
+      <source>Wheel-scroll text bubble</source>
+      <translation>允許滾輪捲動文字氣泡</translation>
+    </message>
+    <message>
+      <source>Let the mouse wheel scroll the bubble text while the pointer is over it.</source>
+      <translation>滑鼠指標位於文字氣泡上方時，可用滾輪捲動氣泡文字。</translation>
+    </message>
+    <message>
+      <source>Snap bubble scroll back while speaking</source>
+      <translation>朗讀時自動捲回目前位置</translation>
+    </message>
+    <message>
+      <source>After manual scrolling, return to the current highlighted word if speech is still active.</source>
+      <translation>手動捲動後，如果語音仍在播放，會返回目前醒目提示的字詞。</translation>
+    </message>
+    <message>
+      <source>Please elaborate on that.</source>
+      <translation>請詳細說明。</translation>
+    </message>
+    <message>
+      <source>e.g. 80</source>
+      <translation>例如：80</translation>
+    </message>
+    <message>
+      <source>e.g. 340</source>
+      <translation>例如：340</translation>
+    </message>
+    <message>
+      <source>e.g. 3</source>
+      <translation>例如：3</translation>
+    </message>
+  </context>
 </TS>

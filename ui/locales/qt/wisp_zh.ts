@@ -196,7 +196,7 @@
     </message>
     <message>
       <source>APP SETTINGS</source>
-      <translation>应用设置</translation>
+      <translation>程序设置</translation>
     </message>
     <message>
       <source>Accent color</source>
@@ -352,11 +352,11 @@
     </message>
     <message>
       <source>App</source>
-      <translation>应用</translation>
+      <translation>程序</translation>
     </message>
     <message>
       <source>App language</source>
-      <translation>应用语言</translation>
+      <translation>程序语言</translation>
     </message>
     <message>
       <source>Apply</source>
@@ -718,7 +718,7 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     </message>
     <message>
       <source>Copy from app</source>
-      <translation>从应用复制</translation>
+      <translation>从程序复制</translation>
     </message>
     <message>
       <source>Could not load tools</source>
@@ -846,7 +846,7 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     </message>
     <message>
       <source>Developer OAuth app client ID override</source>
-      <translation>开发者 OAuth 应用客户端 ID 覆盖</translation>
+      <translation>开发者 OAuth 程序客户端 ID 覆盖</translation>
     </message>
     <message>
       <source>Device</source>
@@ -966,7 +966,7 @@ Cards, borders and buttons are shaded automatically from these four.</source>
     </message>
     <message>
       <source>Fill the provider, model, and fallback models from the app's current LLM settings.</source>
-      <translation>从应用当前的 LLM 设置填入提供商、模型和备用模型。</translation>
+      <translation>从程序当前的 LLM 设置填入提供商、模型和备用模型。</translation>
     </message>
     <message>
       <source>Final Report</source>
@@ -1208,7 +1208,7 @@ Let model decide — expose git status/diff and GitHub repo/issue tools.</source
     </message>
     <message>
       <source>Language used for the app's menus, dialogs, and controls.</source>
-      <translation>应用菜单、对话框和控件使用的语言。</translation>
+      <translation>程序菜单、对话框和控件使用的语言。</translation>
     </message>
     <message>
       <source>Last chat</source>
@@ -1854,7 +1854,7 @@ Let model decide — expose an open-document tool during the answer.</source>
     </message>
     <message>
       <source>Retrieve additional context the user can see. Pass a URL to fetch a web page; omit it to read open local documents from supported apps (Word, Excel, PowerPoint, PDF, LibreOffice, Notepad, etc.).</source>
-      <translation>检索用户可见的额外上下文。传入 URL 可获取网页；留空则读取支持的应用中打开的本地文档（Word、Excel、PowerPoint、PDF、LibreOffice、Notepad 等）。</translation>
+      <translation>检索用户可见的额外上下文。传入 URL 可获取网页；留空则读取支持的程序中打开的本地文档（Word、Excel、PowerPoint、PDF、LibreOffice、Notepad 等）。</translation>
     </message>
     <message>
       <source>Retry</source>

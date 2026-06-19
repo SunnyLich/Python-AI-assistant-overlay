@@ -19,7 +19,7 @@ import json
 import os
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from core.system.paths import CHATS_DIR, CONVERSATIONS_FILE, PROJECTS_FILE
 
@@ -31,7 +31,7 @@ _lock = threading.RLock()
 
 def _now_iso() -> str:
     """Handle now iso for conversation store store."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _read_json(path, default):
@@ -164,19 +164,33 @@ def save_conversations(conversations: list[dict]) -> None:
 
 def _clean_conversation(conv: dict) -> dict:
     """Project a conversation dict down to persistable fields."""
+    created_at = conv.get("created_at") or _now_iso()
     return {
         "id": conv.get("id") or str(uuid.uuid4()),
         "project_id": conv.get("project_id") or GENERAL_PROJECT_ID,
         "title": conv.get("title") or _derive_title(conv),
         "title_override": conv.get("title_override", ""),
         "pinned": bool(conv.get("pinned")),
-        "messages": conv.get("messages", []),
+        "messages": _clean_messages(conv.get("messages", []), created_at),
         "context": conv.get("context", ""),
         "file_context": conv.get("file_context", []),
         "tool_context": conv.get("tool_context", {}),
-        "created_at": conv.get("created_at") or _now_iso(),
+        "context_policy": conv.get("context_policy", {}),
+        "created_at": created_at,
         "updated_at": _now_iso(),
     }
+
+
+def _clean_messages(messages: list, fallback_created_at: str) -> list[dict]:
+    """Ensure persisted chat turns carry display metadata."""
+    cleaned: list[dict] = []
+    for raw in messages or []:
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        item.setdefault("created_at", fallback_created_at)
+        cleaned.append(item)
+    return cleaned
 
 
 def _derive_title(conv: dict, limit: int = 48) -> str:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import subprocess
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -93,3 +94,52 @@ def test_hotkey_helper_stops_when_parent_pipe_closes(monkeypatch):
     hotkey_helper._stop_on_parent_pipe_close(stop)
 
     assert stop.is_set()
+
+
+def test_native_hotkey_stop_forgets_backend_when_stop_fails(monkeypatch):
+    """Verify a failed backend stop cannot leave stale hotkeys marked existing."""
+    class BadHotkeys:
+        def stop(self):
+            """Verify stop behavior."""
+            raise RuntimeError("still busy")
+
+    monkeypatch.setattr(native_host, "_hotkeys", BadHotkeys())
+
+    result = native_host.hotkeys_stop()
+
+    assert result["stopped"] is False
+    assert "still busy" in result["error"]
+    assert native_host._hotkeys is None
+
+
+def test_native_hotkey_reload_reloads_config_and_replaces_backend(monkeypatch):
+    """Verify native hotkey reload refreshes config before registering replacement keys."""
+    calls: list[str] = []
+
+    class OldHotkeys:
+        def stop(self):
+            """Verify stop behavior."""
+            calls.append("stop-old")
+
+    class NewHotkeys:
+        def start(self, addon_hotkeys=None):
+            """Verify start behavior."""
+            calls.append(f"start-new:{addon_hotkeys}")
+            return {"started": True, "backend": "fake"}
+
+        def stop(self):
+            """Verify stop behavior."""
+            calls.append("stop-new")
+
+    fake_config = SimpleNamespace(reload=lambda: calls.append("reload-config"))
+    monkeypatch.setitem(sys.modules, "config", fake_config)
+    monkeypatch.setattr(native_host, "_hotkeys", OldHotkeys())
+    monkeypatch.setattr(native_host, "_DirectHotkeys", NewHotkeys)
+    monkeypatch.setattr(native_host, "IS_MAC", False)
+
+    result = native_host.hotkeys_reload(addon_hotkeys=[{"hotkey": "ctrl+alt+h"}])
+
+    assert result["started"] is True
+    assert result["reloaded"] is True
+    assert calls == ["reload-config", "stop-old", "start-new:[{'hotkey': 'ctrl+alt+h'}]"]
+    assert isinstance(native_host._hotkeys, NewHotkeys)

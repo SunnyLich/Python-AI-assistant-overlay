@@ -227,9 +227,14 @@ def test_app_tab_exposes_assistant_language_setting():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication, QCheckBox, QLabel
 
+    import config
+    from ui import i18n
     from ui.settings_panel.dialog import SettingsDialog
 
     app = QApplication.instance() or QApplication(sys.argv)
+    old_language = getattr(config, "APP_LANGUAGE", "")
+    config.APP_LANGUAGE = "en"
+    i18n.set_language(app=app)
     dialog = SettingsDialog.__new__(SettingsDialog)
     dialog._fields = {}
     tab = SettingsDialog._tab_app(dialog)
@@ -254,6 +259,8 @@ def test_app_tab_exposes_assistant_language_setting():
         }
         assert {"", "match_user", "English", "Chinese", "Spanish"} <= values
     finally:
+        config.APP_LANGUAGE = old_language
+        i18n.set_language(app=app)
         tab.deleteLater()
         app.processEvents()
 
@@ -393,6 +400,7 @@ def test_llm_model_routing_surface_translates_to_traditional_chinese():
     from PySide6.QtWidgets import QApplication, QLabel, QComboBox, QLineEdit, QPushButton
 
     import config
+    from ui import i18n
     from ui.settings_panel.dialog import SettingsDialog
 
     app = QApplication.instance() or QApplication(sys.argv)
@@ -401,6 +409,7 @@ def test_llm_model_routing_surface_translates_to_traditional_chinese():
     dialog = SettingsDialog()
 
     try:
+        dialog._add_api_key_row("openai")
         label_texts = {label.text() for label in dialog.findChildren(QLabel)}
         button_texts = {button.text() for button in dialog.findChildren(QPushButton)}
         placeholder_texts = {
@@ -489,6 +498,7 @@ def test_llm_model_routing_surface_translates_to_traditional_chinese():
         assert "Codex\uff08ChatGPT \u8a02\u95b1\uff09[OAuth]" in combo_texts
     finally:
         config.APP_LANGUAGE = old_language
+        i18n.set_language(app=app)
         dialog.deleteLater()
         app.processEvents()
 
@@ -545,6 +555,61 @@ def test_i18n_translates_auth_ui_but_keeps_technical_tokens(monkeypatch):
     finally:
         config.APP_LANGUAGE = old_language
         i18n.set_language(app=app)
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_app_settings_surface_translates_to_traditional_chinese():
+    """Verify app settings page checkboxes and labels translate to Traditional Chinese."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QAbstractButton, QLabel, QLineEdit
+
+    import config
+    from ui import i18n
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    old_language = getattr(config, "APP_LANGUAGE", "")
+    config.APP_LANGUAGE = "zh-Hant"
+    dialog = SettingsDialog()
+
+    try:
+        visible_texts = {
+            label.text()
+            for label in dialog.findChildren(QLabel)
+            if label.text()
+        }
+        visible_texts.update(
+            button.text()
+            for button in dialog.findChildren(QAbstractButton)
+            if button.text()
+        )
+        visible_texts.update(
+            edit.placeholderText()
+            for edit in dialog.findChildren(QLineEdit)
+            if edit.placeholderText()
+        )
+
+        for fragment in (
+            "Trust/privacy mode",
+            "Wheel-scroll text bubble",
+            "Snap bubble scroll back while speaking",
+            "Elaborate prompt",
+            "App language",
+            "Assistant language",
+            "Icon size (px)",
+            "Text bubble width (px)",
+            "Text bubble lines",
+        ):
+            assert not any(fragment in text for text in visible_texts)
+
+        assert "\u4fe1\u4efb\uff0f\u96b1\u79c1\u6a21\u5f0f" in visible_texts
+        assert "\u5141\u8a31\u6efe\u8f2a\u6372\u52d5\u6587\u5b57\u6c23\u6ce1" in visible_texts
+        assert "\u6717\u8b80\u6642\u81ea\u52d5\u6372\u56de\u76ee\u524d\u4f4d\u7f6e" in visible_texts
+    finally:
+        config.APP_LANGUAGE = old_language
+        i18n.set_language(app=app)
+        dialog.deleteLater()
+        app.processEvents()
 
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
@@ -824,7 +889,7 @@ def test_reset_page_key_mapping_is_scoped():
     assert "BUBBLE_SCROLL_SNAP_DELAY_MS" in SettingsDialog._reset_env_keys_for_page("Advanced", env)
     assert "APP_LANGUAGE" in SettingsDialog._reset_env_keys_for_page("App", env)
     assert "ASSISTANT_LANGUAGE" in SettingsDialog._reset_env_keys_for_page("App", env)
-    assert "MEMORY_TOP_K" in SettingsDialog._reset_env_keys_for_page("Memory", env)
+    assert "MEMORY_TOP_K" in SettingsDialog._reset_env_keys_for_page("Advanced", env)
     assert "STT_MODEL" in SettingsDialog._reset_env_keys_for_page("TTS / Voice", env)
     assert SettingsDialog._reset_env_keys_for_page("Tools", env) == set()
 
@@ -866,6 +931,35 @@ def test_settings_tab_bar_has_explicit_painted_backing():
         assert bar.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         assert bar.drawBase() is False
         assert bar.expanding() is True
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_settings_tabs_use_app_first_order_without_memory_tab():
+    """Verify settings tab order starts with App and folds Memory into Advanced."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog()
+
+    try:
+        assert dialog._tab_base_names == [
+            "App",
+            "LLM",
+            "TTS / Voice",
+            "Keybinds",
+            "Prompts",
+            "Tools",
+            "Advanced",
+        ]
+        advanced_tab = dialog._tabs.widget(dialog._tab_base_names.index("Advanced"))
+        assert advanced_tab.isAncestorOf(dialog._fields["MEMORY_TOP_K"])
+        assert advanced_tab.isAncestorOf(dialog._fields["MEMORY_AUTO_CONSOLIDATE"])
     finally:
         dialog.deleteLater()
         app.processEvents()
@@ -1134,7 +1228,7 @@ def test_settings_search_filters_to_matching_page():
         search = dialog.findChild(QLineEdit, "settingsSearch")
         assert search is not None
 
-        search.setText("model file access")
+        search.setText("tool_file_roots")
         app.processEvents()
 
         tabs = dialog._tabs
@@ -1236,8 +1330,8 @@ def test_settings_active_preset_persists_user_edits_as_preset_overrides():
 
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
-def test_settings_advanced_tab_keeps_only_tuning_controls():
-    """Verify settings advanced tab keeps only tuning controls behavior."""
+def test_settings_advanced_tab_contains_tuning_and_memory_controls():
+    """Verify settings advanced tab contains tuning and memory controls."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication, QLabel
 
@@ -1250,6 +1344,7 @@ def test_settings_advanced_tab_keeps_only_tuning_controls():
         advanced_tab = dialog._tabs.widget(dialog._tab_base_names.index("Advanced"))
 
         assert advanced_tab.isAncestorOf(dialog._fields["BUBBLE_REVEAL_WPM"])
+        assert advanced_tab.isAncestorOf(dialog._fields["MEMORY_TOP_K"])
         assert advanced_tab.isAncestorOf(dialog._fields["MEMORY_STM_TOKEN_BUDGET"])
         assert advanced_tab.isAncestorOf(dialog._fields["CONTEXT_BROWSER_MAX_CHARS"])
     finally:

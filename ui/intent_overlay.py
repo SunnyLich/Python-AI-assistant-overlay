@@ -232,6 +232,8 @@ def _default_context_items() -> list[dict]:
             "key": keys[idx],
             "label": label,
             "state": "off",
+            "default_state": "off",
+            "touched": False,
             "tokens": "0 tok",
             "warning": "",
         }
@@ -272,7 +274,12 @@ class IntentOverlay(QWidget):
         self.setMouseTracking(True)
 
         self._rows = _build_rows(caller_idx)
-        self._context_items = [dict(item) for item in (context_items or _default_context_items())]
+        self._context_items = []
+        for item in context_items or _default_context_items():
+            next_item = dict(item)
+            next_item.setdefault("default_state", next_item.get("state", "off"))
+            next_item.setdefault("touched", False)
+            self._context_items.append(next_item)
         self._warning_rects: list[tuple[QRect, str]] = []
         self._last_warning_idx: int | None = None
         self._auto_custom_mode = self._custom_row_index_without_key()
@@ -409,9 +416,18 @@ class IntentOverlay(QWidget):
         refreshed: list[dict] = []
         for item in items:
             next_item = dict(item)
+            next_item.setdefault("default_state", next_item.get("state", "off"))
+            next_item.setdefault("touched", False)
             current = current_by_id.get(str(next_item.get("id") or ""))
             if current is not None:
-                next_item["state"] = current.get("state", next_item.get("state", "off"))
+                touched = bool(current.get("touched", False))
+                if touched:
+                    next_item["state"] = current.get("state", next_item.get("state", "off"))
+                    next_item["default_state"] = current.get(
+                        "default_state",
+                        next_item.get("default_state", next_item.get("state", "off")),
+                    )
+                    next_item["touched"] = True
             refreshed.append(next_item)
         self._context_items = refreshed
         self._warning_rects = []
@@ -588,16 +604,44 @@ class IntentOverlay(QWidget):
         for item in self._context_items:
             if name.lower() != str(item.get("key") or "").lower():
                 continue
-            state = str(item.get("state") or "off").lower()
-            if state == "auto":
-                item["state"] = "on"
-            elif state == "on":
-                item["state"] = "off"
-            else:
-                item["state"] = "on"
-            self.update()
+            self._cycle_context_item(item)
             return True
         return False
+
+    def _cycle_context_item(self, item: dict) -> None:
+        """Cycle one context source through its explicit prompt states."""
+        state = str(item.get("state") or "off").lower()
+        if state == "auto":
+            item["state"] = "off"
+        elif state == "off":
+            item["state"] = "on"
+        else:
+            item["state"] = "off"
+        item["touched"] = True
+        self.update()
+
+    def _context_item_at(self, pos: QPoint) -> dict | None:
+        """Return the context chip under a mouse position."""
+        if not self._context_items:
+            return None
+        x = _PAD_H
+        top = _PAD_V + _CTX_TOP
+        for item in self._context_items:
+            rect = QRect(x, top, _CTX_CHIP_W, _CTX_CHIP_H)
+            if rect.contains(pos):
+                return item
+            x += _CTX_CHIP_W + _CTX_GAP
+            if x + _CTX_CHIP_W > _W - _PAD_H:
+                break
+        return None
+
+    def _cycle_context_at(self, pos: QPoint) -> bool:
+        """Cycle a context chip at a mouse position."""
+        item = self._context_item_at(pos)
+        if item is None:
+            return False
+        self._cycle_context_item(item)
+        return True
 
     def _mark_raw_context_key(self, name: str) -> None:
         """Remember a raw-hook context key so Qt does not toggle it twice."""
@@ -638,6 +682,14 @@ class IntentOverlay(QWidget):
             QToolTip.showText(event.globalPosition().toPoint(), text, self)
             self._last_warning_idx = idx
         super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event):  # noqa: N802
+        """Toggle context chips when clicked."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._cycle_context_at(event.position().toPoint()):
+                event.accept()
+                return
+        super().mousePressEvent(event)
 
     # ── Key input ─────────────────────────────────────────────────────────
 
@@ -694,6 +746,8 @@ class IntentOverlay(QWidget):
     def _focus_custom_input(self) -> None:
         """Focus custom input."""
         if not self._custom_mode or self._input_line.isHidden():
+            return
+        if self._input_line.hasFocus() and (not _IS_WIN or self._input_grabbed_keyboard):
             return
         self._debug("focus-custom-before")
         self.raise_()

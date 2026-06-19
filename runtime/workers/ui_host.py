@@ -2058,6 +2058,7 @@ class QtProtocolHost:
             project = conv.get("project_id") or conversation_store.GENERAL_PROJECT_ID
             file_context = list(conv.get("file_context") or [])
             tool_context = self._normalized_tool_context(conv.get("tool_context") or {})
+            context_policy = self._normalized_context_policy(conv.get("context_policy") or {})
             context = str(conv.get("context") or "")
             history = [
                 {
@@ -2073,6 +2074,7 @@ class QtProtocolHost:
             project = self._active_project_id
             file_context = []
             tool_context = {}
+            context_policy = {}
         memory_project = None if project == conversation_store.GENERAL_PROJECT_ID else project
         return {
             "history": history,
@@ -2080,11 +2082,12 @@ class QtProtocolHost:
             "context": context,
             "file_context": file_context,
             "tool_context": tool_context,
+            "context_policy": context_policy,
         }
 
     def _make_chat_send_fn(self):
         """Create chat send fn."""
-        def send_with_memory(messages: list):
+        def send_with_memory(messages: list, context_policy: dict | None = None):
             """Send with memory."""
             request_id = f"chat-{next(self._chat_request_ids)}"
             stream: "queue.Queue[tuple[str, Any]]" = queue.Queue()
@@ -2092,8 +2095,17 @@ class QtProtocolHost:
             with self._chat_streams_lock:
                 self._chat_streams[request_id] = stream
             payload = {"request_id": request_id, "messages": messages}
+            normalized_policy = self._normalized_context_policy(context_policy or {})
+            if normalized_policy:
+                payload["context_policy"] = normalized_policy
             idx = self._active_conversation_idx
             if idx is not None and 0 <= idx < len(self._all_conversations):
+                if not normalized_policy:
+                    stored_policy = self._normalized_context_policy(
+                        self._all_conversations[idx].get("context_policy") or {}
+                    )
+                    if stored_policy:
+                        payload["context_policy"] = stored_policy
                 tool_context = self._normalized_tool_context(
                     self._all_conversations[idx].get("tool_context") or {}
                 )
@@ -2232,12 +2244,13 @@ class QtProtocolHost:
         image_base64: str | None = None,
         file_context: list | None = None,
         tool_context: dict | None = None,
+        context_policy: dict | None = None,
     ) -> dict[str, Any]:
         """Handle chat add conversation for qt protocol host."""
         import uuid as _uuid
-        from datetime import datetime, timezone
+        from datetime import UTC, datetime
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         user_msg: dict[str, Any] = {"role": "user", "content": user, "created_at": now}
         if image_base64:
             user_msg["image_base64"] = image_base64
@@ -2252,6 +2265,9 @@ class QtProtocolHost:
             conv.setdefault("messages", []).extend([user_msg, assistant_msg])
             self._merge_file_context(conv, file_context or [])
             self._merge_tool_context(conv, tool_context or {})
+            normalized_policy = self._normalized_context_policy(context_policy or {})
+            if normalized_policy:
+                conv["context_policy"] = normalized_policy
             self._persist_conversations()
             if self._chat is not None:
                 self._chat.sync_conversation(idx)
@@ -2268,6 +2284,7 @@ class QtProtocolHost:
                 "updated_at": now,
                 "file_context": self._normalized_file_context(file_context or []),
                 "tool_context": self._normalized_tool_context(tool_context or {}),
+                "context_policy": self._normalized_context_policy(context_policy or {}),
             }
         )
         self._active_conversation_idx = len(self._all_conversations) - 1
@@ -2334,6 +2351,44 @@ class QtProtocolHost:
         ctx = self._normalized_tool_context(raw)
         if ctx:
             conv["tool_context"] = ctx
+
+    @staticmethod
+    def _normalized_context_policy(raw: dict) -> dict[str, Any]:
+        """Return compact persisted chat context/tool policy metadata."""
+        if not isinstance(raw, dict):
+            return {}
+        from core.system.env_utils import normalize_file_access_mode
+        from runtime.supervisor import tool_modes
+
+        def _mode(value: Any, default: str = "off") -> str:
+            mode = str(value or default or "off").strip().lower()
+            return mode if mode in {"off", "auto", "model"} else default
+
+        tools = raw.get("tools")
+        policy = {
+            "context_ambient": bool(raw.get("context_ambient", False)),
+            "context_documents": tool_modes.context_mode(raw, "documents") == "auto",
+            "context_tools": False,
+            "context_documents_mode": tool_modes.context_mode(raw, "documents"),
+            "context_browser_mode": tool_modes.context_mode(raw, "browser"),
+            "context_github_mode": tool_modes.context_mode(raw, "github"),
+            "context_memory_mode": tool_modes.context_mode(raw, "memory"),
+            "context_screenshot": _mode(raw.get("context_screenshot"), "off"),
+            "context_clipboard": bool(raw.get("context_clipboard", False)),
+            "_context_selection_enabled": bool(raw.get("_context_selection_enabled", False)),
+            "file_access": normalize_file_access_mode(raw.get("file_access", "off")),
+            "tools": dict(tools) if isinstance(tools, dict) else {},
+        }
+        policy["context_tools"] = any(
+            policy[key] == "model"
+            for key in (
+                "context_documents_mode",
+                "context_browser_mode",
+                "context_github_mode",
+                "context_memory_mode",
+            )
+        )
+        return policy
 
     def _chat_ingest(self) -> dict[str, Any]:
         """Handle chat ingest for qt protocol host."""

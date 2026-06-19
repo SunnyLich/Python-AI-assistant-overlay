@@ -12,6 +12,7 @@ from ui.chat_window import (
     _chat_model_messages,
     _file_context_text,
     _format_conversation_datetime,
+    _message_timestamp_text,
     _truncate_for_display,
     _truncate_segments_for_display,
 )
@@ -58,6 +59,13 @@ def test_chat_model_messages_excludes_timestamp_metadata():
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "hello"},
     ]
+
+
+def test_message_timestamp_formats_from_metadata():
+    """Verify message timestamps are display metadata."""
+    assert _message_timestamp_text(
+        {"role": "user", "content": "hi", "created_at": "2026-06-19T15:52:16+00:00"}
+    )
 
 
 def test_file_context_text_mentions_exact_prior_path():
@@ -177,6 +185,98 @@ def test_chat_sidebar_shows_conversation_timestamp():
         assert title_btn._subtitle in title_btn.toolTip()
     finally:
         row.deleteLater()
+        window.close()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_chat_bubble_header_shows_message_timestamp():
+    """Verify each chat turn displays its own date/time metadata."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLabel
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    conversations = [
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "hello",
+                    "created_at": "2026-06-19T15:52:16+00:00",
+                }
+            ],
+        }
+    ]
+    window = ChatWindow(conversations, lambda _messages: iter(()))
+    try:
+        labels = [label.text() for label in window.findChildren(QLabel)]
+
+        assert any("2026" in text for text in labels)
+    finally:
+        window.close()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_chat_context_policy_controls_are_compact_menu_chips(monkeypatch):
+    """Verify chat context controls render as compact chips with popup choices."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QComboBox, QMenu, QPushButton
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    conversations = [
+        {
+            "messages": [{"role": "user", "content": "hello"}],
+            "context_policy": {
+                "context_ambient": False,
+                "context_documents_mode": "off",
+                "context_browser_mode": "off",
+                "context_github_mode": "off",
+                "context_memory_mode": "off",
+                "context_screenshot": "off",
+                "context_clipboard": False,
+                "file_access": "off",
+                "tools": {},
+            },
+        }
+    ]
+    window = ChatWindow(conversations, lambda _messages: iter(()))
+    captured = []
+
+    def fake_popup(self, pos):
+        """Capture the menu that would be opened for a context chip."""
+        captured.append((self, pos, [action.data() for action in self.actions()]))
+        return None
+
+    monkeypatch.setattr(QMenu, "popup", fake_popup)
+    try:
+        assert set(window._context_controls) == {
+            "ambient",
+            "browser",
+            "selection",
+            "clipboard",
+            "screenshot",
+            "memory",
+            "files",
+        }
+        assert all(isinstance(control, QPushButton) for control in window._context_controls.values())
+        assert not any(isinstance(control, QComboBox) for control in window._context_controls.values())
+
+        browser_chip = window._context_controls["browser"]
+        assert browser_chip.objectName() == "chatContextChip_browser"
+        assert "\n" in browser_chip.text()
+        assert window._context_controls["selection"].property("context_state") == "off"
+
+        window._show_context_policy_menu("browser")
+
+        assert captured
+        assert {"off", "on", "auto"} <= set(captured[0][2])
+
+        window._set_context_policy_state("browser", "on")
+
+        assert conversations[0]["context_policy"]["context_browser_mode"] == "auto"
+        assert browser_chip.property("context_state") == "on"
+    finally:
         window.close()
         app.processEvents()
 

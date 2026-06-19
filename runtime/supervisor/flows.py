@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from core.tools.local_files import file_tools_for_access
 from runtime.supervisor import tool_modes
 
 log = logging.getLogger("wisp.runtime.flows")
@@ -112,6 +111,61 @@ def _normalized_tool_context(raw: Any) -> dict[str, Any]:
     if not ctx["allowed_tools"] and not ctx["pinned_tools"] and not ctx["file_access_mode"]:
         return {}
     return ctx
+
+
+def _all_context_off_policy() -> dict[str, Any]:
+    return {
+        "context_ambient": False,
+        "context_documents": False,
+        "context_tools": False,
+        "context_documents_mode": "off",
+        "context_browser_mode": "off",
+        "context_github_mode": "off",
+        "context_memory_mode": "off",
+        "context_screenshot": "off",
+        "context_clipboard": False,
+        "_context_selection_enabled": False,
+        "file_access": "off",
+        "tools": {},
+    }
+
+
+def _normalized_context_policy(raw: Any) -> dict[str, Any]:
+    """Normalize a caller-like context policy from the chat UI."""
+    if not isinstance(raw, dict):
+        return {}
+
+    def _mode(value: Any, default: str = "off") -> str:
+        mode = str(value or default or "off").strip().lower()
+        return mode if mode in {"off", "auto", "model"} else default
+
+    tools = raw.get("tools")
+    policy = _all_context_off_policy()
+    policy.update(
+        {
+            "context_ambient": bool(raw.get("context_ambient", False)),
+            "context_documents_mode": tool_modes.context_mode(raw, "documents"),
+            "context_browser_mode": tool_modes.context_mode(raw, "browser"),
+            "context_github_mode": tool_modes.context_mode(raw, "github"),
+            "context_memory_mode": tool_modes.context_mode(raw, "memory"),
+            "context_screenshot": _mode(raw.get("context_screenshot"), "off"),
+            "context_clipboard": bool(raw.get("context_clipboard", False)),
+            "file_access": tool_modes.local_file_access_mode(raw),
+            "tools": dict(tools) if isinstance(tools, dict) else {},
+        }
+    )
+    policy["context_documents"] = policy["context_documents_mode"] == "auto"
+    policy["context_tools"] = any(
+        policy[key] == "model"
+        for key in (
+            "context_documents_mode",
+            "context_browser_mode",
+            "context_github_mode",
+            "context_memory_mode",
+        )
+    )
+    policy["_context_selection_enabled"] = bool(raw.get("_context_selection_enabled", False))
+    return policy
 
 
 class WorkerLike(Protocol):
@@ -951,14 +1005,12 @@ class FlowController:
         # reload config + drop cached TTS connections here â€” prewarm alone leaves
         # the old provider/voice in effect until restart.
         self._safe_call(self.audio, "audio.config.reload", timeout=30.0)
-        # The native worker is a separate long-lived process; reload its config
-        # before re-registering hotkeys or it re-binds the OLD keys (a changed
-        # hotkey would only take effect after an app restart).
-        self._safe_call(self.native, "native.config.reload", timeout=10.0)
-        self._safe_call(self.native, "native.hotkeys.stop", timeout=10.0)
+        # The native worker is a separate long-lived process and owns global
+        # registrations. Replace hotkeys in one native call so Apply cannot
+        # leave an old listener referenced between stop/start requests.
         result = self._safe_call(
             self.native,
-            "native.hotkeys.start",
+            "native.hotkeys.reload",
             {"addon_hotkeys": self._addon_hotkeys()},
             timeout=10.0,
         ) or {}
@@ -1010,20 +1062,27 @@ class FlowController:
             caller_idx = int(data.get("caller_idx", 0) or 0)
         except (TypeError, ValueError):
             caller_idx = 0
-        caller = self._caller(caller_idx)
+        supplied_policy = _normalized_context_policy(data.get("context_policy"))
+        caller = supplied_policy or self._caller(caller_idx) or _all_context_off_policy()
         allowed_tools, pinned_tools, file_access_mode = self._chat_tool_policy(caller)
         stored_tool_context = _normalized_tool_context(data.get("tool_context"))
-        if stored_tool_context:
+        if stored_tool_context and not supplied_policy:
             allowed_tools = list(stored_tool_context.get("allowed_tools") or allowed_tools)
             pinned_tools = list(stored_tool_context.get("pinned_tools") or pinned_tools)
             file_access_mode = str(stored_tool_context.get("file_access_mode") or file_access_mode)
+        if self._screenshot_tool_allowed(caller) and "capture_screen" not in allowed_tools:
+            allowed_tools.append("capture_screen")
+            if "capture_screen" not in pinned_tools:
+                pinned_tools.append("capture_screen")
         tool_context = {
             "allowed_tools": list(allowed_tools),
             "pinned_tools": list(pinned_tools),
             "file_access_mode": file_access_mode,
         }
+        messages = self._messages_with_chat_context(messages, caller)
         chat_params: dict[str, Any] = {
             "messages": messages,
+            "memory_enabled": self._context_mode(caller, "memory") == "auto",
             "use_tools": bool(allowed_tools),
             "allowed_tools": allowed_tools,
             "pinned_tools": pinned_tools,
@@ -1550,17 +1609,12 @@ class FlowController:
                 if file_ctx:
                     base = str(params.get("ambient_text") or "")
                     params["ambient_text"] = (base + "\n\n" + file_ctx).strip() if base else file_ctx
-                tool_ctx = _normalized_tool_context(hist.get("tool_context"))
-                if tool_ctx:
-                    params["allowed_tools"] = list(tool_ctx.get("allowed_tools") or params.get("allowed_tools") or [])
-                    params["pinned_tools"] = list(tool_ctx.get("pinned_tools") or params.get("pinned_tools") or [])
-                    params["file_access_mode"] = str(tool_ctx.get("file_access_mode") or params.get("file_access_mode") or "")
-                    params["use_tools"] = bool(params.get("allowed_tools"))
                 # Scope memory (retrieval + saves) to the conversation's project.
                 params["memory_project"] = hist.get("project_id")
         except Exception:
             log.exception("failed to fetch active conversation history")
 
+        context_policy = params.pop("context_policy", {})
         try:
             log.info("query brain call started")
             result = self._brain_call_with_events(
@@ -1618,6 +1672,7 @@ class FlowController:
                     "image_base64": pending.screenshot_b64,
                     "file_context": file_context,
                     "tool_context": tool_context,
+                    "context_policy": context_policy,
                 },
                 timeout=30.0,
             )
@@ -1986,7 +2041,13 @@ class FlowController:
         except Exception:
             log.exception("caller runtime logging failed")
 
-    def _context_snapshot(self, caller: dict[str, Any], *, include_browser: bool = True) -> dict[str, Any]:
+    def _context_snapshot(
+        self,
+        caller: dict[str, Any],
+        *,
+        include_browser: bool = True,
+        preview_context_sources: bool = False,
+    ) -> dict[str, Any]:
         # The browser-page fetch is a ~2-3s network read (requests.get). Keep it
         # OFF the hotkey -> picker path (include_browser=False) and fetch it lazily
         # at query time instead, where it overlaps the LLM round-trip. The URL and
@@ -1997,10 +2058,11 @@ class FlowController:
         snapshot = self.native.call(
             "native.context.snapshot",
             {
-                "include_clipboard": bool(caller.get("context_clipboard", False)),
+                "include_clipboard": bool(caller.get("context_clipboard", False))
+                or preview_context_sources,
                 "include_selection": True,
                 "include_browser_content": include_browser and browser_auto,
-                "include_browser_url": browser_auto,
+                "include_browser_url": browser_auto or preview_context_sources,
                 # Paste-back callers capture the focused text element so the rewrite
                 # can be written back in place (AX) without refocusing the app.
                 "capture_focus": bool(caller.get("paste_back")),
@@ -2086,7 +2148,11 @@ class FlowController:
             if not self._is_current(generation):
                 return
             t_ctx0 = time.monotonic()
-            context = self._context_snapshot(pending.caller, include_browser=False)
+            context = self._context_snapshot(
+                pending.caller,
+                include_browser=False,
+                preview_context_sources=True,
+            )
             t_ctx = time.monotonic()
             if not self._is_current(generation):
                 return
@@ -2359,6 +2425,7 @@ class FlowController:
             "active_document_text": active_document_text,
             "context_priority": context_priority,
             "_ui_context_summary": summary,
+            "context_policy": _normalized_context_policy(caller),
         }
 
     @staticmethod
@@ -2414,16 +2481,76 @@ class FlowController:
         return tool_modes.pinned_model_tools(caller)
 
     def _chat_tool_policy(self, caller: dict[str, Any]) -> tuple[list[str], list[str], str]:
-        """Return chat tool grants, with ask-mode local files as a chat fallback."""
+        """Return chat tool grants from the visible chat/caller policy."""
         allowed = self._allowed_model_tools(caller)
         pinned = self._pinned_model_tools(caller)
         file_access_mode = tool_modes.local_file_access_mode(caller)
-        if file_access_mode == "off":
-            file_access_mode = "ask"
-            for name in file_tools_for_access(file_access_mode):
-                if name not in allowed:
-                    allowed.append(name)
         return allowed, pinned, file_access_mode
+
+    def _messages_with_chat_context(self, messages: list, caller: dict[str, Any]) -> list:
+        """Attach selected chat context as hidden system text."""
+        context_text = self._chat_context_text(caller)
+        if not context_text:
+            return messages
+        out = [dict(m) for m in messages]
+        block = f"[Current Chat Context]\n{context_text}"
+        for msg in out:
+            if str(msg.get("role") or "").lower() == "system":
+                msg["content"] = f"{str(msg.get('content') or '').rstrip()}\n\n---\n{block}"
+                return out
+        return [{"role": "system", "content": block}] + out
+
+    def _chat_context_text(self, caller: dict[str, Any]) -> str:
+        """Fetch frontloaded chat context selected in the chat controls."""
+        wants_documents = self._context_mode(caller, "documents") == "auto"
+        wants_browser = self._context_mode(caller, "browser") == "auto"
+        wants_clipboard = bool(caller.get("context_clipboard"))
+        wants_ambient = bool(caller.get("context_ambient"))
+        wants_selection = bool(caller.get("_context_selection_enabled", False))
+        if not any((wants_documents, wants_browser, wants_clipboard, wants_ambient, wants_selection)):
+            return ""
+
+        try:
+            context = self._context_snapshot(caller, include_browser=False, preview_context_sources=wants_browser)
+        except Exception:
+            log.exception("chat context snapshot failed")
+            context = {}
+
+        parts: list[str] = []
+        active_app = context.get("active_app") if isinstance(context.get("active_app"), dict) else {}
+        if wants_ambient and active_app.get("name"):
+            parts.append(f"Active app: {active_app.get('name')}")
+
+        if wants_selection:
+            selected = str(context.get("selected_text") or "").strip()
+            if selected:
+                parts.append(f"Selection:\n{selected}")
+
+        if wants_clipboard:
+            clipboard = str(context.get("clipboard_text") or "").strip()
+            if clipboard:
+                parts.append(f"Clipboard:\n{clipboard}")
+
+        if wants_documents:
+            active_document_text = str(context.get("active_document_text") or "").strip()
+            if not active_document_text:
+                active_document_text = self._fetch_active_document_text(context)
+            if active_document_text:
+                parts.append(f"[Active document]\n{active_document_text}")
+
+        if wants_browser:
+            browser = self._fetch_browser_content_for_context(context)
+            browser_url = str(browser.get("browser_url") or context.get("browser_url") or "").strip()
+            browser_content = str(browser.get("browser_content") or "").strip()
+            browser_bits = []
+            if browser_url:
+                browser_bits.append(f"URL: {browser_url}")
+            if browser_content:
+                browser_bits.append(browser_content)
+            if browser_bits:
+                parts.append("[Browser/Web]\n" + "\n\n".join(browser_bits))
+
+        return "\n\n".join(parts)
 
     def _screenshot_tool_allowed(self, caller: dict[str, Any]) -> bool:
         """Whether capture_screen is exposed: the Screenshot dropdown's "model"
@@ -2608,7 +2735,7 @@ class FlowController:
         )
         browser_state = self._mode_to_context_state(self._context_mode(caller, "browser"))
         browser_tokens = self._estimate_context_tokens(browser_text)
-        browser_deferred = browser_state == "on" and browser_available and not context.get("browser_content")
+        browser_deferred = browser_available and not context.get("browser_content")
 
         selected_text = str(context.get("selected_text") or "")
         clipboard_text = str(context.get("clipboard_text") or "")
@@ -2641,7 +2768,7 @@ class FlowController:
                 "warning": self._context_warning(
                     browser_tokens,
                     available=browser_available,
-                    deferred=browser_deferred,
+                    deferred=browser_deferred and browser_state != "off",
                     deferred_warning="Browser page text may be fetched after you send the prompt, so this token cost is not known yet.",
                 ) if browser_state != "off" else "",
             },
@@ -2699,6 +2826,12 @@ class FlowController:
             state = str(item.get("state") or "off").lower()
             if source == "ambient":
                 updated["context_ambient"] = state != "off"
+                default_state = str(item.get("default_state") or state).lower()
+                touched = bool(item.get("touched")) or state != default_state
+                if state == "off":
+                    updated["context_documents_mode"] = "off"
+                elif touched:
+                    updated["context_documents_mode"] = "model" if state == "auto" else "auto"
             elif source == "browser":
                 updated["context_browser_mode"] = "off" if state == "off" else ("model" if state == "auto" else "auto")
             elif source == "selection":

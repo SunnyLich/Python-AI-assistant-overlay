@@ -2,7 +2,7 @@
 config.py — Central configuration loaded from .env
 """
 import os
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 from core import secret_store
 from core.system.env_utils import (
     env_bool, env_file_access_mode, env_float, env_int, env_screenshot_mode,
@@ -14,7 +14,38 @@ from core.system.paths import REPO_ROOT, MODEL_FILE_ACCESS_DIR, MODEL_TOOLS_DIR
 from core.settings_model import AppSettings
 
 _ENV_FILE = REPO_ROOT / ".env"
-load_dotenv(_ENV_FILE)
+_LOADED_DOTENV_KEYS: set[str] = set()
+
+
+def _dotenv_keys() -> set[str]:
+    """Return keys currently defined by the .env file."""
+    if not _ENV_FILE.exists():
+        return set()
+    return {
+        key
+        for key, value in dotenv_values(_ENV_FILE).items()
+        if key is not None and value is not None
+    }
+
+
+def _load_dotenv() -> None:
+    """Load .env values and remember which keys are .env-managed."""
+    global _LOADED_DOTENV_KEYS
+    load_dotenv(_ENV_FILE)
+    _LOADED_DOTENV_KEYS = _dotenv_keys()
+
+
+def _reload_dotenv() -> None:
+    """Reload .env and clear keys that were removed from the file."""
+    global _LOADED_DOTENV_KEYS
+    current_keys = _dotenv_keys()
+    for key in _LOADED_DOTENV_KEYS - current_keys:
+        os.environ.pop(key, None)
+    load_dotenv(_ENV_FILE, override=True)
+    _LOADED_DOTENV_KEYS = current_keys
+
+
+_load_dotenv()
 
 BASE_DIR = str(REPO_ROOT)
 
@@ -535,5 +566,5 @@ def reload() -> None:
     and only fully apply after a restart; everything else is live.
     """
     secret_store.refresh_cache()
-    load_dotenv(_ENV_FILE, override=True)
+    _reload_dotenv()
     _load_config()

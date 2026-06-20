@@ -8,6 +8,54 @@ set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(pwd)"
 OS_NAME="$(uname -s 2>/dev/null || true)"
+WISP_APP_LAUNCHED=0
+
+close_macos_terminal_on_exit() {
+  if [ "$OS_NAME" != "Darwin" ]; then
+    return
+  fi
+  if [ "$WISP_APP_LAUNCHED" != "1" ]; then
+    return
+  fi
+  if [ "${WISP_KEEP_TERMINAL_ON_EXIT:-}" = "1" ]; then
+    return
+  fi
+  if [ "${WISP_RUNTIME_LOG_MODE:-}" = "debug" ]; then
+    return
+  fi
+  if [ ! -t 0 ]; then
+    return
+  fi
+  local tty_path tty_name
+  tty_path="$(tty 2>/dev/null || true)"
+  if [ -z "$tty_path" ] || [ "$tty_path" = "not a tty" ]; then
+    return
+  fi
+  tty_name="${tty_path#/dev/}"
+  nohup /bin/sh -c '
+    sleep 0.2
+    /usr/bin/osascript >/dev/null 2>&1 <<OSA
+tell application "Terminal"
+  repeat with w in windows
+    repeat with t in tabs of w
+      try
+        set tabTty to tty of t
+        if tabTty is "'"$tty_path"'" or tabTty is "'"$tty_name"'" then
+          if (count of tabs of w) is 1 then
+            close w
+          else
+            close t
+          end if
+          return
+        end if
+      end try
+    end repeat
+  end repeat
+end tell
+OSA
+  ' >/dev/null 2>&1 &
+}
+trap close_macos_terminal_on_exit EXIT
 
 if [ ! -s .python-version ]; then
   echo "ERROR: .python-version is required and must contain an exact Python version like 3.12.13." >&2
@@ -198,4 +246,5 @@ setup_venv
 export WISP_REPO_ROOT="$REPO_ROOT"
 export PYTHONUNBUFFERED=1
 
-exec "$VPY" -m runtime.supervisor.app
+WISP_APP_LAUNCHED=1
+"$VPY" -m runtime.supervisor.app

@@ -835,7 +835,7 @@ class FlowController:
         # exactly like a dropped file -- not as a speech-bubble notice. Routing
         # it through _drop_context_items keeps the badge's X-to-remove indexing
         # consistent with remove_context_item.
-        name = f"Selection - {self._short(text, 18)}"
+        name = "Selection"
         self._drop_context_items.append({"name": name, "content": text, "type": "text"})
         self._fire(self.ui, "ui.context.add_item", {"name": name, "item_type": "text"})
 
@@ -2374,8 +2374,9 @@ class FlowController:
         pinned_tools = self._pinned_model_tools(caller)
         frontload_tools = self._frontloaded_model_tools(caller)
         memory_mode = self._context_mode(caller, "memory")
-        include_active_document = self._context_mode(caller, "documents") == "auto"
-        active_document_text = str(context.get("active_document_text") or "")
+        documents_mode = self._context_mode(caller, "documents")
+        include_active_document = documents_mode == "auto"
+        active_document_text = str(context.get("active_document_text") or "") if include_active_document else ""
         if include_active_document:
             active_document_text = active_document_text or self._fetch_active_document_text(context)
         if caller.get("context_ambient", True):
@@ -2968,10 +2969,15 @@ class FlowController:
     ) -> list[dict[str, str]]:
         """Handle context summary badges for flow controller."""
         items: list[dict[str, str]] = []
+
+        def add_source(label: str, item_type: str) -> None:
+            if not any(item.get("label") == label for item in items):
+                items.append({"label": label, "type": item_type})
+
         if screenshot_b64:
-            items.append({"label": "Screenshot", "type": "image"})
+            add_source("Screenshot", "image")
         if selected:
-            items.append({"label": f"Selection - {self._short(selected, 14)}", "type": "text"})
+            add_source("Selection", "text")
         for item in drop_items:
             items.append(
                 {
@@ -2982,14 +2988,14 @@ class FlowController:
         for buffered in buffered_items:
             items.append({"label": self._short(buffered, 24), "type": "text"})
         if clipboard_text:
-            items.append({"label": f"Clipboard - {self._short(clipboard_text, 14)}", "type": "text"})
+            add_source("Clipboard", "text")
         if active_document_text:
-            items.append({"label": "Active document", "type": "file"})
+            add_source("App", "file")
         if "[Browser/Web]" in (ambient_text or ""):
-            items.append({"label": "Browser/Web", "type": "file"})
+            add_source("Browser/Web", "file")
         ambient_without_browser = (ambient_text or "").replace("[Browser/Web]", "").strip()
         if ambient_without_browser:
-            items.append({"label": "Window context", "type": "file"})
+            add_source("App", "file")
         return items[:8]
 
     def _capture_fullscreen_b64(self) -> str | None:

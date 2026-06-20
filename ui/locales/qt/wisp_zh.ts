@@ -355,6 +355,18 @@
       <translation>程序</translation>
     </message>
     <message>
+      <source>Selection</source>
+      <translation>选择内容</translation>
+    </message>
+    <message>
+      <source>Clipboard</source>
+      <translation>剪贴板</translation>
+    </message>
+    <message>
+      <source>Files</source>
+      <translation>文件</translation>
+    </message>
+    <message>
       <source>App language</source>
       <translation>程序语言</translation>
     </message>
@@ -2235,11 +2247,7 @@ Let model decide — expose an open-document tool during the answer.</source>
       <translation>主题</translation>
     </message>
     <message>
-      <source>These default to the context dropdowns on the hotkey â€” changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
-      <translation>这些工具默认跟随该快捷键的上下文下拉设置。在这里修改某一项时，只会覆盖该工具本身。自动上下文（下拉框设为开启）不受影响。</translation>
-    </message>
-    <message>
-      <source>These default to the context dropdowns on the hotkey — changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
+      <source>These default to the context dropdowns on the hotkey - changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
       <translation>这些工具默认跟随该快捷键的上下文下拉设置。在这里修改某一项时，只会覆盖该工具本身。自动上下文（下拉框设为开启）不受影响。</translation>
     </message>
     <message>
@@ -2669,6 +2677,42 @@ Let model decide — expose an open-document tool during the answer.</source>
     <message>
       <source>Private file patterns</source>
       <translation>私密文件模式</translation>
+    </message>
+    <message>
+      <source>Trust/privacy mode</source>
+      <translation>信任/隐私模式</translation>
+    </message>
+    <message>
+      <source>Default on. Redacts sensitive text patterns from context before model requests.</source>
+      <translation>默认开启。发送模型请求前，会从上下文中遮蔽敏感文本模式。</translation>
+    </message>
+    <message>
+      <source>Wheel-scroll text bubble</source>
+      <translation>允许滚轮滚动文字气泡</translation>
+    </message>
+    <message>
+      <source>Let the mouse wheel scroll the bubble text while the pointer is over it.</source>
+      <translation>鼠标指针位于文字气泡上方时，可用滚轮滚动气泡文字。</translation>
+    </message>
+    <message>
+      <source>Snap bubble scroll back while speaking</source>
+      <translation>朗读时自动滚回当前位置</translation>
+    </message>
+    <message>
+      <source>After manual scrolling, return to the current highlighted word if speech is still active.</source>
+      <translation>手动滚动后，如果语音仍在播放，会返回当前高亮的词语。</translation>
+    </message>
+    <message>
+      <source>e.g. 80</source>
+      <translation>例如：80</translation>
+    </message>
+    <message>
+      <source>e.g. 340</source>
+      <translation>例如：340</translation>
+    </message>
+    <message>
+      <source>e.g. 3</source>
+      <translation>例如：3</translation>
     </message>
   <message><source>These folders are the only places the model can list or read files. Each keybind chooses whether local files are off, read-only, ask-before-write, or automatic.</source><translation>这些文件夹是模型唯一可以列出或读取文件的位置。每个快捷键都可以选择本地文件为关闭、只读、写入前询问或自动写入。</translation></message><message><source>Read only</source><translation>只读</translation></message><message><source>Local files:</source><translation>本地文件：</translation></message><message><source>No extra tools found. Enable addons that add model tools.</source><translation>没有找到额外工具。请启用会添加模型工具的扩展。</translation></message></context>
 </TS>

@@ -213,6 +213,18 @@ class SetupScriptTests(unittest.TestCase):
         self.assertIn("requirements-macos.lock is required for macOS setup", script)
         self.assertIn("bash scripts/compile_macos_lock.sh", script)
 
+    def test_macos_launcher_closes_terminal_only_after_app_launch(self) -> None:
+        script = (ROOT / "Start Wisp.command").read_text(encoding="utf-8")
+        debug = (ROOT / "Start Wisp Debug.command").read_text(encoding="utf-8")
+
+        self.assertIn("close_macos_terminal_on_exit()", script)
+        self.assertIn("trap close_macos_terminal_on_exit EXIT", script)
+        self.assertIn('if [ "$WISP_APP_LAUNCHED" != "1" ]; then', script)
+        self.assertIn('if [ "${WISP_KEEP_TERMINAL_ON_EXIT:-}" = "1" ]; then', script)
+        self.assertIn('WISP_APP_LAUNCHED=1', script)
+        self.assertLess(script.index("setup_venv"), script.rindex('WISP_APP_LAUNCHED=1'))
+        self.assertIn("export WISP_KEEP_TERMINAL_ON_EXIT=1", debug)
+
     def test_macos_test_runner_requires_lock_file(self) -> None:
         script = (ROOT / "scripts" / "run_macos_tests.command").read_text(encoding="utf-8")
 

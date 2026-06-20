@@ -347,6 +347,11 @@ def test_query_flow_streams_reply_and_adds_chat_conversation_with_context():
     assert chat_params["context_policy"]["context_clipboard"] is True
     assert chat_params["context_policy"]["context_documents_mode"] == "auto"
     assert ui.calls_for("ui.context.summary")
+    summary_labels = [item["label"] for item in ui.last_call("ui.context.summary")["params"]["items"]]
+    assert "Selection" in summary_labels
+    assert "Clipboard" in summary_labels
+    assert "App" in summary_labels
+    assert not any(label.startswith(("Selection -", "Clipboard -")) for label in summary_labels)
     assert ui.calls_for("ui.context.clear")
 
 
@@ -399,6 +404,7 @@ def test_add_context_shows_panel_badge_not_bubble():
         flow.add_context()
     add_calls = ui.calls_for("ui.context.add_item")
     assert add_calls, "added context should surface as a right-of-icon badge"
+    assert add_calls[-1]["params"]["name"] == "Selection"
     assert add_calls[-1]["params"]["item_type"] == "text"
     assert not ui.calls_for("ui.reply.notice"), "added context must not go to the bubble"
     assert len(flow._drop_context_items) == 1
@@ -453,6 +459,40 @@ def test_context_modes_map_to_auto_documents_and_allowed_tools():
     assert query["allowed_tools"] == ["get_context.documents", "git_status", "git_diff", "github_repo", "github_issue", "memory_save"]
     assert query["pinned_tools"] == ["get_context", "git_status", "git_diff", "github_repo", "github_issue"]
     assert query["frontload_tools"] == []
+
+
+def test_document_model_mode_preview_does_not_inject_active_document():
+    """Verify model-mode document preview does not frontload document text."""
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "model",
+            "context_browser_mode": "off",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+        }
+    ]
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="")})
+    brain = FakeWorker(
+        handlers={"brain.context.active_document": lambda _params: {"text": "DOC PREVIEW"}},
+        stream_handlers={"brain.query": query_stream("ok")},
+    )
+    with caller_config(rows):
+        _flow, _native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "Use document only if needed"})
+
+    query = brain.last_call("brain.query")["params"]
+    assert brain.calls_for("brain.context.active_document")
+    assert query["active_document_text"] == ""
+    assert query["include_active_document"] is False
+    assert query["allowed_tools"] == ["get_context.documents"]
+    summary_labels = [item["label"] for item in ui.last_call("ui.context.summary")["params"]["items"]]
+    assert "App" in summary_labels
+    assert "Active document" not in summary_labels
 
 
 def test_context_modes_map_on_browser_and_git_to_frontloaded_context():
@@ -949,7 +989,7 @@ def test_intent_enabled_app_fetches_active_document_when_setting_off():
     query = brain.last_call("brain.query")["params"]
     assert query["active_document_text"] == "DOC TEXT"
     assert query["include_active_document"] is False
-    assert {"label": "Active document", "type": "file"} in ui.last_call("ui.context.summary")["params"]["items"]
+    assert {"label": "App", "type": "file"} in ui.last_call("ui.context.summary")["params"]["items"]
 
 
 def test_context_priority_marks_browser_when_browser_was_active():
@@ -1086,7 +1126,7 @@ def test_active_document_auto_fetches_before_query_and_summary():
     assert query["include_active_document"] is False
     assert len(brain.calls_for("brain.context.active_document")) == 1
     summary = ui.last_call("ui.context.summary")["params"]["items"]
-    assert {"label": "Active document", "type": "file"} in summary
+    assert {"label": "App", "type": "file"} in summary
 
 
 def test_active_document_request_includes_hotkey_time_window():

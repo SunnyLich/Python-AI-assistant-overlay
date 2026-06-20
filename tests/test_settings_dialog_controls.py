@@ -307,6 +307,9 @@ def test_i18n_uses_qt_catalog_without_dynamic_matching(monkeypatch):
         i18n.set_language(app=app)
 
         assert i18n.t("Settings") == "\u8bbe\u7f6e"
+        assert i18n.t("Selection") == "\u9009\u62e9\u5185\u5bb9"
+        assert i18n.t("Clipboard") == "\u526a\u8d34\u677f"
+        assert i18n.t("Files") == "\u6587\u4ef6"
         assert i18n.t("Hooks: ") == "\u4e8b\u4ef6\u6302\u94a9\uff1a"
         assert i18n.t("Demo Addon Settings") == "Demo Addon Settings"
         assert i18n.t("Hooks: startup, query") == "Hooks: startup, query"
@@ -332,6 +335,9 @@ def test_i18n_supports_traditional_chinese(monkeypatch):
         assert i18n.current_language() == "zh-Hant"
         assert i18n.t("Settings") == "\u8a2d\u7f6e"
         assert i18n.t("Memory") == "\u8a18\u61b6"
+        assert i18n.t("Selection") == "\u9078\u53d6\u5167\u5bb9"
+        assert i18n.t("Clipboard") == "\u526a\u8cbc\u7c3f"
+        assert i18n.t("Files") == "\u6a94\u6848"
         assert i18n.t("Chinese (Traditional)") == "\u7e41\u9ad4\u4e2d\u6587"
         assert i18n.t("Browser/Web: ") == "\u700f\u89bd\u5668/\u7db2\u9801\uff1a"
         assert i18n.t("Browser/Web: On") == "Browser/Web: On"
@@ -517,11 +523,19 @@ def test_qt_catalogs_translate_exact_spanish_and_french_sources(monkeypatch):
         config.APP_LANGUAGE = "es"
         i18n.set_language(app=app)
         assert i18n.t("Browser/Web: ") == "Navegador/Web: "
+        assert i18n.t("App") == "Aplicaci\u00f3n"
+        assert i18n.t("Selection") == "Selecci\u00f3n"
+        assert i18n.t("Clipboard") == "Portapapeles"
+        assert i18n.t("Files") == "Archivos"
         assert i18n.t("Settings") == "Configuración"
 
         config.APP_LANGUAGE = "fr"
         i18n.set_language(app=app)
         assert i18n.t("Browser/Web: ") == "Navigateur/Web : "
+        assert i18n.t("App") == "Application"
+        assert i18n.t("Selection") == "S\u00e9lection"
+        assert i18n.t("Clipboard") == "Presse-papiers"
+        assert i18n.t("Files") == "Fichiers"
         assert i18n.t("Settings") == "Paramètres"
     finally:
         config.APP_LANGUAGE = old_language

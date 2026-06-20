@@ -355,6 +355,18 @@
       <translation>程式</translation>
     </message>
     <message>
+      <source>Selection</source>
+      <translation>選取內容</translation>
+    </message>
+    <message>
+      <source>Clipboard</source>
+      <translation>剪貼簿</translation>
+    </message>
+    <message>
+      <source>Files</source>
+      <translation>檔案</translation>
+    </message>
+    <message>
       <source>App language</source>
       <translation>程式語言</translation>
     </message>
@@ -2235,19 +2247,7 @@ Let model decide — expose an open-document tool during the answer.</source>
       <translation>主題</translation>
     </message>
     <message>
-      <source>These default to the context dropdowns on the hotkey Ã¢â‚¬â€ changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
-      <translation>這些工具預設跟隨該快捷鍵的上下文下拉設置。在這裡修改某一項時，只會覆蓋該工具本身。自動上下文（下拉框設為開啟）不受影響。</translation>
-    </message>
-    <message>
-      <source>These default to the context dropdowns on the hotkey â€” changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
-      <translation>這些工具預設跟隨該快捷鍵的上下文下拉設置。在這裡修改某一項時，只會覆蓋該工具本身。自動上下文（下拉框設為開啟）不受影響。</translation>
-    </message>
-    <message>
-      <source>These default to the context dropdowns on the hotkey вЂ” changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
-      <translation>這些工具預設跟隨該快捷鍵的上下文下拉設置。在這裡修改某一項時，只會覆蓋該工具本身。自動上下文（下拉框設為開啟）不受影響。</translation>
-    </message>
-    <message>
-      <source>These default to the context dropdowns on the hotkey — changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
+      <source>These default to the context dropdowns on the hotkey - changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
       <translation>這些工具預設跟隨該快捷鍵的上下文下拉設置。在這裡修改某一項時，只會覆蓋該工具本身。自動上下文（下拉框設為開啟）不受影響。</translation>
     </message>
     <message>
@@ -2704,10 +2704,6 @@ Let model decide — expose an open-document tool during the answer.</source>
     <message>
       <source>After manual scrolling, return to the current highlighted word if speech is still active.</source>
       <translation>手動捲動後，如果語音仍在播放，會返回目前醒目提示的字詞。</translation>
-    </message>
-    <message>
-      <source>Please elaborate on that.</source>
-      <translation>請詳細說明。</translation>
     </message>
     <message>
       <source>e.g. 80</source>

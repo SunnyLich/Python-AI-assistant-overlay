@@ -23,6 +23,23 @@ from ui.i18n import localize_widget_tree, t
 
 log = logging.getLogger("wisp.ui_host")
 
+_CONTEXT_SOURCE_LABELS = {
+    "App",
+    "Browser/Web",
+    "Selection",
+    "Clipboard",
+    "Screenshot",
+    "Memory",
+    "Files",
+    "Context",
+}
+
+
+def _context_display_label(label: str) -> str:
+    """Translate built-in context source labels while preserving user labels."""
+    text = str(label or "Context")
+    return t(text) if text in _CONTEXT_SOURCE_LABELS else text
+
 
 def _mac_status_text(status: str) -> str:
     """Handle mac status text for runtime workers UI host."""
@@ -1977,7 +1994,7 @@ class QtProtocolHost:
         self._ensure_overlay()
         if self._overlay_signals is not None:
             self._overlay_signals.add_context_item.emit(
-                str(name or "Context"), str(item_type or "text")
+                _context_display_label(str(name or "Context")), str(item_type or "text")
             )
         return {"added": True}
 
@@ -1986,7 +2003,10 @@ class QtProtocolHost:
         self._ensure_overlay()
         if self._overlay_signals is not None:
             pairs = [
-                (str(item.get("label") or item.get("name") or "Context"), str(item.get("type") or "text"))
+                (
+                    _context_display_label(str(item.get("label") or item.get("name") or "Context")),
+                    str(item.get("type") or "text"),
+                )
                 for item in (items or [])
                 if isinstance(item, dict)
             ]

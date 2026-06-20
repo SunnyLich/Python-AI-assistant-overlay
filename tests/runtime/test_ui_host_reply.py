@@ -1,6 +1,17 @@
 from __future__ import annotations
 
 
+def test_context_source_labels_translate_without_touching_custom_labels(monkeypatch) -> None:
+    """Verify built-in context badge labels are localized but user labels remain."""
+    from runtime.workers import ui_host
+
+    monkeypatch.setattr(ui_host, "t", lambda text: f"tx:{text}")
+
+    assert ui_host._context_display_label("App") == "tx:App"
+    assert ui_host._context_display_label("Browser/Web") == "tx:Browser/Web"
+    assert ui_host._context_display_label("notes.txt") == "notes.txt"
+
+
 class _Bubble:
     """Capture reply chunks sent to the speech bubble."""
 

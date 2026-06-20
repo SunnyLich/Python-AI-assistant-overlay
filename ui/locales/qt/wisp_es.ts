@@ -352,7 +352,19 @@
     </message>
     <message>
       <source>App</source>
-      <translation>App</translation>
+      <translation>Aplicación</translation>
+    </message>
+    <message>
+      <source>Selection</source>
+      <translation>Selección</translation>
+    </message>
+    <message>
+      <source>Clipboard</source>
+      <translation>Portapapeles</translation>
+    </message>
+    <message>
+      <source>Files</source>
+      <translation>Archivos</translation>
     </message>
     <message>
       <source>App language</source>
@@ -2235,11 +2247,7 @@ Dejar decidir al modelo — expone una herramienta de documentos abiertos durant
       <translation>Tema</translation>
     </message>
     <message>
-      <source>These default to the context dropdowns on the hotkey â€” changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
-      <translation>Estos valores usan por defecto los desplegables de contexto del atajo; cambiar uno aquí solo sobrescribe el desplegable de esa herramienta. El contexto automático (desplegables en Activado) no se ve afectado.</translation>
-    </message>
-    <message>
-      <source>These default to the context dropdowns on the hotkey — changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
+      <source>These default to the context dropdowns on the hotkey - changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.</source>
       <translation>Estos valores usan por defecto los desplegables de contexto del atajo; cambiar uno aquí solo sobrescribe el desplegable de esa herramienta. El contexto automático (desplegables en Activado) no se ve afectado.</translation>
     </message>
     <message>
@@ -2669,6 +2677,42 @@ Dejar decidir al modelo — expone una herramienta de documentos abiertos durant
     <message>
       <source>Private file patterns</source>
       <translation>Patrones de archivos privados</translation>
+    </message>
+    <message>
+      <source>Trust/privacy mode</source>
+      <translation>Modo de confianza/privacidad</translation>
+    </message>
+    <message>
+      <source>Default on. Redacts sensitive text patterns from context before model requests.</source>
+      <translation>Activado por defecto. Oculta patrones de texto sensible del contexto antes de las solicitudes al modelo.</translation>
+    </message>
+    <message>
+      <source>Wheel-scroll text bubble</source>
+      <translation>Desplazar burbuja de texto con la rueda</translation>
+    </message>
+    <message>
+      <source>Let the mouse wheel scroll the bubble text while the pointer is over it.</source>
+      <translation>Permite que la rueda del ratón desplace el texto de la burbuja cuando el puntero está encima.</translation>
+    </message>
+    <message>
+      <source>Snap bubble scroll back while speaking</source>
+      <translation>Volver al texto actual mientras habla</translation>
+    </message>
+    <message>
+      <source>After manual scrolling, return to the current highlighted word if speech is still active.</source>
+      <translation>Después de desplazarte manualmente, vuelve a la palabra resaltada actual si la voz sigue activa.</translation>
+    </message>
+    <message>
+      <source>e.g. 80</source>
+      <translation>p. ej. 80</translation>
+    </message>
+    <message>
+      <source>e.g. 340</source>
+      <translation>p. ej. 340</translation>
+    </message>
+    <message>
+      <source>e.g. 3</source>
+      <translation>p. ej. 3</translation>
     </message>
   <message><source>These folders are the only places the model can list or read files. Each keybind chooses whether local files are off, read-only, ask-before-write, or automatic.</source><translation>Estas carpetas son los únicos lugares donde el modelo puede listar o leer archivos. Cada atajo decide si los archivos locales están desactivados, son de solo lectura, piden confirmación antes de escribir o se escriben automáticamente.</translation></message><message><source>Read only</source><translation>Solo lectura</translation></message><message><source>Local files:</source><translation>Archivos locales:</translation></message><message><source>No extra tools found. Enable addons that add model tools.</source><translation>No se encontraron herramientas adicionales. Activa addons que agreguen herramientas para el modelo.</translation></message></context>
 </TS>

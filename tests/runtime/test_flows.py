@@ -2676,13 +2676,18 @@ def test_memory_events_route_to_brain_and_seed_ui_viewer():
     _flow, native, ui, brain, _audio = make_flow(brain=brain)
 
     ui.emit("ui.memory.open_requested", {})
-    ui.emit("ui.memory.add", {"text": "new fact", "category": "general"})
-    ui.emit("ui.memory.update", {"id": "1", "text": "updated", "category": "project_context"})
+    ui.emit("ui.memory.add", {"text": "new fact", "category": "project_context", "project": "proj-1"})
+    ui.emit(
+        "ui.memory.update",
+        {"id": "1", "text": "updated", "category": "project_context", "project": "proj-2"},
+    )
     ui.emit("ui.memory.delete", {"id": "1"})
 
     assert ui.last_call("ui.show_memory")["params"]["facts"][0]["text"] == "remember"
     assert brain.last_call("brain.memory.add")["params"]["text"] == "new fact"
+    assert brain.last_call("brain.memory.add")["params"]["project"] == "proj-1"
     assert brain.last_call("brain.memory.update")["params"]["fact_id"] == "1"
+    assert brain.last_call("brain.memory.update")["params"]["project"] == "proj-2"
     assert brain.last_call("brain.memory.delete")["params"]["fact_id"] == "1"
 
 

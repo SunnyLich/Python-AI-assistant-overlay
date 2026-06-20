@@ -12,6 +12,31 @@ def test_context_source_labels_translate_without_touching_custom_labels(monkeypa
     assert ui_host._context_display_label("notes.txt") == "notes.txt"
 
 
+def test_memory_proxy_accepts_project_scope() -> None:
+    """Verify UI memory proxy forwards project-scoped add/update payloads."""
+    from runtime.workers.ui_host import MemoryProxy
+
+    emitted = []
+    proxy = MemoryProxy(lambda event, payload: emitted.append((event, payload)))
+
+    proxy.add_fact_manual("ships on Fridays", project="proj-1")
+    fact_id = proxy.get_all_facts()[0]["id"]
+    proxy.update_fact(fact_id, "ships on Mondays", project="")
+
+    assert emitted == [
+        (
+            "ui.memory.add",
+            {"text": "ships on Fridays", "category": "project_context", "project": "proj-1"},
+        ),
+        (
+            "ui.memory.update",
+            {"id": fact_id, "text": "ships on Mondays", "category": "general", "project": ""},
+        ),
+    ]
+    assert proxy.get_all_facts()[0]["category"] == "general"
+    assert proxy.get_all_facts()[0]["project"] == ""
+
+
 class _Bubble:
     """Capture reply chunks sent to the speech bubble."""
 

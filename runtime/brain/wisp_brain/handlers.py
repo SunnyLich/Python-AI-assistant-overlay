@@ -1724,7 +1724,10 @@ def _stream_chat_reply(
 
 @handler("brain.memory.add")
 def brain_memory_add(
-    text: str = "", category: str | None = None, scope: str | None = None
+    text: str = "",
+    category: str | None = None,
+    scope: str | None = None,
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Add a durable memory fact through the existing memory store.
 
@@ -1742,6 +1745,11 @@ def brain_memory_add(
         result = manager.save_memory(fact, scope=scope)
         return {"ok": bool(result.get("ok")), "scope": result.get("scope"),
                 "project": result.get("project"), "text": fact}
+    if project is not None:
+        project = project.strip()
+        used_category = "project_context" if project else "general"
+        manager.add_fact_manual(fact, used_category, project=project)
+        return {"ok": True, "category": used_category, "project": project, "text": fact}
     if category:
         manager.add_fact_manual(fact, category)
         used_category = category
@@ -1773,7 +1781,12 @@ def brain_memory_list() -> dict[str, Any]:
 
 
 @handler("brain.memory.update")
-def brain_memory_update(fact_id: str = "", text: str = "", category: str | None = None) -> dict[str, Any]:
+def brain_memory_update(
+    fact_id: str = "",
+    text: str = "",
+    category: str | None = None,
+    project: str | None = None,
+) -> dict[str, Any]:
     """Update one durable memory fact through the existing memory store."""
     cleaned_id = fact_id.strip()
     cleaned_text = text.strip()
@@ -1784,8 +1797,20 @@ def brain_memory_update(fact_id: str = "", text: str = "", category: str | None 
 
     from core.memory_store import store
 
-    store.get_manager().update_fact(cleaned_id, cleaned_text, category)
-    return {"ok": True, "id": cleaned_id, "text": cleaned_text, "category": category}
+    manager = store.get_manager()
+    if project is None:
+        manager.update_fact(cleaned_id, cleaned_text, category)
+        return {"ok": True, "id": cleaned_id, "text": cleaned_text, "category": category}
+    project = project.strip()
+    manager.update_fact(cleaned_id, cleaned_text, category, project=project)
+    used_category = "project_context" if project else "general"
+    return {
+        "ok": True,
+        "id": cleaned_id,
+        "text": cleaned_text,
+        "category": used_category,
+        "project": project,
+    }
 
 
 @handler("brain.memory.delete")
@@ -1808,6 +1833,7 @@ def _memory_fact_payload(fact: dict[str, Any]) -> dict[str, Any]:
         "text": str(fact.get("text") or ""),
         "category": str(fact.get("category") or "general"),
         "source": str(fact.get("source") or "unknown"),
+        "project": str(fact.get("project") or ""),
         "created_at": str(fact.get("created_at") or ""),
         "last_seen": str(fact.get("last_seen") or ""),
     }

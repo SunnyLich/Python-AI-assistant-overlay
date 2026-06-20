@@ -276,7 +276,7 @@
     </message>
     <message>
       <source>Advanced Settings</source>
-      <translation>高级设置</translation>
+      <translation>进阶设置</translation>
     </message>
     <message>
       <source>Agent Communication Map</source>

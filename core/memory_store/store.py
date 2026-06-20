@@ -12,15 +12,12 @@ Short-term memory (STM):
 Long-term memory (LTM):
   - Atomic facts stored in a plain JSON file.
   - Categories: project_context | general.
-  - Retrieval: project-scoped JSON facts routed by lexical/IDF matching.
+  - Retrieval: project-scoped JSON facts routed by semantic/lexical matching.
   - Writes: explicit ("remember that -¦") or via the periodic summariser.
   - Conflict: if a new fact is lexically similar to an existing fact in the
     same project scope, the existing fact is updated rather than duplicated.
 
 Storage: memory/ folder at the project root (gitignored).
-
-Legacy ChromaDB collections are imported into the JSON store opportunistically,
-then left untouched. ChromaDB is no longer used for live reads or writes.
 """
 from __future__ import annotations
 
@@ -45,10 +42,8 @@ except Exception:
     _HAS_ROUTER = False
 
 _MEMORY_DIR = str(MEMORY_DIR)
-_CHROMA_DIR = os.path.join(_MEMORY_DIR, "chroma")
 _FALLBACK_PATH = os.path.join(_MEMORY_DIR, "facts_fallback.json")
 _FALLBACK_LOCK = threading.RLock()
-_LEGACY_CHROMA_MIGRATION_ATTEMPTED = False
 
 _CATEGORIES = ("project_context", "general")
 
@@ -304,103 +299,10 @@ def _fallback_write_all_unlocked(facts: list[dict]) -> None:
         json.dump(facts, f, indent=2, ensure_ascii=False)
 
 
-def _fallback_merge_facts_unlocked(incoming: list[dict]) -> int:
-    """Merge imported facts into the JSON store without duplicating text/ids."""
-    if not incoming:
-        return 0
-    facts = _fallback_read_all_unlocked()
-    seen_ids = {str(fact.get("id") or "") for fact in facts if fact.get("id")}
-    seen_text_scope = {
-        (
-            _normalize_fact_text(str(fact.get("text", ""))).lower(),
-            _fact_project(fact) or "",
-        )
-        for fact in facts
-    }
-    added = 0
-    for raw in incoming:
-        text = _normalize_fact_text(str(raw.get("text", "")))
-        if not text:
-            continue
-        project = (str(raw.get("project") or "").strip()) or None
-        fact_id = str(raw.get("id") or "").strip() or str(uuid.uuid4())
-        text_scope = (text.lower(), project or "")
-        if fact_id in seen_ids or text_scope in seen_text_scope:
-            continue
-        now = _now_iso()
-        facts.append({
-            "id": fact_id,
-            "text": text,
-            "category": raw.get("category") if raw.get("category") in _CATEGORIES else "general",
-            "source": str(raw.get("source") or "legacy_chroma"),
-            "project": project,
-            "created_at": str(raw.get("created_at") or now),
-            "last_seen": str(raw.get("last_seen") or now),
-            "archived": bool(raw.get("archived", False)),
-        })
-        seen_ids.add(fact_id)
-        seen_text_scope.add(text_scope)
-        added += 1
-    if added:
-        _fallback_write_all_unlocked(facts)
-    return added
-
-
-def _legacy_chroma_facts() -> list[dict]:
-    """Best-effort one-way import from the old Chroma-backed memory store."""
-    if not os.path.exists(os.path.join(_CHROMA_DIR, "chroma.sqlite3")):
-        return []
-    try:
-        import chromadb  # type: ignore
-
-        client = chromadb.PersistentClient(path=_CHROMA_DIR)
-        collection = client.get_collection(name="ltm_facts")
-        results = collection.get(
-            where={"archived": {"$eq": False}},
-            include=["documents", "metadatas"],
-        )
-        facts: list[dict] = []
-        for doc, meta, fid in zip(
-            results.get("documents", []),
-            results.get("metadatas", []),
-            results.get("ids", []),
-        ):
-            meta = meta or {}
-            facts.append({
-                "id": fid,
-                "text": doc,
-                "category": meta.get("category", "general"),
-                "source": meta.get("source", "legacy_chroma"),
-                "project": meta.get("project", ""),
-                "created_at": meta.get("created_at", ""),
-                "last_seen": meta.get("last_seen", ""),
-                "archived": False,
-            })
-        return facts
-    except Exception as exc:
-        print(f"[memory] legacy Chroma import skipped: {exc}")
-        return []
-
-
-def _migrate_legacy_chroma_to_json() -> int:
-    """Handle migrate legacy chroma to json for memory store store."""
-    with _FALLBACK_LOCK:
-        return _fallback_merge_facts_unlocked(_legacy_chroma_facts())
-
-
-def _maybe_migrate_legacy_chroma_to_json() -> int:
-    """Handle maybe migrate legacy chroma to json for memory store store."""
-    global _LEGACY_CHROMA_MIGRATION_ATTEMPTED
-    if _LEGACY_CHROMA_MIGRATION_ATTEMPTED:
-        return 0
-    _LEGACY_CHROMA_MIGRATION_ATTEMPTED = True
-    return _migrate_legacy_chroma_to_json()
-
-
 def add_fact_manual_lightweight(
     text: str, category: str = "general", project: Optional[str] = None
 ) -> bool:
-    """Store a manual fact in the JSON fact store without initializing Chroma."""
+    """Store a manual fact in the JSON fact store without constructing MemoryManager."""
     if category not in _CATEGORIES:
         category = "general"
     text = _normalize_fact_text(text)
@@ -414,7 +316,7 @@ def add_fact_manual_lightweight(
 def update_fact_lightweight(
     fact_id: str, new_text: str, new_category: Optional[str] = None, project=_UNCHANGED,
 ) -> bool:
-    """Update a JSON-backed fact without initializing Chroma.
+    """Update a JSON-backed fact without constructing MemoryManager.
 
     Passing *project* (including "" for General) moves the fact's scope and
     derives its category; the explicit *new_category* path is kept for callers
@@ -441,7 +343,7 @@ def update_fact_lightweight(
 
 
 def delete_fact_lightweight(fact_id: str) -> bool:
-    """Delete a JSON-backed fact without initializing Chroma."""
+    """Delete a JSON-backed fact without constructing MemoryManager."""
     with _FALLBACK_LOCK:
         facts = _fallback_read_all_unlocked()
         kept = [fact for fact in facts if str(fact.get("id")) != str(fact_id)]
@@ -495,8 +397,7 @@ class MemoryManager:
     Manages short-term (in-session) and long-term (persisted) memory.
 
     Thread-safety: all STM mutations are guarded by _stm_lock.
-    Long-term facts are stored in the JSON fallback file guarded by
-    _FALLBACK_LOCK. The old ChromaDB store is imported once when present.
+    Long-term facts are stored in the JSON fact file guarded by _FALLBACK_LOCK.
     """
 
     def __init__(self) -> None:
@@ -512,11 +413,8 @@ class MemoryManager:
         self._consolidation_timer: threading.Timer | None = None
         self._ctx_router = None
         self._ctx_router_lock = threading.Lock()
-        self._ctx_router_fact_count = -1
+        self._ctx_router_fact_signature = ()
 
-        imported = _maybe_migrate_legacy_chroma_to_json()
-        if imported:
-            print(f"[memory] Imported {imported} legacy Chroma fact(s) into JSON memory.")
         self._sync_consolidation_timer()
 
     # ------------------------------------------------------------------
@@ -697,23 +595,32 @@ class MemoryManager:
     # ------------------------------------------------------------------
 
     def _get_router(self, facts: list[dict]):
-        # Return the cached ContextRouter, rebuilding when fact count changes.
+        # Return the cached ContextRouter, rebuilding when scoped facts change.
         """Return router."""
         if not _HAS_ROUTER:
             return None
         try:
             active = [fact for fact in facts if not fact.get("archived")]
-            count = len(active)
-            if count == 0:
+            if not active:
                 return None
+            signature = tuple(
+                sorted(
+                    (
+                        str(fact.get("id") or ""),
+                        _normalize_fact_text(str(fact.get("text", ""))),
+                        _fact_project(fact) or "",
+                    )
+                    for fact in active
+                )
+            )
             with self._ctx_router_lock:
-                if self._ctx_router is None or count != self._ctx_router_fact_count:
-                    self._rebuild_router(active, count)
+                if self._ctx_router is None or signature != self._ctx_router_fact_signature:
+                    self._rebuild_router(active, signature)
                 return self._ctx_router
         except Exception:
             return None
 
-    def _rebuild_router(self, facts: list[dict], fact_count: int):
+    def _rebuild_router(self, facts: list[dict], fact_signature: tuple):
         # Build a ContextRouter from LTM facts (call while holding _ctx_router_lock).
         """Handle rebuild router for memory manager."""
         try:
@@ -727,7 +634,7 @@ class MemoryManager:
                 chunks.append(ContextChunk.from_text(fid, doc, source))
             if chunks:
                 self._ctx_router = ContextRouter(chunks)
-                self._ctx_router_fact_count = fact_count
+                self._ctx_router_fact_signature = fact_signature
                 print('[memory] Context router rebuilt with %d chunk(s).' % len(chunks))
         except Exception as exc:
             print('[memory] Context router build failed: %s' % exc)
@@ -737,7 +644,7 @@ class MemoryManager:
         # Signal that the router needs a rebuild on next retrieve_relevant call.
         """Handle invalidate router for memory manager."""
         with self._ctx_router_lock:
-            self._ctx_router_fact_count = -1
+            self._ctx_router_fact_signature = ()
 
     # ------------------------------------------------------------------
     # Long-term memory -- retrieval
@@ -749,21 +656,25 @@ class MemoryManager:
         if project_id is None:
             project_id = get_active_project()
         facts = get_all_facts_lightweight()
-        fast_block = _format_memory_block(
-            facts, query, top_k=k, project_id=project_id
-        )
-        router = self._get_router([fact for fact in facts if _fact_in_scope(fact, project_id)])
+        if not facts:
+            return ""
+
+        in_scope = [fact for fact in facts if _fact_in_scope(fact, project_id)]
+        if _is_memory_inventory_query(query):
+            return _format_memory_block(in_scope, query, top_k=k, project_id=project_id)
+
+        router = self._get_router(in_scope)
         if router is not None:
             try:
                 result = router.route(query)
                 level = result.context_level
 
                 if level == 'none':
-                    return fast_block if _is_memory_inventory_query(query) else ""
+                    return ""
 
                 if level == 'tiny':
                     k = min(1, k)
-                    return _format_memory_block(facts, query, top_k=k, project_id=project_id)
+                    return _format_memory_block(in_scope, query, top_k=k, project_id=project_id)
 
                 elif (
                     level in ('selected', 'full')
@@ -773,11 +684,14 @@ class MemoryManager:
                     selected = set(result.selected_chunk_ids)
                     docs = [
                         _normalize_fact_text(str(fact.get("text", "")))
-                        for fact in facts
-                        if str(fact.get("id") or "") in selected and _fact_in_scope(fact, project_id)
+                        for fact in in_scope
+                        if str(fact.get("id") or "") in selected
                     ]
                     if docs:
                         lines = ['- ' + d for d in docs]
+                        fast_block = _format_memory_block(
+                            in_scope, query, top_k=k, project_id=project_id
+                        )
                         if fast_block:
                             lines.extend(
                                 line for line in fast_block.splitlines()[1:]
@@ -787,7 +701,7 @@ class MemoryManager:
 
             except Exception as exc:
                 print('[memory] Router error, using lexical memory block: %s' % exc)
-        return fast_block
+        return _format_memory_block(in_scope, query, top_k=k, project_id=project_id)
 
     def _fallback_all_facts(self, query: str = "") -> str:
         """Return all active JSON facts as a plain list."""
@@ -1123,13 +1037,8 @@ def get_loaded_manager() -> Optional[MemoryManager]:
 def get_all_facts_lightweight() -> list[dict]:
     """
     Return active facts for read-only UI surfaces without constructing
-    MemoryManager. Imports old Chroma facts into JSON when possible, but does
-    not use Chroma for live memory reads.
+    MemoryManager.
     """
-    try:
-        _maybe_migrate_legacy_chroma_to_json()
-    except Exception as exc:
-        print(f"[memory] legacy migration unavailable: {exc}")
     return _fallback_get_all_from_path()
 
 

@@ -1171,7 +1171,11 @@ class FlowController:
         self._safe_call(
             self.brain,
             "brain.memory.add",
-            {"text": str(data.get("text") or ""), "category": data.get("category")},
+            {
+                "text": str(data.get("text") or ""),
+                "category": data.get("category"),
+                "project": data.get("project"),
+            },
             timeout=30.0,
         )
 
@@ -1184,6 +1188,7 @@ class FlowController:
                 "fact_id": str(data.get("id") or data.get("fact_id") or ""),
                 "text": str(data.get("text") or ""),
                 "category": data.get("category"),
+                "project": data.get("project"),
             },
             timeout=30.0,
         )

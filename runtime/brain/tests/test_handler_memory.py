@@ -2,7 +2,7 @@
 
 A fake ``core.memory_store`` is injected so the tests exercise the handler's
 routing (explicit vs. categorized add, query passthrough, validation) without
-touching the real on-disk memory store, ChromaDB, or any background LLM jobs.
+touching the real on-disk memory store or any background LLM jobs.
 """
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ class FakeManager:
     def __init__(self):
         """Initialize the fake manager instance."""
         self.explicit: list[str] = []
-        self.manual: list[tuple[str, str]] = []
+        self.manual: list[tuple[str, str, object]] = []
         self.searches: list[tuple[str, object]] = []
-        self.updates: list[tuple[str, str, object]] = []
+        self.updates: list[tuple[str, str, object, object]] = []
         self.deletes: list[str] = []
         self.facts: list[dict] = [
             {
@@ -31,6 +31,7 @@ class FakeManager:
                 "source": "manual",
                 "created_at": "2026-06-01T10:00:00",
                 "last_seen": "2026-06-02T10:00:00",
+                "project": "",
             },
             {"id": "fact-2", "text": "ships Fridays"},
         ]
@@ -39,9 +40,9 @@ class FakeManager:
         """Verify add explicit fact behavior."""
         self.explicit.append(fact)
 
-    def add_fact_manual(self, fact: str, category: str) -> None:
+    def add_fact_manual(self, fact: str, category: str, project=None) -> None:
         """Verify add fact manual behavior."""
-        self.manual.append((fact, category))
+        self.manual.append((fact, category, project))
 
     def retrieve_relevant(self, query: str, top_k=None) -> str:
         """Verify retrieve relevant behavior."""
@@ -52,9 +53,9 @@ class FakeManager:
         """Verify get all facts behavior."""
         return self.facts
 
-    def update_fact(self, fact_id: str, text: str, category=None) -> None:
+    def update_fact(self, fact_id: str, text: str, category=None, project=None) -> None:
         """Verify update fact behavior."""
-        self.updates.append((fact_id, text, category))
+        self.updates.append((fact_id, text, category, project))
 
     def delete_fact(self, fact_id: str) -> None:
         """Verify delete fact behavior."""
@@ -92,7 +93,20 @@ def test_add_with_category_is_manual(manager):
     """Verify add with category is manual behavior."""
     result = handlers.HANDLERS["brain.memory.add"](text="ships on Fridays", category="project")
     assert result["category"] == "project"
-    assert manager.manual == [("ships on Fridays", "project")]
+    assert manager.manual == [("ships on Fridays", "project", None)]
+    assert manager.explicit == []
+
+
+def test_add_with_project_is_manual_scoped(manager):
+    """Verify add with project forwards scoped manual fact behavior."""
+    result = handlers.HANDLERS["brain.memory.add"](text="ships on Fridays", project="proj-1")
+    assert result == {
+        "ok": True,
+        "category": "project_context",
+        "project": "proj-1",
+        "text": "ships on Fridays",
+    }
+    assert manager.manual == [("ships on Fridays", "project_context", "proj-1")]
     assert manager.explicit == []
 
 
@@ -126,6 +140,7 @@ def test_list_returns_normalized_facts(manager):
                 "text": "likes tea",
                 "category": "general",
                 "source": "manual",
+                "project": "",
                 "created_at": "2026-06-01T10:00:00",
                 "last_seen": "2026-06-02T10:00:00",
             },
@@ -134,6 +149,7 @@ def test_list_returns_normalized_facts(manager):
                 "text": "ships Fridays",
                 "category": "general",
                 "source": "unknown",
+                "project": "",
                 "created_at": "",
                 "last_seen": "",
             },
@@ -155,7 +171,26 @@ def test_update_validates_and_forwards(manager):
         "text": "prefers green tea",
         "category": "general",
     }
-    assert manager.updates == [("fact-1", "prefers green tea", "general")]
+    assert manager.updates == [("fact-1", "prefers green tea", "general", None)]
+
+
+def test_update_with_project_forwards_scope(manager):
+    """Verify update with project forwards scope behavior."""
+    result = handlers.HANDLERS["brain.memory.update"](
+        fact_id=" fact-1 ",
+        text="  prefers green tea  ",
+        category="general",
+        project="proj-2",
+    )
+
+    assert result == {
+        "ok": True,
+        "id": "fact-1",
+        "text": "prefers green tea",
+        "category": "project_context",
+        "project": "proj-2",
+    }
+    assert manager.updates == [("fact-1", "prefers green tea", "general", "proj-2")]
 
 
 def test_update_requires_id_and_text(manager):

@@ -1539,7 +1539,7 @@ def test_memory_panel_add_runs_on_background_thread(monkeypatch):
 
     class FakeManager:
         """Coordinate fake manager behavior."""
-        def add_fact_manual(self, _text, _category):
+        def add_fact_manual(self, _text, category="general", project=None):
             """Verify add fact manual behavior."""
             raise AssertionError("add should not run on the UI thread")
 

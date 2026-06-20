@@ -192,26 +192,46 @@ class MemoryProxy:
         """Return all facts."""
         return [dict(f) for f in self._facts]
 
-    def add_fact_manual(self, text: str, category: str = "general") -> None:
+    def add_fact_manual(
+        self, text: str, category: str = "general", project: str | None = None
+    ) -> None:
         """Add fact manual."""
+        project = (project or "").strip()
+        if project:
+            category = "project_context"
         fact = {
             "id": f"pending-{next(self._ids)}",
             "text": text,
             "category": category or "general",
             "source": "manual",
+            "project": project,
         }
         self._facts.append(fact)
-        self._emit("ui.memory.add", {"text": text, "category": category})
+        self._emit("ui.memory.add", {"text": text, "category": category, "project": project})
 
-    def update_fact(self, fact_id: str, text: str, category: str | None = None) -> None:
+    def update_fact(
+        self,
+        fact_id: str,
+        text: str,
+        category: str | None = None,
+        project: str | None = None,
+    ) -> None:
         """Update fact."""
+        payload = {"id": fact_id, "text": text, "category": category}
+        if project is not None:
+            project = project.strip()
+            payload["project"] = project
+            category = "project_context" if project else "general"
+            payload["category"] = category
         for fact in self._facts:
             if str(fact.get("id")) == str(fact_id):
                 fact["text"] = text
                 if category is not None:
                     fact["category"] = category
+                if project is not None:
+                    fact["project"] = project
                 break
-        self._emit("ui.memory.update", {"id": fact_id, "text": text, "category": category})
+        self._emit("ui.memory.update", payload)
 
     def delete_fact(self, fact_id: str) -> None:
         """Delete fact."""

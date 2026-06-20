@@ -13,7 +13,7 @@ def _seed_router_attrs(manager):
     """Verify seed router attrs behavior."""
     manager._ctx_router_lock = threading.Lock()
     manager._ctx_router = None
-    manager._ctx_router_fact_count = -1
+    manager._ctx_router_fact_signature = ()
     return manager
 
 
@@ -40,7 +40,6 @@ def test_rejects_secrets():
 def test_memory_manager_tolerates_storage_directory_creation_failure():
     """Verify memory manager tolerates storage directory creation failure behavior."""
     with patch.object(store.os, "makedirs", side_effect=PermissionError("denied")), \
-         patch.object(store, "_migrate_legacy_chroma_to_json", return_value=0), \
          patch.object(store.MemoryManager, "_sync_consolidation_timer", autospec=True, return_value=None):
         manager = store.MemoryManager()
 
@@ -52,7 +51,6 @@ def test_memory_uses_json_store_even_when_macos_safe_mode_is_disabled():
     with patch.object(store.macos_safety.sys, "platform", "darwin"), \
          patch.dict(store.macos_safety.os.environ, {"WISP_MACOS_SAFE_MODE": "0"}, clear=True), \
          patch.object(store.os, "makedirs", return_value=None), \
-         patch.object(store, "_migrate_legacy_chroma_to_json", return_value=0), \
          patch.object(store.MemoryManager, "_sync_consolidation_timer", autospec=True, return_value=None):
         manager = store.MemoryManager()
 
@@ -78,7 +76,6 @@ def test_lightweight_fact_list_does_not_initialize_memory_manager(tmp_path, monk
 
     monkeypatch.setattr(store, "_manager", None)
     monkeypatch.setattr(store, "_FALLBACK_PATH", str(fallback))
-    monkeypatch.setattr(store, "_migrate_legacy_chroma_to_json", lambda: 0)
     monkeypatch.setattr(store, "MemoryManager", BrokenMemoryManager)
 
     assert store.get_loaded_manager() is None
@@ -100,25 +97,6 @@ def test_lightweight_manual_fact_write_uses_json_store(tmp_path, monkeypatch):
     assert facts[0]["text"] == "I prefer fast memory settings"
     assert facts[0]["category"] == "general"
     assert facts[0]["source"] == "manual"
-
-
-def test_legacy_chroma_facts_are_imported_into_json(tmp_path, monkeypatch):
-    """Verify legacy chroma facts are imported into json behavior."""
-    fallback = tmp_path / "facts_fallback.json"
-    fallback.write_text(
-        json.dumps([{"id": "json-1", "text": "I use JSON facts", "category": "general"}]),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(store, "_MEMORY_DIR", str(tmp_path))
-    monkeypatch.setattr(store, "_FALLBACK_PATH", str(fallback))
-    monkeypatch.setattr(
-        store,
-        "_legacy_chroma_facts",
-        lambda: [{"id": "chroma-1", "text": "I use imported facts", "category": "project_context"}],
-    )
-
-    assert store._migrate_legacy_chroma_to_json() == 1
-    assert [fact["id"] for fact in store._fallback_get_all_from_path()] == ["json-1", "chroma-1"]
 
 
 def test_retrieve_relevant_returns_json_facts(monkeypatch):
@@ -167,6 +145,33 @@ def test_retrieve_relevant_returns_empty_for_unmatched_query(monkeypatch):
     )
 
     assert manager.retrieve_relevant("weather tomorrow") == ""
+
+
+def test_router_none_skips_lexical_memory_block(monkeypatch):
+    """Verify router can suppress memory before lexical fallback is built."""
+    manager = store.MemoryManager.__new__(store.MemoryManager)
+    _seed_router_attrs(manager)
+
+    class FakeRouter:
+        """Router that says no memory is needed."""
+        def route(self, _query):
+            """Return a no-context route result."""
+            return type("RouteResult", (), {"context_level": "none"})()
+
+    monkeypatch.setattr(
+        store,
+        "get_all_facts_lightweight",
+        lambda: [{"id": "json-1", "text": "I prefer fast memory settings", "category": "general"}],
+    )
+    monkeypatch.setattr(manager, "_get_router", lambda _facts: FakeRouter())
+
+    def fail_format(*_args, **_kwargs):
+        """Fail if retrieval builds lexical memory before router gating."""
+        raise AssertionError("lexical memory block should not be built")
+
+    monkeypatch.setattr(store, "_format_memory_block", fail_format)
+
+    assert manager.retrieve_relevant("memory settings") == ""
 
 
 def test_retrieve_relevant_allows_explicit_memory_inventory_query(monkeypatch):

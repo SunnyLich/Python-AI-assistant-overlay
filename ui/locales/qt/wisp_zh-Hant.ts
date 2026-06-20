@@ -1523,6 +1523,10 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>開啟</translation>
     </message>
     <message>
+      <source>on send</source>
+      <translation>送出時</translation>
+    </message>
+    <message>
       <source>On the ChatGPT provider, 'Let model decide' context tools are not run as live Wisp tool calls. Open documents can be injected up front when enabled, but browser/web and GitHub tool calls will not run live on that route.</source>
       <translation>使用 ChatGPT 提供者時，「讓模型決定」的上下文工具不會以即時 Wisp 工具呼叫執行。啟用時可預先注入已開啟文件，但瀏覽器/網頁與 GitHub 工具呼叫不會在此路由上即時執行。</translation>
     </message>

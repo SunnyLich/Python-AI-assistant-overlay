@@ -1523,6 +1523,10 @@ Di "remember that ...", "note that ..." o "keep in mind ..." para guardar un hec
       <translation>Activado</translation>
     </message>
     <message>
+      <source>on send</source>
+      <translation>al enviar</translation>
+    </message>
+    <message>
       <source>On the ChatGPT provider, 'Let model decide' context tools are not run as live Wisp tool calls. Open documents can be injected up front when enabled, but browser/web and GitHub tool calls will not run live on that route.</source>
       <translation>Con el proveedor ChatGPT, las herramientas de contexto de 'Dejar que el modelo decida' no se ejecutan como llamadas de herramientas en vivo de Wisp. Los documentos abiertos pueden inyectarse al principio cuando están activados, pero las llamadas de navegador/web y GitHub no se ejecutarán en vivo en esa ruta.</translation>
     </message>

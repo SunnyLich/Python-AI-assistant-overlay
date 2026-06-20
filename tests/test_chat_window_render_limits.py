@@ -335,8 +335,13 @@ def test_chat_context_policy_controls_are_compact_menu_chips(monkeypatch):
 
         assert conversations[0]["context_policy"]["context_browser_mode"] == "auto"
         assert browser_chip.property("context_state") == "on"
-        assert browser_chip.property("context_tokens") == "? tok"
+        assert browser_chip.property("context_tokens") == "on send"
         assert "Token estimate" in browser_chip.toolTip()
+
+        window._set_context_policy_state("browser", "auto")
+
+        assert "\nauto\n" in browser_chip.text()
+        assert "Let model decide" not in browser_chip.text()
     finally:
         window.close()
         app.processEvents()

@@ -103,7 +103,7 @@ def _token_label(text: str) -> str:
 
 
 def _deferred_token_label() -> str:
-    return "? tok"
+    return t("on send")
 
 
 def _now_iso() -> str:
@@ -1607,6 +1607,8 @@ class ChatWindow(QWidget):
 
     def _state_label_for_context_source(self, source: str, state: str) -> str:
         """Return display label for a context chip state."""
+        if state == "auto":
+            return t("auto")
         for value, label in self._context_control_options.get(source, []):
             if value == state:
                 return label

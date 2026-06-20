@@ -1523,6 +1523,10 @@ Dites "remember that ...", "note that ..." ou "keep in mind ..." pour enregistre
       <translation>Activé</translation>
     </message>
     <message>
+      <source>on send</source>
+      <translation>à l’envoi</translation>
+    </message>
+    <message>
       <source>On the ChatGPT provider, 'Let model decide' context tools are not run as live Wisp tool calls. Open documents can be injected up front when enabled, but browser/web and GitHub tool calls will not run live on that route.</source>
       <translation>Avec le fournisseur ChatGPT, les outils de contexte « Laisser le modèle décider » ne sont pas exécutés comme des appels d’outils Wisp en direct. Les documents ouverts peuvent être injectés au départ quand ils sont activés, mais les appels navigateur/web et GitHub ne seront pas exécutés en direct sur cette route.</translation>
     </message>

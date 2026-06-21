@@ -1047,6 +1047,11 @@ def test_prompt_tool_keywords_and_memory_scheduler_settings_workflow(
             self.cancelled = True
 
     monkeypatch.setattr(memory_store.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(
+        memory_store.macos_safety,
+        "memory_background_llm_enabled",
+        lambda: True,
+    )
     monkeypatch.setattr(memory_store.config, "MEMORY_AUTO_CONSOLIDATE", False, raising=False)
     monkeypatch.setattr(memory_store.config, "MEMORY_CONSOLIDATION_INTERVAL", 7, raising=False)
     manager = memory_store.MemoryManager()

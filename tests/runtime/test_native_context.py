@@ -22,6 +22,8 @@ def test_context_snapshot_reads_browser_url_from_corrected_window(monkeypatch):
     """Verify context snapshot reads browser url from corrected window behavior."""
     monkeypatch.setattr(native_host, "IS_WIN", True)
     monkeypatch.setattr(native_host, "IS_MAC", False)
+    monkeypatch.setattr(context_fetcher, "_IS_WIN", True)
+    monkeypatch.setattr(context_fetcher, "_IS_MAC", False)
     monkeypatch.setattr(
         native_host,
         "_active_app",
@@ -59,6 +61,8 @@ def test_context_snapshot_reads_background_browser_when_foreground_is_document(m
     """Verify context snapshot reads background browser when foreground is document behavior."""
     monkeypatch.setattr(native_host, "IS_WIN", True)
     monkeypatch.setattr(native_host, "IS_MAC", False)
+    monkeypatch.setattr(context_fetcher, "_IS_WIN", True)
+    monkeypatch.setattr(context_fetcher, "_IS_MAC", False)
     monkeypatch.setattr(
         native_host,
         "_active_app",

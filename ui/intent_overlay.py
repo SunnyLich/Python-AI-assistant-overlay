@@ -334,8 +334,8 @@ class IntentOverlay(QWidget):
         self._input_line.setPlaceholderText(t("Type your prompt, press Enter…"))
         self._input_line.setStyleSheet(
             "QLineEdit {"
-            "  background: #0affffff;"
-            "  border: 1px solid #509b8cff;"
+            "  background: #2a2a38;"
+            "  border: 1px solid #6d63a8;"
             "  border-radius: 6px;"
             "  color: #eeeef8;"
             "  padding: 4px 10px;"
@@ -829,8 +829,8 @@ class IntentOverlay(QWidget):
 
     def _menu_style(self) -> str:
         return (
-            "QMenu { background: #f8161620; color: #eeeef8; border: 1px solid #1effffff; }"
-            "QMenu::item:selected { background: #22a0a0ff; }"
+            "QMenu { background: #161620; color: #eeeef8; border: 1px solid #3f3f52; }"
+            "QMenu::item:selected { background: #34345a; }"
         )
 
     def _show_project_menu(self) -> None:

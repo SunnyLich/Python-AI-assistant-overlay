@@ -584,8 +584,8 @@ class SettingsDialog(QDialog):
         )
         reset_btn.setStyleSheet(
             "QPushButton { border: 1.5px solid #c0392b; color: #c0392b; }"
-            "QPushButton:hover { background: #1ac0392b; }"
-            "QPushButton:pressed { background: #33c0392b; }"
+            "QPushButton:hover { background: #3a2020; }"
+            "QPushButton:pressed { background: #4c2424; }"
         )
         reset_btn.clicked.connect(self._reset_all)
         btn_row.addWidget(reset_btn)
@@ -2885,7 +2885,7 @@ class SettingsDialog(QDialog):
                 if not first:
                     sep = QFrame()
                     sep.setFrameShape(QFrame.Shape.HLine)
-                    sep.setStyleSheet("max-height: 1px; background: #40808080; margin: 2px 0;")
+                    sep.setStyleSheet("max-height: 1px; background: #55555f; margin: 2px 0;")
                     cv.addWidget(sep)
                 first = False
 
@@ -5254,7 +5254,7 @@ def _sep(visible: bool = False) -> QFrame:
     line = QFrame()
     line.setFrameShape(QFrame.Shape.HLine)
     line.setStyleSheet(
-        "color: #e5e5ea; margin: 2px 0;" if visible else "color: #00000000;"
+        "color: #e5e5ea; margin: 2px 0;" if visible else "max-height: 0px; color: #000000; margin: 0;"
     )
     return line
 

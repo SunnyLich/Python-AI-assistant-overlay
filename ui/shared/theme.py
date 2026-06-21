@@ -54,12 +54,6 @@ def _hex(c: QColor) -> str:
     return f"#{c.red():02x}{c.green():02x}{c.blue():02x}"
 
 
-def _argb(c: QColor, alpha: float) -> str:
-    """Return Qt stylesheet-compatible translucent color."""
-    a = max(0, min(255, round(alpha * 255)))
-    return f"#{a:02x}{c.red():02x}{c.green():02x}{c.blue():02x}"
-
-
 def _color(value: str, fallback: str) -> QColor:
     """Parse a user colour string, tolerating both #RRGGBB and #RRGGBBAA."""
     s = (value or "").strip()
@@ -149,10 +143,10 @@ def theme_colors(dark: bool | None = None) -> dict[str, str]:
         "text_dim": _hex(text_dim),
         "accent_hover": _hex(accent_hover),
         "scroll_handle": _hex(scroll_handle),
-        # Translucent accent washes for hover/pressed fills.
-        "accent_hint": _argb(accent, 0.08),
-        "accent_soft": _argb(accent, 0.12),
-        "accent_strong": _argb(accent, 0.22),
+        # Accent washes blended to opaque colours for Qt stylesheet portability.
+        "accent_hint": _hex(_mix(bg, accent, 0.08)),
+        "accent_soft": _hex(_mix(bg, accent, 0.12)),
+        "accent_strong": _hex(_mix(bg, accent, 0.22)),
     }
 
 

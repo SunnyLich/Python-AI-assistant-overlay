@@ -1846,16 +1846,34 @@ def test_ui_accessibility_layout_and_model_popup_workflow(qapp, monkeypatch: pyt
 
 
 def test_qt_widget_stylesheets_avoid_rgba_parse_warnings_workflow():
-    """Qt widget stylesheets use #AARRGGBB colors that parse reliably on macOS."""
+    """Qt widget stylesheets avoid color formats that macOS QSS rejects."""
     root = Path(__file__).resolve().parents[1]
     offenders: list[str] = []
-    for path in sorted((root / "ui").rglob("*.py")):
-        if path.name == "chat_rendering.py":
-            continue
-        text = path.read_text(encoding="utf-8")
-        if "rgba(" in text:
-            offenders.append(str(path.relative_to(root)))
+    search_roots = [root / "ui", root / "runtime" / "workers"]
+    for search_root in search_roots:
+        for path in sorted(search_root.rglob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            if "rgba(" in text:
+                offenders.append(str(path.relative_to(root)))
     assert offenders == []
+
+
+def test_chat_context_chip_stylesheets_use_plain_rgb_colors_workflow(qapp):
+    """Chat context chips use conservative colors accepted by Qt on every OS."""
+    import re
+
+    from ui.chat_window import ChatWindow
+
+    window = ChatWindow([{"messages": [], "context_policy": {}}], lambda _messages: iter(()))
+    try:
+        for chip in window._context_controls.values():
+            style = chip.styleSheet()
+            assert "rgba(" not in style
+            assert not re.search(r"#[0-9a-fA-F]{8}\b", style)
+    finally:
+        window.close()
+        window.deleteLater()
+        qapp.processEvents()
 
 
 def test_agent_permission_notice_and_bubble_notice_workflow(qapp, tmp_path: Path):

@@ -2854,7 +2854,7 @@ class QtProtocolHost:
         card = QFrame()
         card.setObjectName("addonCard")
         card.setStyleSheet(
-            "QFrame#addonCard { border: 1px solid rgba(128,128,128,0.25); "
+            "QFrame#addonCard { border: 1px solid #55555f; "
             "border-radius: 8px; padding: 2px; }"
         )
         layout = QVBoxLayout(card)

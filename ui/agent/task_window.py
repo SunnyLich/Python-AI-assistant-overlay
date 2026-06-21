@@ -1680,7 +1680,7 @@ class AgentCommunicationMapWindow(QDialog):
         reset_btn.setToolTip("Discard the current agents and communications and restore the defaults")
         reset_btn.setStyleSheet(
             "QPushButton { border: 1px solid #c0392b; color: #c0392b; }"
-            "QPushButton:hover { background: #1ac0392b; }"
+            "QPushButton:hover { background: #3a2020; }"
         )
         refresh_btn = QPushButton("Refresh")
         add_agent_btn.clicked.connect(self._add_agent)

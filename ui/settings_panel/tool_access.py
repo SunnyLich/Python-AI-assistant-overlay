@@ -278,5 +278,5 @@ def _separator() -> QFrame:
     """Handle separator for UI settings panel tool access."""
     sep = QFrame()
     sep.setFrameShape(QFrame.Shape.HLine)
-    sep.setStyleSheet("max-height: 1px; background: #40808080; margin: 4px 0;")
+    sep.setStyleSheet("max-height: 1px; background: #55555f; margin: 4px 0;")
     return sep

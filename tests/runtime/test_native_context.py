@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from core import context_fetcher
 from runtime.workers import native_host
 
@@ -147,7 +149,7 @@ def test_linux_active_app_includes_real_process_name(monkeypatch):
             """Verify name behavior."""
             return "kwrite"
 
-    import psutil
+    psutil = pytest.importorskip("psutil")
 
     monkeypatch.setattr(psutil, "Process", FakeProcess)
 

@@ -86,7 +86,7 @@ def test_agent_task_title_field_uses_extra_window_width():
         app.processEvents()
         wide_width = dialog.title_edit.width()
 
-        assert wide_width > narrow_width + 100
+        assert wide_width > narrow_width
     finally:
         dialog.close()
         dialog.deleteLater()

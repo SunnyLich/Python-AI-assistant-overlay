@@ -561,9 +561,14 @@ def brain_settings_reset_credentials() -> dict[str, Any]:
 
     try:
         import config
-        from core.system.env_utils import read_env_file
+        from core.system.env_utils import read_env_file, write_env_file
 
-        for key in read_env_file(getattr(config, "_ENV_FILE")):
+        env_path = getattr(config, "_ENV_FILE")
+        env_values = read_env_file(env_path)
+        credential_keys = set(getattr(secret_store, "API_KEY_NAMES", ())) & set(env_values)
+        if credential_keys:
+            write_env_file(env_path, {}, remove_keys=credential_keys)
+        for key in credential_keys:
             os.environ.pop(key, None)
 
         config.reload()

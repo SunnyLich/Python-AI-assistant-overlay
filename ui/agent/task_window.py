@@ -78,6 +78,12 @@ from ui.agent.combo_helpers import (
 )
 from ui.i18n import localize_widget_tree, t
 from ui.settings_panel.helpers import parse_fallback_rows
+from ui.settings_panel.dialog import (
+    _PROVIDER_LABELS,
+    _PROVIDER_MODELS,
+    _model_hint,
+    _refresh_model_combo,
+)
 from ui.shared.window_utils import enable_standard_window_controls, fit_window_to_screen
 from core.agent.task_spec import (
     ROLE_RESPONSIBILITIES,
@@ -326,8 +332,9 @@ class AgentTaskDialog(QDialog):
         self.scope_edit.setText(spec.scope_folder)
         _set_combo_value(self.sandbox_combo, spec.sandbox_mode)
         _set_combo_value(self.approval_combo, spec.approval_policy)
-        self.provider_combo.setCurrentText(getattr(spec, "provider", "same as app"))
-        self.model_edit.setText(spec.model)
+        _set_combo_value(self.provider_combo, getattr(spec, "provider", "same as app"))
+        self._refresh_task_model_combo()
+        self.model_edit.setCurrentText(spec.model)
         self._set_fallback_rows(getattr(spec, "model_fallbacks", "") or "")
         _set_combo_value(self.reasoning_combo, spec.reasoning_effort)
         self.runtime_minutes.setValue(spec.max_runtime_minutes)
@@ -411,9 +418,10 @@ class AgentTaskDialog(QDialog):
         model_row.setSpacing(8)
         self.provider_combo = QComboBox()
         self.provider_combo.setEditable(True)
-        self.provider_combo.addItems(self._FALLBACK_PROVIDERS)
-        self.model_edit = QLineEdit()
-        self.model_edit.setPlaceholderText("Type any model name...")
+        self._populate_provider_combo(self.provider_combo)
+        self.model_edit = self._model_combo()
+        self.provider_combo.currentIndexChanged.connect(lambda _: self._refresh_task_model_combo())
+        self.provider_combo.currentTextChanged.connect(lambda _: self._refresh_task_model_combo())
         copy_app_btn = QPushButton("Copy from app")
         copy_app_btn.setToolTip(
             "Fill the provider, model, and fallback models from the app's current LLM settings."
@@ -425,15 +433,13 @@ class AgentTaskDialog(QDialog):
         model_row.addWidget(copy_app_btn)
         model_widget = QWidget()
         model_widget.setLayout(model_row)
-        form.addRow("Model", model_widget)
-        form.addRow("Fallback Model", self._fallback_section())
+        form.addRow("Primary model", model_widget)
+        form.addRow("Fallback models", self._fallback_section())
         form.addRow("Objective", self.objective_edit)
         form.addRow("Context", self.required_context_edit)
         return box
 
-    _FALLBACK_PROVIDERS = [
-        "groq", "openai", "anthropic", "google", "chatgpt", "copilot",
-    ]
+    _FALLBACK_PROVIDERS = list(_PROVIDER_MODELS.keys())
     # Shared width for the trailing button so the Model and Fallback Model rows
     # line up column-for-column ("Copy from app" / "Remove").
     _ROW_BTN_WIDTH = 110
@@ -477,16 +483,21 @@ class AgentTaskDialog(QDialog):
 
         provider_combo = QComboBox()
         provider_combo.setEditable(True)
-        provider_combo.addItems(self._FALLBACK_PROVIDERS)
+        self._populate_provider_combo(provider_combo)
         if provider:
-            provider_combo.setCurrentText(provider)
+            _set_combo_value(provider_combo, provider)
         else:
             provider_combo.setCurrentIndex(0)
 
-        model_edit = QLineEdit()
-        model_edit.setPlaceholderText("model name")
+        model_edit = self._model_combo(_combo_value(provider_combo))
         if model:
-            model_edit.setText(model)
+            model_edit.setCurrentText(model)
+        provider_combo.currentIndexChanged.connect(
+            lambda _, pc=provider_combo, mc=model_edit: self._refresh_model_combo_for_provider(mc, _combo_value(pc))
+        )
+        provider_combo.currentTextChanged.connect(
+            lambda _, pc=provider_combo, mc=model_edit: self._refresh_model_combo_for_provider(mc, _combo_value(pc))
+        )
 
         remove_btn = QPushButton("Remove")
         remove_btn.setFixedWidth(self._ROW_BTN_WIDTH)
@@ -498,6 +509,33 @@ class AgentTaskDialog(QDialog):
         remove_btn.clicked.connect(lambda: self._remove_fallback_row(row_info))
         self.fallback_rows_layout.addWidget(row_w)
         self._fallback_rows.append(row_info)
+
+    @staticmethod
+    def _populate_provider_combo(combo: QComboBox) -> None:
+        """Populate an agent provider combo with the same provider names used in Settings."""
+        combo.clear()
+        for provider in AgentTaskDialog._FALLBACK_PROVIDERS:
+            combo.addItem(_PROVIDER_LABELS.get(provider, provider), provider)
+
+    @staticmethod
+    def _model_combo(provider: str = "") -> QComboBox:
+        """Create an editable provider-aware model combo matching Settings model rows."""
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        AgentTaskDialog._refresh_model_combo_for_provider(combo, provider)
+        return combo
+
+    @staticmethod
+    def _refresh_model_combo_for_provider(combo: QComboBox, provider: str) -> None:
+        """Refresh model choices from the shared Settings model catalog."""
+        _refresh_model_combo(combo, provider)
+        if combo.lineEdit() is not None:
+            combo.lineEdit().setPlaceholderText(_model_hint(provider) if provider else "model name")
+
+    def _refresh_task_model_combo(self) -> None:
+        """Refresh the primary model combo for the selected primary provider."""
+        self._refresh_model_combo_for_provider(self.model_edit, _combo_value(self.provider_combo))
 
     def _remove_fallback_row(self, row_info: dict) -> None:
         """Remove fallback row."""
@@ -520,8 +558,8 @@ class AgentTaskDialog(QDialog):
         """Handle collect fallbacks for agent task dialog."""
         parts: list[str] = []
         for row in self._fallback_rows:
-            provider = row["provider"].currentText().strip()
-            model = row["model"].text().strip()
+            provider = _combo_value(row["provider"]).strip()
+            model = row["model"].currentText().strip()
             if provider and model:
                 parts.append(f"{provider}:{model}")
         return "\n".join(parts)
@@ -532,9 +570,10 @@ class AgentTaskDialog(QDialog):
         provider = (getattr(config, "LLM_PROVIDER", "") or "").strip()
         model = (getattr(config, "LLM_MODEL", "") or "").strip()
         if provider:
-            self.provider_combo.setCurrentText(provider)
+            _set_combo_value(self.provider_combo, provider)
+            self._refresh_task_model_combo()
         if model:
-            self.model_edit.setText(model)
+            self.model_edit.setCurrentText(model)
         self._set_fallback_rows(getattr(config, "LLM_FALLBACKS", "") or "")
 
     def _agents_group(self) -> QGroupBox:
@@ -1163,8 +1202,8 @@ class AgentTaskDialog(QDialog):
             raise ValueError("Add a task title.")
         if not objective:
             raise ValueError("Describe the task objective.")
-        provider = self.provider_combo.currentText().strip()
-        model = self.model_edit.text().strip()
+        provider = _combo_value(self.provider_combo).strip()
+        model = self.model_edit.currentText().strip()
         if not provider:
             raise ValueError("Choose a model provider.")
         if not model:
@@ -3356,4 +3395,3 @@ class AgentRunHistoryWindow(QDialog):
             except Exception:
                 pass
         return run_dir.name
-

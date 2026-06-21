@@ -438,6 +438,8 @@ def test_chat_context_preview_updates_off_chips():
     window = ChatWindow(conversations, lambda _messages: iter(()), on_context_preview=preview_requests.append)
 
     try:
+        window.show()
+        app.processEvents()
         screenshot_chip = window._context_controls["screenshot"]
         selection_chip = window._context_controls["selection"]
         assert screenshot_chip.property("context_state") == "off"

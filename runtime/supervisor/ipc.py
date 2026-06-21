@@ -126,7 +126,13 @@ class WorkerClient:
         with self._spawn_lock:
             if self._proc is proc:
                 self._fail_pending("worker exited")
-        self._notify_exit(proc.poll())
+        returncode = proc.poll()
+        if returncode is None:
+            try:
+                returncode = proc.wait(timeout=0.2)
+            except Exception:  # noqa: BLE001
+                returncode = proc.poll()
+        self._notify_exit(returncode)
 
     def _stderr_loop(self, proc: subprocess.Popen) -> None:
         """Handle stderr loop for worker client."""

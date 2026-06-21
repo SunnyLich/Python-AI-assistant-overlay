@@ -34,6 +34,7 @@ chats/
 __pycache__/
 .pytest_cache/
 .pytest-tmp/
+.tmp_pytest/
 .mypy_cache/
 .ruff_cache/
 .uv-cache/

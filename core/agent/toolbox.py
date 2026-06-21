@@ -216,7 +216,16 @@ class AgentToolbox:
 
     def verification_commands(self) -> list[list[str]]:
         """Handle verification commands for agent toolbox."""
-        commands = [
+        commands = []
+        try:
+            python_files = [
+                path for path in self.workspace.list_files(".", limit=50)
+                if path.endswith(".py")
+            ][:10]
+        except Exception:
+            python_files = []
+        commands.extend(["python", "-m", "py_compile", path] for path in python_files)
+        commands.extend([
             ["python", "-m", "unittest"],
             ["python", "-m", "pytest"],
             ["pytest"],
@@ -224,7 +233,7 @@ class AgentToolbox:
             ["ruff", "check", "."],
             ["python", "-m", "mypy", "."],
             ["mypy", "."],
-        ]
+        ])
         if (self.workspace.root / "package.json").exists():
             commands.extend([["npm", "test"], ["npm", "run", "build"]])
         if (self.workspace.root / "Cargo.toml").exists():

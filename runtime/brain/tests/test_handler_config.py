@@ -654,7 +654,11 @@ def test_settings_reset_credentials_clears_secrets_auth_and_env(monkeypatch, tmp
     monkeypatch.setattr(copilot_auth, "clear_token", lambda: calls.append("copilot"))
 
     env_file = tmp_path / ".env"
-    env_file.write_text("LLM_PROVIDER=anthropic\nTHEME_MODE=dark\n", encoding="utf-8")
+    env_file.write_text(
+        "OPENAI_API_KEY=env-openai\nLLM_PROVIDER=anthropic\nTHEME_MODE=dark\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "env-openai")
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("THEME_MODE", "dark")
 
@@ -684,8 +688,11 @@ def test_settings_reset_credentials_clears_secrets_auth_and_env(monkeypatch, tmp
         "copilot",
         "reload",
     ]
-    assert "LLM_PROVIDER" not in os.environ
-    assert "THEME_MODE" not in os.environ
+    assert "OPENAI_API_KEY" not in os.environ
+    assert os.environ["LLM_PROVIDER"] == "anthropic"
+    assert os.environ["THEME_MODE"] == "dark"
+    assert "OPENAI_API_KEY" not in env_file.read_text(encoding="utf-8")
+    assert "LLM_PROVIDER=anthropic" in env_file.read_text(encoding="utf-8")
 
 
 def test_settings_reset_credentials_collects_failures(monkeypatch, tmp_path):

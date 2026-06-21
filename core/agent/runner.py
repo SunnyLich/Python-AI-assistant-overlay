@@ -197,6 +197,7 @@ class AgentTaskRunner(AgentResponseMixin, AgentRunArtifactsMixin):
                 messages,
                 turns,
                 agent_states,
+                task_state,
                 log,
                 verbose,
             )
@@ -311,6 +312,16 @@ class AgentTaskRunner(AgentResponseMixin, AgentRunArtifactsMixin):
                     return f"Agent stopped because JSON repair failed.\n\n{repair_exc}", turns, messages, agent_states
             if verbose:
                 verbose(f"turn {turn_idx + 1} parsed response", parsed)
+            permanent_model_error = self._permanent_model_error_from_response(parsed)
+            if permanent_model_error:
+                log("agent run stopped: selected model route requires authentication or configuration")
+                final_report = str(parsed.get("final") or "").strip() or self._model_blocked_final(permanent_model_error)
+                turn["routing"] = {
+                    "status": "model_blocked",
+                    "next_agent": agent_name,
+                    "reason": str(parsed.get("reason") or "The selected model route is not available."),
+                }
+                return final_report, turns, messages, agent_states
             thought = str(parsed.get("thought") or "").strip()
             if thought:
                 log(f"{agent_name} thought: {thought}")
@@ -427,6 +438,7 @@ class AgentTaskRunner(AgentResponseMixin, AgentRunArtifactsMixin):
                     spec=spec,
                     task_state=task_state,
                 )
+                self._log_tool_failure(log, result)
                 result_dict = asdict(result)
                 if verbose:
                     verbose(f"turn {turn_idx + 1} tool result", result_dict)
@@ -619,6 +631,15 @@ class AgentTaskRunner(AgentResponseMixin, AgentRunArtifactsMixin):
             return clean
         marker = " ... [truncated]"
         return clean[: max(0, max_chars - len(marker))].rstrip() + marker
+
+    @staticmethod
+    def _log_tool_failure(log: LogCallback | None, result: ToolResult) -> None:
+        """Log runner-generated tool failures that do not pass through AgentToolbox._result."""
+        if log is None or result.ok:
+            return
+        if isinstance(result.data, dict) and "returncode" in result.data:
+            return
+        log(f"tool {result.tool} failed: {result.message}")
 
     @staticmethod
     def _initial_agent_states(agents: list[dict]) -> dict[str, dict]:
@@ -973,11 +994,13 @@ class AgentTaskRunner(AgentResponseMixin, AgentRunArtifactsMixin):
         messages: list[dict],
         turns: list[dict],
         agent_states: dict[str, dict],
+        task_state: dict,
         log: LogCallback,
         verbose: Callable[[str, object], None] | None = None,
     ) -> None:
         """Run parallel read only round."""
         log(f"parallel read-only briefing started: {len(agents)} agents")
+        state_lock = threading.Lock()
 
         def worker(agent: dict) -> dict:
             """Handle worker for agent task runner."""
@@ -1003,6 +1026,7 @@ class AgentTaskRunner(AgentResponseMixin, AgentRunArtifactsMixin):
                     agent_history=agent_states[agent_name]["history"],
                     read_only_phase=True,
                     compact=bool(agent_states[agent_name].get("briefed")),
+                    task_state=task_state,
                 )
                 if verbose:
                     verbose(f"read-only {agent_name} model input", model_input)
@@ -1060,11 +1084,16 @@ class AgentTaskRunner(AgentResponseMixin, AgentRunArtifactsMixin):
                         read_only=True,
                         active_agent=agent,
                         spec=spec,
+                        task_state=task_state,
                     )
+                    self._log_tool_failure(log, result)
                     result_dict = asdict(result)
                     results.append(result_dict)
                     turn["tool_results"].append(result_dict)
                     self._append_agent_history(agent_states, agent_name, f"Tool {result.tool}: {result.message}")
+                with state_lock:
+                    self._update_task_state(task_state, results, parsed, agent_name, log)
+                    agent_states["_shared_task_state"] = task_state
                 agent_states[agent_name]["tool_context"] = self._tool_results_for_prompt(results, spec)
                 return turn
             except AgentCancelled:
@@ -1214,6 +1243,7 @@ class AgentTaskRunner(AgentResponseMixin, AgentRunArtifactsMixin):
                         task_state=task_state,
                         leases=leases,
                     )
+                    self._log_tool_failure(log, result)
                     result_dict = asdict(result)
                     results.append(result_dict)
                     turn["tool_results"].append(result_dict)
@@ -1665,6 +1695,19 @@ class AgentTaskRunner(AgentResponseMixin, AgentRunArtifactsMixin):
             return response
         except Exception as exc:
             log(f"LLM call failed: {exc}")
+            if self._is_permanent_model_error(exc):
+                log("LLM call blocked by model route configuration or authentication; stopping agent run")
+                error = str(exc)[:1000]
+                return json.dumps({
+                    "thought": "LLM call failed because the selected model route is not configured or authenticated on this machine.",
+                    "status": "blocked",
+                    "next_agent": "same",
+                    "reason": "The selected model route needs authentication or configuration before the agent can run.",
+                    "tool_calls": [],
+                    "final": self._model_blocked_final(error),
+                    "model_error": error,
+                    "model_error_permanent": True,
+                })
             return json.dumps({
                 "thought": "LLM call failed. This appears transient, so I will retry instead of treating the task as complete.",
                 "status": "retry",
@@ -1674,6 +1717,53 @@ class AgentTaskRunner(AgentResponseMixin, AgentRunArtifactsMixin):
                 "final": None,
                 "model_error": str(exc)[:1000],
             })
+
+    @staticmethod
+    def _is_permanent_model_error(exc_or_message: Exception | str) -> bool:
+        """Return true when retrying the same model route cannot fix the error."""
+        text = str(exc_or_message or "").lower()
+        permanent_markers = (
+            "not logged in",
+            "no github copilot token",
+            "token is stored",
+            "api key is not configured",
+            "api key configured",
+            "no api key",
+            "missing api key",
+            "invalid api key",
+            "incorrect api key",
+            "unauthorized",
+            "forbidden",
+            "authentication",
+            "credential",
+            "route is missing provider or model",
+            "custom_base_url is not set",
+            "custom_base_url is not configured",
+            "custom_base_url",
+            "not supported by the chatgpt codex endpoint",
+        )
+        return any(marker in text for marker in permanent_markers)
+
+    @staticmethod
+    def _model_blocked_final(error: str) -> str:
+        """Build the user-facing final report for a permanent model route error."""
+        return (
+            "Agent stopped before it could continue because the selected model route "
+            "is not available on this machine.\n\n"
+            f"{error}\n\n"
+            "Sign in to that provider or choose a configured provider/model in the "
+            "agent task dialog, then retry the task."
+        )
+
+    @classmethod
+    def _permanent_model_error_from_response(cls, parsed: dict) -> str:
+        """Return the model error if a parsed agent response represents a permanent route failure."""
+        error = str(parsed.get("model_error") or "").strip()
+        if not error:
+            return ""
+        if bool(parsed.get("model_error_permanent")) or cls._is_permanent_model_error(error):
+            return error
+        return ""
 
     def _resolve_agent_route(self, spec: AgentTaskLike, agent: dict) -> tuple[str | None, str | None]:
         """Handle resolve agent route for agent task runner."""

@@ -655,6 +655,42 @@ def test_status_label_setters_localize_dynamic_text():
         app.processEvents()
 
 
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_elaborate_prompt_field_follows_auto_elaborate_checkbox():
+    """Verify elaborate prompt is only shown when auto-elaborate is enabled."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    import config
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    old_language = getattr(config, "APP_LANGUAGE", "")
+    config.APP_LANGUAGE = ""
+    dialog = SettingsDialog()
+
+    try:
+        checkbox = dialog._fields["CHAT_AUTO_ELABORATE"]
+        field = dialog._fields["CHAT_ELABORATE_PROMPT"]
+        label = dialog._chat_elaborate_prompt_label
+
+        checkbox.setChecked(False)
+        assert field.isHidden()
+        assert label is not None and label.isHidden()
+
+        checkbox.setChecked(True)
+        assert not field.isHidden()
+        assert label is not None and not label.isHidden()
+
+        checkbox.setChecked(False)
+        assert field.isHidden()
+        assert label is not None and label.isHidden()
+    finally:
+        config.APP_LANGUAGE = old_language
+        dialog.deleteLater()
+        app.processEvents()
+
+
 def test_settings_open_requests_are_coalesced(monkeypatch):
     """Verify settings open requests are coalesced behavior."""
     from ui.settings_panel import dialog as settings_dialog

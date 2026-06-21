@@ -259,6 +259,7 @@ class SettingsDialog(QDialog):
         self._model_section_layouts: dict[str, "QVBoxLayout"] = {}
         self._warning_headers: dict[str, QLabel] = {}
         self._warning_header_base_texts: dict[str, str] = {}
+        self._chat_elaborate_prompt_label: QLabel | None = None
         self._fallback_rows: dict = {}
         self._loading_values = False
         self._dirty_refresh_scheduled = False
@@ -3037,7 +3038,12 @@ class SettingsDialog(QDialog):
         f.addRow("", self._fields["TRUST_PRIVACY_MODE"])
         f.addRow("", self._fields["ICON_AUTO_HIDE"])
         f.addRow("", self._fields["CHAT_AUTO_ELABORATE"])
-        f.addRow(_tooltip_label("Elaborate prompt", elaborate_prompt_tip), self._fields["CHAT_ELABORATE_PROMPT"])
+        self._chat_elaborate_prompt_label = _tooltip_label("Elaborate prompt", elaborate_prompt_tip)
+        f.addRow(self._chat_elaborate_prompt_label, self._fields["CHAT_ELABORATE_PROMPT"])
+        self._fields["CHAT_AUTO_ELABORATE"].toggled.connect(  # type: ignore[attr-defined]
+            self._update_chat_elaborate_prompt_visibility
+        )
+        self._update_chat_elaborate_prompt_visibility()
         f.addRow(_tooltip_label("App language", app_language_tip), self._fields["APP_LANGUAGE"])
         f.addRow(_tooltip_label("Assistant language", assistant_language_tip), self._fields["ASSISTANT_LANGUAGE"])
         f.addRow(_sep(), _sep())
@@ -3055,6 +3061,18 @@ class SettingsDialog(QDialog):
         outer.addStretch()
         scroll.setWidget(outer_w)
         return scroll
+
+    def _update_chat_elaborate_prompt_visibility(self, checked: bool | None = None) -> None:
+        """Show the elaborate prompt field only when auto-elaborate is enabled."""
+        field = self._fields.get("CHAT_ELABORATE_PROMPT")
+        checkbox = self._fields.get("CHAT_AUTO_ELABORATE")
+        if checked is None and hasattr(checkbox, "isChecked"):
+            checked = bool(checkbox.isChecked())  # type: ignore[attr-defined]
+        visible = bool(checked)
+        if self._chat_elaborate_prompt_label is not None:
+            self._chat_elaborate_prompt_label.setVisible(visible)
+        if field is not None:
+            field.setVisible(visible)
 
     def _tab_advanced(self) -> QWidget:
         """Handle tab advanced for settings dialog."""

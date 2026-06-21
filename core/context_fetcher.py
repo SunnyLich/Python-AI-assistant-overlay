@@ -43,8 +43,10 @@ import tempfile
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
+from html import unescape as html_unescape
+from html.parser import HTMLParser
 from threading import Lock
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urljoin, urlparse, unquote
 
 from core.system import macos_safety
@@ -401,9 +403,179 @@ def _unique_texts(values: list[str], max_items: int) -> list[str]:
     return results
 
 
+def _html_attrs(attrs: list[tuple[str, str | None]]) -> dict[str, str]:
+    """Convert HTMLParser attrs into a normalized dictionary."""
+    return {str(name).lower(): str(value or "") for name, value in attrs}
+
+
+def _html_tokens(attrs: dict[str, str]) -> set[str]:
+    """Return normalized id/class/role tokens from parser attrs."""
+    raw = " ".join(attrs.get(name, "") for name in ("id", "class", "role", "aria-label"))
+    return {part for part in re.split(r"[^a-z0-9]+", raw.lower()) if part}
+
+
+def _is_boilerplate_attrs(tag: str, attrs: dict[str, str]) -> bool:
+    """Return whether parser attrs describe likely page chrome."""
+    if tag in {"html", "body", "main", "article"}:
+        return False
+    if attrs.get("hidden") or attrs.get("aria-hidden", "").lower() == "true":
+        return True
+    if attrs.get("role", "").strip().lower() in _PAGE_BOILERPLATE_ROLES:
+        return True
+    return bool(_html_tokens(attrs) & _PAGE_BOILERPLATE_TOKENS)
+
+
+class _FallbackHTMLPageParser(HTMLParser):
+    """Small stdlib page-context extractor used when BeautifulSoup is absent."""
+
+    _SKIPPED_TAGS = {"script", "style", "template", "noscript", "svg", "iframe", "form"}
+    _TEXT_BREAK_TAGS = {
+        "article",
+        "br",
+        "div",
+        "h1",
+        "h2",
+        "h3",
+        "li",
+        "main",
+        "p",
+        "section",
+    }
+
+    def __init__(self, url: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.url = url
+        self.title_parts: list[str] = []
+        self.description = ""
+        self.headings: list[str] = []
+        self._heading_parts: list[str] = []
+        self._heading_tag = ""
+        self._body_parts: list[str] = []
+        self._main_parts: list[str] = []
+        self._links: list[tuple[str, str]] = []
+        self._active_links: list[list[Any]] = []
+        self._skip_depth = 0
+        self._body_depth = 0
+        self._main_depth = 0
+        self._in_title = False
+        self._main_seen = False
+
+    def handle_starttag(self, tag: str, attrs_raw: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        attrs = _html_attrs(attrs_raw)
+        if tag == "meta":
+            key = (attrs.get("name") or attrs.get("property") or "").lower()
+            if key in {"description", "og:description"} and attrs.get("content"):
+                self.description = _normalize_page_text(html_unescape(attrs["content"]))
+            return
+        if tag == "body":
+            self._body_depth += 1
+        if tag in {"main", "article"} or attrs.get("role", "").strip().lower() == "main":
+            self._main_depth += 1
+            self._main_seen = True
+        if tag in self._SKIPPED_TAGS or _is_boilerplate_attrs(tag, attrs):
+            self._skip_depth += 1
+            return
+        if tag == "title":
+            self._in_title = True
+        if tag in {"h1", "h2", "h3"}:
+            self._heading_tag = tag
+            self._heading_parts = []
+        if tag == "a" and attrs.get("href") and self._inside_content():
+            self._active_links.append([urljoin(self.url, attrs["href"].strip()), []])
+        if tag in self._TEXT_BREAK_TAGS:
+            self._append_text("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if self._skip_depth:
+            self._skip_depth -= 1
+            return
+        if tag == "title":
+            self._in_title = False
+        if tag == self._heading_tag:
+            heading = _normalize_page_text(" ".join(self._heading_parts))
+            if heading:
+                self.headings.append(heading)
+            self._heading_tag = ""
+            self._heading_parts = []
+        if tag == "a" and self._active_links:
+            href, parts = self._active_links.pop()
+            label = _normalize_page_text(" ".join(str(part) for part in parts))
+            if label and str(href).startswith(("http://", "https://")):
+                self._links.append((label[:120], str(href)))
+        if tag in self._TEXT_BREAK_TAGS:
+            self._append_text("\n")
+        if tag in {"main", "article"} and self._main_depth:
+            self._main_depth -= 1
+        if tag == "body" and self._body_depth:
+            self._body_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            return
+        text = html_unescape(data or "")
+        if self._in_title:
+            self.title_parts.append(text)
+        if self._heading_tag:
+            self._heading_parts.append(text)
+        for _href, parts in self._active_links:
+            parts.append(text)
+        if self._inside_content():
+            self._append_text(text)
+
+    def _inside_content(self) -> bool:
+        return self._main_depth > 0 or (not self._main_seen and self._body_depth > 0)
+
+    def _append_text(self, text: str) -> None:
+        if self._main_depth > 0:
+            self._main_parts.append(text)
+        if self._body_depth > 0:
+            self._body_parts.append(text)
+
+    def page_context(self) -> PageContext:
+        main_source = self._main_parts if self._main_seen else self._body_parts
+        links = _unique_links(self._links, _MAX_PAGE_LINKS)
+        return PageContext(
+            title=_normalize_page_text(" ".join(self.title_parts)),
+            description=self.description,
+            headings=_unique_texts(self.headings, _MAX_PAGE_HEADINGS),
+            main_text=_normalize_page_text("".join(main_source)),
+            links=links,
+        )
+
+
+def _unique_links(values: list[tuple[str, str]], max_items: int) -> list[tuple[str, str]]:
+    """Keep non-empty links once, preserving order."""
+    links: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for label, href in values:
+        label = _normalize_page_text(label)
+        href = str(href or "").strip()
+        key = (label.casefold(), href)
+        if not label or not href or key in seen:
+            continue
+        seen.add(key)
+        links.append((label, href))
+        if len(links) >= max_items:
+            break
+    return links
+
+
+def _extract_html_page_context_fallback(url: str, html: str) -> PageContext:
+    """Extract useful HTML context with the Python standard library."""
+    parser = _FallbackHTMLPageParser(url)
+    parser.feed(html or "")
+    parser.close()
+    return parser.page_context()
+
+
 def _extract_html_page_context(url: str, html: str) -> PageContext:
     """Extract title, headings, main content, and links from HTML."""
-    from bs4 import BeautifulSoup  # type: ignore
+    try:
+        from bs4 import BeautifulSoup  # type: ignore
+    except Exception:
+        return _extract_html_page_context_fallback(url, html)
 
     soup = BeautifulSoup(html or "", "html.parser")
 

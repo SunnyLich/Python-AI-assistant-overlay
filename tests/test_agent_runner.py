@@ -168,6 +168,19 @@ class AgentToolboxTests(unittest.TestCase):
             self.assertIn(["npm", "test"], tools.verification_commands())
             self.assertIn(["npm", "run", "build"], tools.verification_commands())
 
+    def test_verification_commands_include_visible_python_files(self):
+        """Verify visible Python files get concrete py_compile commands."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tic_tac_toe.py").write_text("print('ok')\n", encoding="utf-8")
+            (root / "notes.txt").write_text("skip me\n", encoding="utf-8")
+            tools = AgentToolbox(ScopedWorkspace(root), AgentPermissions(allow_shell=True))
+
+            commands = tools.verification_commands()
+
+            self.assertIn(["python", "-m", "py_compile", "tic_tac_toe.py"], commands)
+            self.assertNotIn(["python", "-m", "py_compile", "notes.txt"], commands)
+
     def test_additional_static_verification_commands_are_allowlisted(self):
         """Verify additional static verification commands are allowlisted behavior."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -912,6 +925,7 @@ class AgentRunnerTests(unittest.TestCase):
             tools = AgentToolbox(ScopedWorkspace(scope), AgentPermissions())
             turns: list[dict] = []
             agent_states = runner._initial_agent_states(agents)
+            task_state = runner._initial_task_state([])
 
             with patch.object(runner, "_call_model", return_value="{"), \
                  patch.object(runner, "_repair_agent_response", return_value="still not json"):
@@ -924,6 +938,7 @@ class AgentRunnerTests(unittest.TestCase):
                     [],
                     turns,
                     agent_states,
+                    task_state,
                     lambda _message: None,
                 )
 
@@ -953,6 +968,129 @@ class AgentRunnerTests(unittest.TestCase):
         self.assertIs(task_state["git_available"], False)
         self.assertEqual(task_state["git_reason"], "not a git repository")
         self.assertIn("git", task_state["disabled_tools"])
+
+    def test_read_only_briefing_marks_git_unavailable(self):
+        """Verify read-only briefing shares git availability failures with the main run."""
+        with tempfile.TemporaryDirectory() as tmp:
+            scope = Path(tmp) / "scope"
+            scope.mkdir()
+            spec = DummySpec(scope_folder=str(scope), allow_git=True)
+            spec.agents = [
+                {"name": "Reviewer", "role": "Reviewer", "provider": "same as task", "model": "same as task", "responsibility": ""},
+            ]
+
+            def fake_model(_prompt: str) -> str:
+                """Request git status during the briefing phase."""
+                return json.dumps({
+                    "thought": "Check repository state.",
+                    "tool_calls": [{"tool": "git_status", "args": {}}],
+                    "final": None,
+                })
+
+            runner = AgentTaskRunner(model_callback=fake_model)
+            tools = AgentToolbox(ScopedWorkspace(scope), AgentPermissions(allow_git=True))
+            agents = runner._normalise_agents(spec)
+            task_state = runner._initial_task_state([])
+            turns: list[dict] = []
+
+            runner._run_parallel_read_only_round(
+                spec,
+                tools,
+                agents,
+                [],
+                [],
+                [],
+                turns,
+                runner._initial_agent_states(agents),
+                task_state,
+                lambda _message: None,
+            )
+
+            self.assertIs(task_state["git_available"], False)
+            self.assertEqual(task_state["git_reason"], "not a git repository")
+            self.assertIn("git", task_state["disabled_tools"])
+            self.assertEqual(turns[0]["tool_results"][0]["tool"], "run_command")
+
+    def test_full_run_carries_briefing_git_failure_and_specific_python_verification(self):
+        """Verify a realistic non-git Python task stops advertising git and suggests py_compile."""
+        with tempfile.TemporaryDirectory() as tmp:
+            scope = Path(tmp) / "scope"
+            logs = Path(tmp) / "logs"
+            scope.mkdir()
+            (scope / "tic_tac_toe.py").write_text("print('ok')\n", encoding="utf-8")
+            spec = DummySpec(scope_folder=str(scope), max_turns=4, allow_git=True, allow_shell=True)
+            spec.git_permission_mode = "auto"
+            spec.agents = [
+                {"name": "Coordinator", "role": "Coordinator", "provider": "same as task", "model": "same as task", "responsibility": ""},
+                {"name": "Builder", "role": "Implementer", "provider": "same as task", "model": "same as task", "responsibility": ""},
+            ]
+            prompts: list[str] = []
+            coordinator_turns = 0
+
+            def fake_call_model(prompt, _log, *, provider=None, model=None, fallbacks=None, max_tokens=4096, temperature=0.0):
+                """Drive a tiny multi-agent run through read-only briefing and one handoff."""
+                nonlocal coordinator_turns
+                prompts.append(prompt)
+                if "Parallel read-only briefing phase" in prompt:
+                    if "Active agent: Builder" in prompt:
+                        return json.dumps({
+                            "thought": "Check repository state.",
+                            "tool_calls": [{"tool": "git_status", "args": {}}],
+                            "final": None,
+                        })
+                    return json.dumps({"thought": "Brief.", "tool_calls": [], "final": None})
+                if "Active agent: Builder" in prompt:
+                    return json.dumps({"thought": "Implement.", "tool_calls": [], "final": "Builder done."})
+                coordinator_turns += 1
+                if coordinator_turns > 1:
+                    return json.dumps({"thought": "Approve.", "tool_calls": [], "final": "Done."})
+                return json.dumps({
+                    "thought": "Hand off.",
+                    "status": "continue",
+                    "next_agent": "Builder",
+                    "reason": "Builder should implement.",
+                    "tool_calls": [{"tool": "send_message", "args": {"to": "Builder", "message": "Please implement."}}],
+                    "final": None,
+                })
+
+            runner = AgentTaskRunner(log_root=logs)
+            runner._call_model = fake_call_model  # type: ignore[method-assign]
+            run_dir = runner.run(spec)
+
+            builder_prompts = [
+                prompt for prompt in prompts
+                if "Active agent: Builder" in prompt and "Parallel read-only briefing phase" not in prompt
+            ]
+            self.assertTrue(builder_prompts)
+            self.assertNotIn("- git_status args: {}", builder_prompts[0])
+            self.assertIn("- python -m py_compile tic_tac_toe.py", builder_prompts[0])
+            self.assertIn(
+                "shared task state: git marked unavailable",
+                (run_dir / "run.log").read_text(encoding="utf-8"),
+            )
+
+    def test_run_log_includes_schema_tool_failures(self):
+        """Verify malformed tool calls are visible in run.log, not only turns.json."""
+        with tempfile.TemporaryDirectory() as tmp:
+            scope = Path(tmp) / "scope"
+            logs = Path(tmp) / "logs"
+            scope.mkdir()
+            spec = DummySpec(scope_folder=str(scope), max_turns=1, allow_shell=True)
+            spec.agents = [
+                {"name": "Builder", "role": "Implementer", "provider": "same as task", "model": "same as task", "responsibility": ""},
+            ]
+            response = json.dumps({
+                "thought": "Try malformed command.",
+                "status": "continue",
+                "next_agent": "Builder",
+                "tool_calls": [{"tool": "run_command", "args": {}}],
+                "final": None,
+            })
+
+            run_dir = AgentTaskRunner(log_root=logs, model_callback=lambda _prompt: response).run(spec)
+
+            run_log = (run_dir / "run.log").read_text(encoding="utf-8")
+            self.assertIn("tool run_command failed: schema_error", run_log)
 
     def test_developer_alias_routes_to_implementer(self):
         """Verify developer alias routes to implementer behavior."""
@@ -1220,6 +1358,8 @@ class AgentRunnerTests(unittest.TestCase):
             messages: list[dict] = []
             turns: list[dict] = []
             states = runner._initial_agent_states(agents)
+            task_state = runner._initial_task_state([])
+            logs: list[str] = []
             runner._run_parallel_read_only_round(
                 spec,
                 tools,
@@ -1229,7 +1369,8 @@ class AgentRunnerTests(unittest.TestCase):
                 messages,
                 turns,
                 states,
-                lambda _message: None,
+                task_state,
+                logs.append,
             )
 
             self.assertEqual(messages[0]["from"], "Scout")
@@ -1242,6 +1383,7 @@ class AgentRunnerTests(unittest.TestCase):
             ]
             self.assertEqual(denied[0]["ok"], False)
             self.assertIn("read-only", denied[0]["message"])
+            self.assertTrue(any("tool create_file failed" in line for line in logs))
 
     def test_tool_results_are_compacted_for_followup_prompts(self):
         """Verify tool results are compacted for followup prompts behavior."""
@@ -1277,6 +1419,7 @@ class AgentRunnerTests(unittest.TestCase):
 
             runner._call_model = fake_call_model  # type: ignore[method-assign]
             agents = runner._normalise_agents(spec)
+            task_state = runner._initial_task_state([])
             runner._run_parallel_read_only_round(
                 spec,
                 AgentToolbox(ScopedWorkspace(scope), AgentPermissions()),
@@ -1286,6 +1429,7 @@ class AgentRunnerTests(unittest.TestCase):
                 [],
                 [],
                 runner._initial_agent_states(agents),
+                task_state,
                 lambda _message: None,
             )
 
@@ -1518,6 +1662,39 @@ class AgentRunnerTests(unittest.TestCase):
             turns = json.loads((run_dir / "turns.json").read_text(encoding="utf-8"))
             self.assertEqual(turns[0]["routing"]["status"], "retry")
             self.assertIn("LLM call failed", (run_dir / "run.log").read_text(encoding="utf-8"))
+
+    def test_llm_auth_failure_stops_instead_of_retrying(self):
+        """Verify permanent auth failures stop instead of consuming every turn."""
+        with tempfile.TemporaryDirectory() as tmp:
+            scope = Path(tmp) / "scope"
+            logs = Path(tmp) / "logs"
+            scope.mkdir()
+            spec = DummySpec(scope_folder=str(scope), max_turns=5, approval_policy="never")
+            calls = 0
+            error = (
+                "All query model routes failed. Tried chatgpt/gpt-5.5: "
+                "LLM route uses chatgpt but you are not logged in."
+            )
+
+            def fake_stream_response(*_args, **_kwargs):
+                """Raise the auth failure reported by ChatGPT routes without local login."""
+                nonlocal calls
+                calls += 1
+                raise RuntimeError(error)
+
+            with patch("core.llm_clients.client.stream_response", side_effect=fake_stream_response):
+                run_dir = AgentTaskRunner(log_root=logs).run(spec)
+
+            self.assertEqual(calls, 1)
+            final = (run_dir / "final.md").read_text(encoding="utf-8")
+            self.assertIn("selected model route is not available", final)
+            self.assertIn("not logged in", final)
+            turns = json.loads((run_dir / "turns.json").read_text(encoding="utf-8"))
+            self.assertEqual(turns[0]["routing"]["status"], "model_blocked")
+            self.assertIn(
+                "requires authentication or configuration",
+                (run_dir / "run.log").read_text(encoding="utf-8"),
+            )
 
     def test_runner_extracts_fenced_json_after_model_prose(self):
         """Verify runner extracts fenced json after model prose behavior."""

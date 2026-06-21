@@ -211,6 +211,14 @@ def _app_stylesheet(c: dict[str, str]) -> str:
         QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus {{
             border-color: {c["accent"]};
         }}
+        QComboBox QAbstractItemView {{
+            background-color: {c["surface"]};
+            color: {c["text"]};
+            border: 1px solid {c["border"]};
+            selection-background-color: {c["accent"]};
+            selection-color: {c["on_accent"]};
+            outline: 0;
+        }}
         QPushButton {{
             background: {c["button"]};
             color: {c["text"]};

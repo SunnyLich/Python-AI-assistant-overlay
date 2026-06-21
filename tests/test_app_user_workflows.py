@@ -1047,9 +1047,13 @@ def test_prompt_tool_keywords_and_memory_scheduler_settings_workflow(
             self.cancelled = True
 
     monkeypatch.setattr(memory_store.threading, "Timer", FakeTimer)
-    monkeypatch.setattr(memory_store.config, "MEMORY_AUTO_CONSOLIDATE", True, raising=False)
+    monkeypatch.setattr(memory_store.config, "MEMORY_AUTO_CONSOLIDATE", False, raising=False)
     monkeypatch.setattr(memory_store.config, "MEMORY_CONSOLIDATION_INTERVAL", 7, raising=False)
     manager = memory_store.MemoryManager()
+    assert timers == []
+
+    monkeypatch.setattr(memory_store.config, "MEMORY_AUTO_CONSOLIDATE", True, raising=False)
+    manager._sync_consolidation_timer()
     assert timers[-1].interval == 7 * 60
     assert timers[-1].started is True
     assert timers[-1].daemon is True

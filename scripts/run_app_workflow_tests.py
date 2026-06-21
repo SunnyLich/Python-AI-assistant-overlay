@@ -32,6 +32,7 @@ WORKFLOW_TESTS = (
 REAL_HOST_TESTS = ("tests/test_real_host_native_smoke.py",)
 LOG_ROOT_NAME = "build_logs"
 LATEST_LOG_POINTER = "latest_app_workflow_tests.txt"
+LATEST_FAILURE_POINTER = "latest_app_workflow_tests_failure.txt"
 
 
 def _repo_root() -> Path:
@@ -85,7 +86,13 @@ def _with_cache_disabled(args: list[str]) -> list[str]:
     return ["-p", "no:cacheprovider", *args]
 
 
-def _run_logged(name: str, cmd: list[str], *, root: Path, env: dict[str, str], log_dir: Path) -> int:
+def _write_failure_pointer(root: Path, log_path: Path) -> None:
+    log_root = root / LOG_ROOT_NAME
+    log_root.mkdir(parents=True, exist_ok=True)
+    (log_root / LATEST_FAILURE_POINTER).write_text(str(log_path), encoding="utf-8")
+
+
+def _run_logged(name: str, cmd: list[str], *, root: Path, env: dict[str, str], log_dir: Path) -> tuple[int, Path]:
     log_path = log_dir / f"{_safe_name(name)}.log"
     print("Running:", " ".join(cmd), flush=True)
     print("Log:", log_path, flush=True)
@@ -110,7 +117,7 @@ def _run_logged(name: str, cmd: list[str], *, root: Path, env: dict[str, str], l
             log.write(line)
         status = proc.wait()
         log.write(f"\nexit_code={status}\n")
-    return status
+    return status, log_path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -175,19 +182,30 @@ def main(argv: list[str] | None = None) -> int:
         print("Real GPT 5.5 workflow test enabled; this may spend tokens.", flush=True)
     if real_host:
         print("Real host/native tests enabled; the second pytest process may touch clipboard, screenshots, tray, and visible windows.", flush=True)
+        if sys.platform == "darwin":
+            print(
+                "macOS grants privacy permissions to the launcher running pytest "
+                "(Terminal, Codex, or Python), not automatically to the packaged Wisp app.",
+                flush=True,
+            )
     if args.real_host_interactive:
         print("Interactive real host tests enabled; keep the machine idle while keyboard/paste checks run.", flush=True)
-    status = _run_logged("pytest-main", cmd, root=root, env=env, log_dir=log_dir)
+    status, main_log = _run_logged("pytest-main", cmd, root=root, env=env, log_dir=log_dir)
     summary_lines.extend(
         [
             f"pytest-main.exit_code={status}",
-            f"pytest-main.log={log_dir / 'pytest-main.log'}",
+            f"pytest-main.log={main_log}",
         ]
     )
     if status != 0 or not real_host:
         summary_lines.append(f"final_exit_code={status}")
+        if status != 0:
+            summary_lines.append(f"failure_log={main_log}")
+            _write_failure_pointer(root, main_log)
         summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
         print("Summary:", summary_path, flush=True)
+        if status != 0:
+            print("Failure log:", main_log, flush=True)
         return status
 
     host_env = base_env.copy()
@@ -199,16 +217,21 @@ def main(argv: list[str] | None = None) -> int:
         _with_default_basetemp(_normalize_pytest_args(args.pytest_args), root)
     )
     host_cmd = [python, "-m", "pytest", "-m", "real_host", *REAL_HOST_TESTS, *host_extra]
-    host_status = _run_logged("pytest-real-host", host_cmd, root=root, env=host_env, log_dir=log_dir)
+    host_status, host_log = _run_logged("pytest-real-host", host_cmd, root=root, env=host_env, log_dir=log_dir)
     summary_lines.extend(
         [
             f"pytest-real-host.exit_code={host_status}",
-            f"pytest-real-host.log={log_dir / 'pytest-real-host.log'}",
+            f"pytest-real-host.log={host_log}",
             f"final_exit_code={host_status}",
         ]
     )
+    if host_status != 0:
+        summary_lines.append(f"failure_log={host_log}")
+        _write_failure_pointer(root, host_log)
     summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
     print("Summary:", summary_path, flush=True)
+    if host_status != 0:
+        print("Failure log:", host_log, flush=True)
     return host_status
 
 

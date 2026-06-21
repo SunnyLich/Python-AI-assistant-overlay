@@ -6,6 +6,7 @@ and enabled through scripts/run_app_workflow_tests.py --real-host.
 from __future__ import annotations
 
 import os
+import sys
 import time
 import uuid
 
@@ -43,6 +44,36 @@ def _pump_until(app, predicate, *, timeout: float = 2.0) -> None:
     assert predicate()
 
 
+def test_real_host_macos_permission_snapshot_is_ready_for_native_checks():
+    """macOS privacy grants are visible before tests depend on native APIs."""
+    if sys.platform != "darwin":
+        pytest.skip("macOS-only permission preflight")
+
+    from runtime.workers import native_host
+
+    snapshot = native_host.permissions_snapshot()
+    missing: list[str] = []
+    screen = snapshot.get("screen_recording")
+    if screen is False:
+        missing.append("Screen Recording")
+    if os.environ.get("WISP_RUN_REAL_HOST_INTERACTIVE_TESTS") == "1":
+        accessibility = snapshot.get("accessibility")
+        if accessibility is False:
+            missing.append("Accessibility")
+    microphone = snapshot.get("microphone")
+    if microphone == "denied":
+        missing.append("Microphone")
+
+    if missing:
+        pytest.fail(
+            "macOS permission preflight failed for the process running pytest "
+            f"({sys.executable}). Missing: {', '.join(missing)}. "
+            "Open System Settings > Privacy & Security and grant the permission "
+            "to the launcher you used for this test, such as Terminal, Codex, or Python. "
+            "A packaged Wisp.app has its own separate macOS permission entries."
+        )
+
+
 def test_real_host_clipboard_and_context_snapshot_roundtrip():
     """The real clipboard path feeds the same native context snapshot users send."""
     from runtime.workers import native_host
@@ -72,7 +103,24 @@ def test_real_host_screenshot_capture_returns_pixels():
     """The actual screen-capture backend can capture non-empty pixels."""
     from core.capture import get_screen_snippet, image_to_base64
 
-    image = get_screen_snippet()
+    try:
+        image = get_screen_snippet()
+    except Exception as exc:
+        if sys.platform == "darwin":
+            hint = (
+                "On macOS, grant Screen Recording to the launcher running pytest "
+                "(Terminal, Codex, or Python). A packaged Wisp.app has separate "
+                "permission entries."
+            )
+        elif sys.platform == "win32":
+            hint = (
+                "On Windows, this usually means the test process cannot capture "
+                "the current desktop session, such as a locked, secure, remote, "
+                "or protected desktop."
+            )
+        else:
+            hint = "Make sure the test is running in a real graphical desktop session."
+        pytest.fail(f"real screen capture failed: {exc!r}. {hint}")
     assert image.width > 0
     assert image.height > 0
     assert image_to_base64(image)

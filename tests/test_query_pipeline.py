@@ -29,20 +29,20 @@ class BuildContextTests(unittest.TestCase):
         self.assertEqual(out.ambient_ctx, "")
         self.assertIsNone(out.screenshot_b64)
 
-    def test_single_context_is_not_numbered(self):
-        """Verify single context is not numbered behavior."""
+    def test_single_selection_context_is_labeled(self):
+        """Verify single selection context is labeled."""
         out = _build(selected="hello")
-        self.assertEqual(out.ambient_ctx, "hello")
+        self.assertEqual(out.ambient_ctx, "[Selection]\nhello")
 
-    def test_multiple_contexts_are_numbered(self):
-        """Verify multiple contexts are numbered behavior."""
+    def test_multiple_contexts_are_source_labeled(self):
+        """Verify multiple contexts are source labeled."""
         out = _build(buffered_items=["one"], selected="two")
-        self.assertEqual(out.ambient_ctx, "Context 1:\none\n\nContext 2:\ntwo")
+        self.assertEqual(out.ambient_ctx, "[Buffered context]\none\n\n[Selection]\ntwo")
 
-    def test_ambient_text_is_prefixed_with_separator(self):
-        """Verify ambient text is prefixed with separator behavior."""
+    def test_ambient_text_precedes_selection_block(self):
+        """Verify ambient text precedes the selection block."""
         out = _build(ambient_text="AMB", selected="sel")
-        self.assertEqual(out.ambient_ctx, "AMB\n\n---\nsel")
+        self.assertEqual(out.ambient_ctx, "AMB\n\n[Selection]\nsel")
 
     def test_ambient_text_alone_when_no_other_context(self):
         """Verify ambient text alone when no other context behavior."""
@@ -52,12 +52,12 @@ class BuildContextTests(unittest.TestCase):
     def test_clipboard_appended_after_buffered_items(self):
         """Verify clipboard appended after buffered items behavior."""
         out = _build(buffered_items=["buf"], clipboard_text="clip")
-        self.assertEqual(out.ambient_ctx, "Context 1:\nbuf\n\nContext 2:\nclip")
+        self.assertEqual(out.ambient_ctx, "[Buffered context]\nbuf\n\n[Clipboard]\nclip")
 
     def test_clipboard_none_is_ignored(self):
         """Verify clipboard none is ignored behavior."""
         out = _build(buffered_items=["buf"], clipboard_text=None)
-        self.assertEqual(out.ambient_ctx, "buf")
+        self.assertEqual(out.ambient_ctx, "[Buffered context]\nbuf")
 
     def test_dropped_image_becomes_vision_input_when_none_present(self):
         """Verify dropped image becomes vision input when none present behavior."""
@@ -69,12 +69,12 @@ class BuildContextTests(unittest.TestCase):
         """Verify dropped image kept as context when screenshot exists behavior."""
         out = _build(screenshot_b64="EXISTING", drop_items=[("shot.png", "BASE64", "image")])
         self.assertEqual(out.screenshot_b64, "EXISTING")
-        self.assertEqual(out.ambient_ctx, "BASE64")
+        self.assertEqual(out.ambient_ctx, "[Dropped context: shot.png]\nBASE64")
 
     def test_dropped_document_is_read_and_labelled(self):
         """Verify dropped document is read and labelled behavior."""
         out = _build(drop_items=[("notes.txt", "/tmp/notes.txt", "document_path")])
-        self.assertEqual(out.ambient_ctx, "[notes.txt]\nDOC</tmp/notes.txt>")
+        self.assertEqual(out.ambient_ctx, "[Document: notes.txt]\nDOC</tmp/notes.txt>")
 
     def test_dropped_document_empty_read_is_skipped(self):
         """Verify dropped document empty read is skipped behavior."""
@@ -87,7 +87,7 @@ class BuildContextTests(unittest.TestCase):
     def test_active_document_appended_when_no_screenshot(self):
         """Verify active document appended when no screenshot behavior."""
         out = _build(selected="sel", active_document_text="ACTIVE")
-        self.assertEqual(out.ambient_ctx, "sel\n\n---\n[Active document]\nACTIVE")
+        self.assertEqual(out.ambient_ctx, "[Selection]\nsel\n\n[Active document]\nACTIVE")
 
     def test_priority_note_added_when_browser_and_document_context_exist(self):
         """Verify priority note added when browser and document context exist behavior."""
@@ -98,11 +98,11 @@ class BuildContextTests(unittest.TestCase):
         )
         self.assertEqual(
             out.ambient_ctx,
-            "Context priority: Prioritize Browser/Web because it was the active "
+            "[Context priority]\nPrioritize Browser/Web because it was the active "
             "or last-used context when this request was captured. Use the other "
             "context as supporting context unless the user asks otherwise.\n\n"
-            "---\n[Browser/Web]\nWEB\n\n"
-            "---\n[Active document]\nACTIVE",
+            "[Browser/Web]\nWEB\n\n"
+            "[Active document]\nACTIVE",
         )
 
     def test_priority_note_omitted_for_single_context(self):
@@ -141,13 +141,13 @@ class BuildContextTests(unittest.TestCase):
         )
         self.assertEqual(
             out.ambient_ctx,
-            "AMB\n\n---\n"
-            "Context 1:\nbuf\n\n"
-            "Context 2:\n[d.txt]\nDOC</p>\n\n"
-            "Context 3:\nraw\n\n"
-            "Context 4:\nclip\n\n"
-            "Context 5:\nsel\n\n"
-            "---\n[Active document]\nACTIVE",
+            "AMB\n\n"
+            "[Buffered context]\nbuf\n\n"
+            "[Document: d.txt]\nDOC</p>\n\n"
+            "[Dropped context: x]\nraw\n\n"
+            "[Clipboard]\nclip\n\n"
+            "[Selection]\nsel\n\n"
+            "[Active document]\nACTIVE",
         )
 
     @pytest.mark.workflow

@@ -2882,7 +2882,167 @@ Let model decide — expose an open-document tool during the answer.</source>
       <source>e.g. 3</source>
       <translation>例如：3</translation>
     </message>
-  <message><source>These folders are the only places the model can list or read files. Each keybind chooses whether local files are off, read-only, ask-before-write, or automatic.</source><translation>这些文件夹是模型唯一可以列出或读取文件的位置。每个快捷键都可以选择本地文件为关闭、只读、写入前询问或自动写入。</translation></message><message><source>Read only</source><translation>只读</translation></message><message><source>Local files:</source><translation>本地文件：</translation></message><message><source>No extra tools found. Enable addons that add model tools.</source><translation>没有找到额外工具。请启用会添加模型工具的扩展。</translation></message></context>
+    <message>
+      <source>These folders are the only places the model can list or read files. Each keybind chooses whether local files are off, read-only, ask-before-write, or automatic.</source>
+      <translation>这些文件夹是模型唯一可以列出或读取文件的位置。每个快捷键都可以选择本地文件为关闭、只读、写入前询问或自动写入。</translation>
+    </message>
+    <message>
+      <source>Read only</source>
+      <translation>只读</translation>
+    </message>
+    <message>
+      <source>Local files:</source>
+      <translation>本地文件：</translation>
+    </message>
+    <message>
+      <source>No extra tools found. Enable addons that add model tools.</source>
+      <translation>没有找到额外工具。请启用会添加模型工具的扩展。</translation>
+    </message>
+    <message>
+      <source>Kokoro (local)</source>
+      <translation>Kokoro（本地）</translation>
+    </message>
+    <message>
+      <source>Install Kokoro</source>
+      <translation>安装 Kokoro</translation>
+    </message>
+    <message>
+      <source>Kokoro installed</source>
+      <translation>Kokoro 已安装</translation>
+    </message>
+    <message>
+      <source>Kokoro is installed.</source>
+      <translation>Kokoro 已安装。</translation>
+    </message>
+    <message>
+      <source>Kokoro is not installed.</source>
+      <translation>Kokoro 未安装。</translation>
+    </message>
+    <message>
+      <source>Kokoro install failed: {message}</source>
+      <translation>Kokoro 安装失败：{message}</translation>
+    </message>
+    <message>
+      <source>Kokoro installed. Click Test TTS to download/load the voice.</source>
+      <translation>Kokoro 已安装。点击测试 TTS 以下载/加载语音。</translation>
+    </message>
+    <message>
+      <source>Playback</source>
+      <translation>播放</translation>
+    </message>
+    <message>
+      <source>Volume</source>
+      <translation>音量</translation>
+    </message>
+    <message>
+      <source>Playback volume for generated speech. 100% is normal.</source>
+      <translation>生成语音的播放音量。100% 为正常。</translation>
+    </message>
+    <message>
+      <source>Runs Kokoro directly in Wisp. No server, API key, reference audio, or voice clone is needed.</source>
+      <translation>直接在 Wisp 中运行 Kokoro。不需要服务器、API 密钥、参考音频或声音克隆。</translation>
+    </message>
+    <message>
+      <source>Voice</source>
+      <translation>语音</translation>
+    </message>
+    <message>
+      <source>Language code</source>
+      <translation>语言代码</translation>
+    </message>
+    <message>
+      <source>Speed</source>
+      <translation>速度</translation>
+    </message>
+    <message>
+      <source>Sample rate (Hz)</source>
+      <translation>采样率（Hz）</translation>
+    </message>
+    <message>
+      <source>Built-in Kokoro voice name, such as af_heart, af_bella, af_sky, am_adam, or am_michael.</source>
+      <translation>Kokoro 内置语音名称，例如 af_heart、af_bella、af_sky、am_adam 或 am_michael。</translation>
+    </message>
+    <message>
+      <source>Kokoro language code. Use a for American English, b for British English, e for Spanish, f for French.</source>
+      <translation>Kokoro 语言代码。a 表示美式英语，b 表示英式英语，e 表示西班牙语，f 表示法语。</translation>
+    </message>
+    <message>
+      <source>Speech speed multiplier. 1.0 is normal.</source>
+      <translation>语音速度倍数。1.0 为正常。</translation>
+    </message>
+    <message>
+      <source>Kokoro's normal output is 24000 Hz. Keep this unless you have a reason to resample.</source>
+      <translation>Kokoro 的正常输出为 24000 Hz。除非需要重采样，否则保持此值。</translation>
+    </message>
+    <message>
+      <source>Wisp will install Kokoro into this Python environment.
+
+Packages: kokoro&gt;=0.9.4, soundfile
+Estimated storage: up to about 2 GB if speech dependencies are missing; less if they are already installed. First use may also download the Kokoro model cache.
+
+Current Kokoro settings:
+Voice: {voice}
+Language code: {lang_code}
+Speed: {speed}
+Sample rate: {sample_rate} Hz
+Volume: {volume}
+
+On Windows, Kokoro may also need eSpeak NG installed separately if Test TTS reports a phoneme/espeak error.
+
+Continue?</source>
+      <translation>Wisp 会将 Kokoro 安装到此 Python 环境中。
+
+软件包：kokoro&gt;=0.9.4、soundfile
+预计存储空间：如果缺少语音依赖，最多约 2 GB；如果已安装则更少。首次使用还可能下载 Kokoro 模型缓存。
+
+当前 Kokoro 设置：
+语音：{voice}
+语言代码：{lang_code}
+速度：{speed}
+采样率：{sample_rate} Hz
+音量：{volume}
+
+在 Windows 上，如果测试 TTS 报告 phoneme/espeak 错误，Kokoro 可能还需要单独安装 eSpeak NG。
+
+继续？</translation>
+    </message>
+    <message>
+      <source>Installing Kokoro...</source>
+      <translation>正在安装 Kokoro...</translation>
+    </message>
+    <message>
+      <source>Installing Kokoro: {detail}.</source>
+      <translation>正在安装 Kokoro：{detail}。</translation>
+    </message>
+    <message>
+      <source>starting pip</source>
+      <translation>正在启动 pip</translation>
+    </message>
+    <message>
+      <source>checking installed packages</source>
+      <translation>正在检查已安装的软件包</translation>
+    </message>
+    <message>
+      <source>resolving packages</source>
+      <translation>正在解析软件包</translation>
+    </message>
+    <message>
+      <source>downloading packages</source>
+      <translation>正在下载软件包</translation>
+    </message>
+    <message>
+      <source>installing packages</source>
+      <translation>正在安装软件包</translation>
+    </message>
+    <message>
+      <source>finalizing</source>
+      <translation>正在完成安装</translation>
+    </message>
+    <message>
+      <source>working - see terminal for full pip log</source>
+      <translation>正在处理 - 完整 pip 日志请查看终端</translation>
+    </message>
+  </context>
   <context>
     <name>Wisp</name>
     <message>
@@ -3416,6 +3576,10 @@ Let model decide — expose an open-document tool during the answer.</source>
     <message>
       <source>Fetch the full readable text of a specific web page URL on demand. Use this when the user asks about a website/page and the passive browser preview is missing, partial, stale, or not enough.</source>
       <translation>按需获取特定网页 URL 的完整可读文本。当用户询问网站/页面，而被动浏览器预览缺失、不完整、过期或不够充分时使用。</translation>
+    </message>
+    <message>
+      <source>This provider does not send real word timestamps. The highlighted word is approximate and may not match the speech exactly.</source>
+      <translation>此提供者不会发送真实的逐词时间戳。高亮的词只是近似，可能无法与语音完全匹配。</translation>
     </message>
     <message>
       <source>Custom</source>

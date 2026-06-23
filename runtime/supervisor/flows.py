@@ -743,27 +743,41 @@ class FlowController:
         # Silence any in-progress speech, but don't block the picker waiting for
         # it â€” audio.stop just flips a flag in the audio worker.
         self._fire(self.audio, "audio.stop")
+        self._fire(self.ui, "ui.overlay.state", {"state": "listening"})
         initial_context: dict[str, Any] = {}
-        if sys.platform == "darwin":
-            try:
-                initial_context = self._context_snapshot(
-                    caller,
-                    include_browser=False,
-                    preview_context_sources=True,
-                )
-            except Exception:
-                log.exception("macOS pre-picker context snapshot failed")
-                initial_context = {}
+        try:
+            initial_context = self._context_snapshot(
+                caller,
+                include_browser=False,
+                preview_context_sources=True,
+            )
+        except Exception:
+            log.exception("pre-picker context snapshot failed")
+            initial_context = {}
+        if not self._is_current(generation):
+            return
+        screenshot_b64 = None
+        screenshot_tool_b64 = None
+        t_shot0 = time.monotonic()
+        if caller.get("context_screenshot") == "auto":
+            screenshot_b64 = self._capture_fullscreen_b64()
+        elif self._screenshot_tool_allowed(caller):
+            screenshot_tool_b64 = self._capture_model_tool_b64()
+        t_shot = time.monotonic()
+        if not self._is_current(generation):
+            return
         pending = PendingInvocation(
             caller_idx=caller_idx,
             caller=caller,
             context=initial_context,
+            screenshot_b64=screenshot_b64,
+            screenshot_tool_b64=screenshot_tool_b64,
         )
         with self._lock:
             self._pending = pending
-        # Show the picker before native context capture on platforms that can
-        # recover the original target later. macOS pre-captures above because
-        # Safari/Chrome lose their frontmost status once this overlay appears.
+        # Capture before showing the picker so Selection still belongs to the
+        # user's app. The native clipboard fallback saves and restores clipboard
+        # contents, preserving the next paste.
         self._fire(
             self.ui,
             "ui.show_intent",
@@ -774,11 +788,10 @@ class FlowController:
             },
         )
         t_show = time.monotonic()
-        self._fire(self.ui, "ui.overlay.state", {"state": "listening"})
         self._schedule(self._collect_initial_intent_context, pending, generation, t0, t_show)
         log.info(
-            "caller %d picker shown before context total=%.2fs",
-            caller_idx, t_show - t0,
+            "caller %d picker shown after pre-capture screenshot=%.2fs total=%.2fs",
+            caller_idx, t_shot - t_shot0, t_show - t0,
         )
 
     def begin_snip(self) -> None:
@@ -2406,12 +2419,8 @@ class FlowController:
             t_ctx = time.monotonic()
             if not self._is_current(generation):
                 return
-            screenshot_b64 = None
-            screenshot_tool_b64 = None
-            if pending.caller.get("context_screenshot") == "auto":
-                screenshot_b64 = self._capture_fullscreen_b64()
-            elif self._screenshot_tool_allowed(pending.caller):
-                screenshot_tool_b64 = self._capture_model_tool_b64()
+            screenshot_b64 = pending.screenshot_b64
+            screenshot_tool_b64 = pending.screenshot_tool_b64
             t_shot = time.monotonic()
             if not self._is_current(generation):
                 return
@@ -2592,9 +2601,9 @@ class FlowController:
         if caller.get("context_ambient", True):
             active_app = context.get("active_app")
             if isinstance(active_app, dict) and active_app.get("name"):
-                ambient_parts.append(f"Active app: {active_app.get('name')}")
+                ambient_parts.append(f"[App]\nActive app: {active_app.get('name')}")
         if caller.get("context_clipboard") and context.get("clipboard_text"):
-            ambient_parts.append(f"Clipboard:\n{context.get('clipboard_text')}")
+            ambient_parts.append(f"[Clipboard]\n{context.get('clipboard_text')}")
         if self._context_mode(caller, "browser") == "auto":
             browser_bits: list[str] = []
             browser_url = str(context.get("browser_url") or "").strip()
@@ -2611,7 +2620,7 @@ class FlowController:
                 browser_content = browser.get("browser_content") or ""
             if browser_url or browser_content or browser_app:
                 browser_bits.append(
-                    f"Source priority: {'primary' if self._is_browser_active_context(context) else 'supporting'}"
+                    f"Priority: {'primary' if self._is_browser_active_context(context) else 'supporting'}"
                 )
             if browser_url:
                 browser_bits.append(f"URL: {browser_url}")
@@ -2635,7 +2644,7 @@ class FlowController:
             if browser_bits:
                 ambient_parts.append("[Browser/Web]\n" + "\n\n".join(browser_bits))
         if buffered_items:
-            ambient_parts.append("Buffered context:\n" + "\n\n".join(buffered_items))
+            ambient_parts.append("[Buffered context]\n" + "\n\n".join(buffered_items))
         if drop_items:
             drop_text_parts = []
             for item in drop_items:
@@ -2648,7 +2657,7 @@ class FlowController:
                     f"{item.get('name') or 'Context'} ({item_type}):\n{self._content_to_text(content)}"
                 )
             if drop_text_parts:
-                ambient_parts.append("Dropped context:\n" + "\n\n".join(drop_text_parts))
+                ambient_parts.append("[Dropped context]\n" + "\n\n".join(drop_text_parts))
         ambient_text = "\n\n".join(ambient_parts)
         context_priority = self._context_priority_source(
             context,
@@ -2787,17 +2796,17 @@ class FlowController:
         parts: list[str] = []
         active_app = context.get("active_app") if isinstance(context.get("active_app"), dict) else {}
         if wants_ambient and active_app.get("name"):
-            parts.append(f"Active app: {active_app.get('name')}")
+            parts.append(f"[App]\nActive app: {active_app.get('name')}")
 
         if wants_selection:
             selected = str(context.get("selected_text") or "").strip()
             if selected:
-                parts.append(f"Selection:\n{selected}")
+                parts.append(f"[Selection]\n{selected}")
 
         if wants_clipboard:
             clipboard = str(context.get("clipboard_text") or "").strip()
             if clipboard:
-                parts.append(f"Clipboard:\n{clipboard}")
+                parts.append(f"[Clipboard]\n{clipboard}")
 
         if wants_documents:
             active_document_text = str(context.get("active_document_text") or "").strip()
@@ -2995,6 +3004,25 @@ class FlowController:
             return 0
 
     @staticmethod
+    def _context_preview_text(text: str, limit: int = 180) -> str:
+        """Return a compact, privacy-safe snippet for context previews."""
+        flat = " ".join(str(text or "").split())
+        if not flat:
+            return ""
+        try:
+            import config
+            if bool(getattr(config, "TRUST_PRIVACY_MODE", True)):
+                from core.privacy_redaction import redact_with_report
+
+                flat, _report = redact_with_report(flat, source="preview")
+                flat = " ".join(str(flat or "").split())
+        except Exception:
+            pass
+        if len(flat) <= limit:
+            return flat
+        return flat[: max(0, limit - 3)].rstrip() + "..."
+
+    @staticmethod
     def _with_privacy_warning(warning: str, redactions: int) -> str:
         """Append detected-and-censored privacy detail to a context warning."""
         if redactions <= 0:
@@ -3062,6 +3090,20 @@ class FlowController:
         browser_redactions = self._redaction_count(browser_text)
         selected_redactions = self._redaction_count(selected_text)
         clipboard_redactions = self._redaction_count(clipboard_text)
+        app_preview = self._context_preview_text(active_document_text or active_text)
+        browser_preview = self._context_preview_text(browser_text)
+        if not browser_preview and browser_requested and browser_available:
+            browser_preview = self._context_preview_text(
+                context.get("browser_url")
+                or context.get("browser_app")
+                or "Browser page text may be fetched after you send the prompt."
+            )
+        selected_preview = self._context_preview_text(selected_text)
+        clipboard_preview = self._context_preview_text(clipboard_text)
+
+        screenshot_state = "on" if (screenshot_mode == "auto" or (pending and pending.screenshot_b64)) else (
+            "auto" if screenshot_mode == "model" else "off"
+        )
 
         return [
             {
@@ -3070,6 +3112,7 @@ class FlowController:
                 "label": "App",
                 "state": app_state,
                 "tokens": self._deferred_token_label() if app_deferred else self._token_label(active_text),
+                "preview": app_preview,
                 "privacy_count": app_redactions,
                 "warning": self._with_privacy_warning(
                     self._context_warning(
@@ -3087,6 +3130,7 @@ class FlowController:
                 "label": "Browser/Web",
                 "state": browser_state if browser_requested else "off",
                 "tokens": self._deferred_token_label() if browser_deferred else self._token_label(browser_text),
+                "preview": browser_preview,
                 "privacy_count": browser_redactions,
                 "warning": self._with_privacy_warning(
                     self._context_warning(
@@ -3102,8 +3146,10 @@ class FlowController:
                 "id": "selection",
                 "key": keys[2],
                 "label": "Selection",
+                "available": bool(selected_text),
                 "state": "on" if selected_text else "off",
-                "tokens": self._token_label(selected_text),
+                "tokens": self._token_label(selected_text) if selected_text else "",
+                "preview": selected_preview,
                 "privacy_count": selected_redactions,
                 "warning": self._with_privacy_warning(
                     self._context_warning(
@@ -3119,6 +3165,7 @@ class FlowController:
                 "label": "Clipboard",
                 "state": "on" if caller.get("context_clipboard") and clipboard_text else "off",
                 "tokens": self._token_label(clipboard_text),
+                "preview": clipboard_preview,
                 "privacy_count": clipboard_redactions,
                 "warning": self._with_privacy_warning(
                     self._context_warning(
@@ -3132,7 +3179,7 @@ class FlowController:
                 "id": "screenshot",
                 "key": keys[4],
                 "label": "Screenshot",
-                "state": "on" if pending and pending.screenshot_b64 else ("auto" if screenshot_mode == "model" else "off"),
+                "state": screenshot_state,
                 "tokens": screenshot_tokens,
                 "warning": "",
             },
@@ -3436,7 +3483,7 @@ class FlowController:
                 # anchor the reveal to synth-completion (before audio is audible)
                 # and the playback-started reveal would then cancel it.
                 wts = result.get("word_timestamps") if isinstance(result, dict) else None
-                if not wait_for_playback and isinstance(wts, dict) and wts.get("words"):
+                if isinstance(wts, dict) and wts.get("words") and not wts.get("estimated"):
                     self._safe_call(
                         self.ui,
                         "ui.reply.schedule_words",

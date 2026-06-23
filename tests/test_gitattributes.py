@@ -20,7 +20,19 @@ class GitAttributesTests(unittest.TestCase):
     def test_text_file_line_endings_are_pinned(self) -> None:
         attrs = attribute_lines()
 
-        for pattern in (".gitattributes", "*.md", "*.py", "*.toml", "*.txt", "*.ps1", "*.yml", "*.yaml"):
+        for pattern in (
+            ".gitattributes",
+            ".gitignore",
+            ".env.example",
+            "*.md",
+            "*.py",
+            "*.toml",
+            "*.txt",
+            "*.ps1",
+            "ui/locales/qt/*.ts",
+            "*.yml",
+            "*.yaml",
+        ):
             self.assertEqual(attrs[pattern], ("text", "eol=lf"))
 
     def test_launcher_line_endings_stay_platform_specific(self) -> None:
@@ -29,6 +41,12 @@ class GitAttributesTests(unittest.TestCase):
         self.assertEqual(attrs["*.command"], ("text", "eol=lf"))
         self.assertEqual(attrs["*.sh"], ("text", "eol=lf"))
         self.assertEqual(attrs["*.bat"], ("text", "eol=crlf"))
+
+    def test_generated_assets_are_binary(self) -> None:
+        attrs = attribute_lines()
+
+        for pattern in ("*.ico", "*.png", "*.wav", "*.qm"):
+            self.assertEqual(attrs[pattern], ("binary",))
 
 
 if __name__ == "__main__":

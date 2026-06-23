@@ -61,3 +61,40 @@ def test_tray_menu_omits_health_status(monkeypatch):
         overlay._icon_label.close()
         overlay.close()
         app.processEvents()
+
+
+def test_tray_menu_rebuilds_after_language_change(monkeypatch):
+    """Verify settings apply rebuilds tray actions in the active language."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    import config
+    from ui import i18n
+    from ui.overlay import IconOverlay, OverlaySignals
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    old_language = getattr(config, "APP_LANGUAGE", "")
+    monkeypatch.setattr(IconOverlay, "_pin_overlay_windows", lambda self: None)
+    monkeypatch.setattr(config, "APP_LANGUAGE", "zh-Hant", raising=False)
+    i18n.set_language(app=app)
+    signals = OverlaySignals()
+    overlay = IconOverlay(signals)
+
+    try:
+        labels = {action.text() for action in overlay._tray_menu.actions()}
+        assert "設定" in labels
+
+        monkeypatch.setattr(config, "APP_LANGUAGE", "en", raising=False)
+        overlay.apply_settings()
+        app.processEvents()
+
+        labels = {action.text() for action in overlay._tray_menu.actions()}
+        assert "Settings" in labels
+        assert "設定" not in labels
+    finally:
+        monkeypatch.setattr(config, "APP_LANGUAGE", old_language, raising=False)
+        i18n.set_language(app=app)
+        overlay._bubble.clear()
+        overlay._icon_label.close()
+        overlay.close()
+        app.processEvents()

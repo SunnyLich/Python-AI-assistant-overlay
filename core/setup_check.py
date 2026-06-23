@@ -62,8 +62,15 @@ def run_setup_check() -> list[dict[str, str]]:
         tts_ok = bool(getattr(config, "ELEVENLABS_API_KEY", ""))
     elif tts_provider == "openai":
         tts_ok = bool(getattr(config, "OPENAI_API_KEY", ""))
-    elif tts_provider == "custom":
+    elif tts_provider == "openai_compatible":
         tts_ok = bool(getattr(config, "TTS_CUSTOM_BASE_URL", ""))
+    elif tts_provider == "gpt_sovits":
+        tts_ok = bool(
+            getattr(config, "GPT_SOVITS_URL", "")
+            and getattr(config, "GPT_SOVITS_REF_AUDIO_PATH", "")
+        )
+    elif tts_provider == "kokoro":
+        tts_ok = bool(getattr(config, "KOKORO_VOICE", ""))
     rows.append(
         {
             "name": "TTS",

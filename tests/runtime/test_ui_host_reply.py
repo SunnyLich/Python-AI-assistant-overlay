@@ -104,6 +104,33 @@ def test_reply_chunk_accepts_progress_metadata() -> None:
     assert bubble.chunks == [("Reading files...", False)]
 
 
+def test_ui_shutdown_message_closes_stdin_reader() -> None:
+    """Verify UI shutdown unblocks the stdin reader before interpreter teardown."""
+    import json
+    from types import SimpleNamespace
+
+    from runtime.workers.ui_host import QtProtocolHost
+
+    host = QtProtocolHost.__new__(QtProtocolHost)
+    stopped = []
+    quit_calls = []
+    responses = []
+    closed = []
+    host._closing = False
+    host._pump = SimpleNamespace(stop=lambda: stopped.append(True))
+    host._app = SimpleNamespace(quit=lambda: quit_calls.append(True))
+    host._stdin_stream = SimpleNamespace(close=lambda: closed.append(True))
+    host._respond = lambda req_id, ok, **kwargs: responses.append((req_id, ok, kwargs))  # type: ignore[method-assign]
+
+    host._handle_line(json.dumps({"id": 7, "method": "__shutdown__", "params": {}}).encode("utf-8"))
+
+    assert responses == [(7, True, {"result": None})]
+    assert host._closing is True
+    assert stopped == [True]
+    assert closed == [True]
+    assert quit_calls == [True]
+
+
 def test_bubble_highlight_does_not_mutate_chat_window() -> None:
     """Verify TTS bubble highlight leaves selectable chat transcript alone."""
     from types import SimpleNamespace

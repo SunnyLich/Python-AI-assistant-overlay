@@ -155,7 +155,11 @@ class WorkerClient:
                         log_file.flush()
                     except Exception:
                         pass
-                if line.startswith("[plugin]") or line.startswith("[plugin:"):
+                if (
+                    line.startswith("[plugin]")
+                    or line.startswith("[plugin:")
+                    or line.startswith("[kokoro install]")
+                ):
                     log.info("[%s] %s", self.spec.name, line)
                 else:
                     log.debug("[%s] %s", self.spec.name, line)

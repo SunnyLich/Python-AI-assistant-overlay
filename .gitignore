@@ -16,6 +16,7 @@ secrets.*
 doll/
 tmp_debug_agent/
 model_files/
+addon_data/
 .understand-anything/
 
 # Local planning docs (living, not for VCS)
@@ -35,6 +36,8 @@ chats/
 __pycache__/
 .pytest_cache/
 .pytest-tmp/
+.pytest_tmp/
+.tmp/
 .tmp_pytest/
 .mypy_cache/
 .ruff_cache/

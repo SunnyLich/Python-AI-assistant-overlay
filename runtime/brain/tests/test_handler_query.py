@@ -222,7 +222,7 @@ def test_query_includes_context_priority_note(record_ctx):
         memory_context="(none)",
     )
 
-    assert "Context priority: Prioritize Browser/Web" in result["text"]
+    assert "[Context priority]\nPrioritize Browser/Web" in result["text"]
     assert "[Active document]\nDOC TEXT" in result["text"]
     assert "".join(_chunks(events)) == result["text"]
 

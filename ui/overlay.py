@@ -223,7 +223,7 @@ class IconOverlay(QMainWindow):
 
     def _build_tray_menu(self) -> QMenu:
         """Build tray menu."""
-        menu = QMenu()
+        menu = QMenu(self)
 
         if os.environ.get("WISP_MACOS_PY_UI_HOST") == "1":
             agent_task_action = QAction(t("Start agent task..."), self)
@@ -310,6 +310,11 @@ class IconOverlay(QMainWindow):
             self._context_panel.reposition(self._icon_label.pos(), config.ICON_SIZE)
         if hasattr(self, "_icon_hide_timer"):
             self._icon_hide_timer.setInterval(self._icon_backstop_ms())
+        if hasattr(self, "_tray"):
+            old_menu = getattr(self, "_tray_menu", None)
+            self._tray_menu = self._build_tray_menu()
+            if old_menu is not None:
+                old_menu.deleteLater()
         self._update_tray_context_menu()
 
     # ------------------------------------------------------------------

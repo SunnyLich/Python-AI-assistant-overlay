@@ -78,6 +78,21 @@ def _context_display_label(label: str) -> str:
     return t(text) if text in _CONTEXT_SOURCE_LABELS else text
 
 
+def _localized_context_items(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Translate built-in context item labels while preserving custom metadata."""
+    localized: list[dict[str, Any]] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        next_item = dict(item)
+        label = next_item.get("label")
+        if label is None:
+            label = next_item.get("name")
+        next_item["label"] = _context_display_label(str(label or "Context"))
+        localized.append(next_item)
+    return localized
+
+
 def _privacy_category_label(category: str) -> str:
     """Translate privacy report category keys into user-facing labels."""
     text = str(category or "Sensitive data").strip()
@@ -1749,6 +1764,7 @@ class QtProtocolHost:
         self._write_lock = threading.Lock()
         self._lines: "queue.Queue[bytes | None]" = queue.Queue()
         self._closing = False
+        self._stdin_stream = sys.stdin.buffer
 
         self._overlay_signals = None
         self._overlay = None
@@ -1805,13 +1821,30 @@ class QtProtocolHost:
 
     def _read_loop(self) -> None:
         """Read loop."""
-        stream = sys.stdin.buffer
+        stream = self._stdin_stream
         while True:
-            line = stream.readline()
+            try:
+                line = stream.readline()
+            except (OSError, ValueError):
+                line = b""
             if not line:
                 self._lines.put(None)
                 return
             self._lines.put(line)
+
+    def _close_stdin_reader(self) -> None:
+        """Unblock the stdin reader before Python starts interpreter teardown."""
+        try:
+            self._stdin_stream.close()
+        except Exception:
+            pass
+
+    def _quit_after_shutdown(self) -> None:
+        """Stop UI IPC and quit the Qt event loop."""
+        self._closing = True
+        self._pump.stop()
+        self._close_stdin_reader()
+        self._app.quit()
 
     def _drain(self) -> None:
         """Handle drain for qt protocol host."""
@@ -1822,9 +1855,7 @@ class QtProtocolHost:
             except queue.Empty:
                 return
             if line is None:
-                self._closing = True
-                self._pump.stop()
-                self._app.quit()
+                self._quit_after_shutdown()
                 return
             if line.strip():
                 self._handle_line(line)
@@ -1839,9 +1870,7 @@ class QtProtocolHost:
             params = msg.get("params") or {}
             if method == "__shutdown__":
                 self._respond(req_id, True, result=None)
-                self._closing = True
-                self._pump.stop()
-                self._app.quit()
+                self._quit_after_shutdown()
                 return
             if not isinstance(params, dict):
                 raise ValueError("params must be an object")
@@ -2126,7 +2155,7 @@ class QtProtocolHost:
         self._intent = IntentOverlay(
             caller_idx=caller_idx,
             target_hwnd=target_hwnd,
-            context_items=context_items,
+            context_items=_localized_context_items(context_items),
             conversation_options=self._intent_conversation_options(),
             project_options=self._intent_project_options(),
             active_project_id=self._intent_active_project_id(),
@@ -2167,7 +2196,7 @@ class QtProtocolHost:
         if self._intent is None:
             return {"updated": False, "reason": "no_intent"}
         try:
-            self._intent.update_context_items(context_items or [])
+            self._intent.update_context_items(_localized_context_items(context_items))
         except RuntimeError:
             self._intent = None
             return {"updated": False, "reason": "closed"}

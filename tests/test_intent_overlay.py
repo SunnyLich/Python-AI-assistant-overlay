@@ -239,6 +239,22 @@ def test_intent_overlay_context_palette_uses_theme_settings():
             setattr(config, key, value)
 
 
+def test_context_preview_text_is_redacted_and_trimmed(monkeypatch):
+    """Verify context preview snippets are compact and privacy-safe."""
+    import config
+    from runtime.supervisor.flows import FlowController
+
+    monkeypatch.setattr(config, "TRUST_PRIVACY_MODE", True, raising=False)
+    preview = FlowController._context_preview_text(
+        "OpenAI key sk-" + ("a" * 24) + " should not be visible " + ("x" * 240),
+        limit=80,
+    )
+
+    assert "[API_KEY]" in preview
+    assert "sk-" not in preview
+    assert len(preview) <= 80
+
+
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
 def test_intent_overlay_fallback_context_tokens_are_unknown():
     """Verify fallback context chips do not pretend unknown estimates are zero."""
@@ -257,6 +273,56 @@ def test_intent_overlay_fallback_context_tokens_are_unknown():
     finally:
         overlay.close()
         app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_intent_overlay_bottom_context_previews_resize(qapp):
+    """Verify enabled context previews appear below intent rows and resize."""
+    from ui import intent_overlay
+    from ui.intent_overlay import IntentOverlay
+
+    overlay = IntentOverlay(
+        context_items=[
+            {"id": "ambient", "key": "1", "label": "App", "state": "on", "preview": "This is app context"},
+            {"id": "browser", "key": "2", "label": "Browser/Web", "state": "on", "preview": "This is browser context"},
+            {"id": "clipboard", "key": "4", "label": "Clipboard", "state": "off", "preview": "Hidden clipboard"},
+        ]
+    )
+    try:
+        assert overlay._context_preview_entries() == [
+            ("App", "This is app context"),
+            ("Browser/Web", "This is browser context"),
+        ]
+        assert overlay._context_preview_height() == (
+            intent_overlay._CTX_PREVIEW_TOP + intent_overlay._CTX_PREVIEW_LINE_H * 2
+        )
+        initial_h = overlay.height()
+
+        overlay.update_context_items([
+            {"id": "ambient", "key": "1", "label": "App", "state": "off", "preview": ""},
+            {"id": "browser", "key": "2", "label": "Browser/Web", "state": "on", "preview": "Browser"},
+            {"id": "selection", "key": "3", "label": "Selection", "state": "on", "preview": "Selection"},
+            {"id": "clipboard", "key": "4", "label": "Clipboard", "state": "on", "preview": "Clipboard"},
+            {"id": "memory", "key": "6", "label": "Memory", "state": "auto", "preview": "Memory"},
+        ])
+
+        assert overlay._context_preview_entries() == [
+            ("Browser/Web", "Browser"),
+            ("Selection", "Selection"),
+            ("Clipboard", "Clipboard"),
+        ]
+        expanded_h = initial_h + intent_overlay._CTX_PREVIEW_LINE_H
+        assert overlay.height() == expanded_h
+
+        assert overlay._cycle_context_key("2") is True
+        assert overlay._context_preview_entries() == [
+            ("Selection", "Selection"),
+            ("Clipboard", "Clipboard"),
+        ]
+        assert overlay.height() == expanded_h - intent_overlay._CTX_PREVIEW_LINE_H
+    finally:
+        overlay.close()
+        qapp.processEvents()
 
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
@@ -563,3 +629,45 @@ def test_apply_intent_context_choices_updates_caller_policy():
         [{"id": "ambient", "state": "on", "default_state": "on"}],
     )
     assert unchanged["context_documents_mode"] == "off"
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_selection_context_chip_cannot_stay_on_when_unavailable(qapp):
+    """Verify unavailable Selection metadata clears stale overlay state."""
+    from ui.intent_overlay import IntentOverlay
+
+    overlay = IntentOverlay(
+        context_items=[
+            {
+                "id": "selection",
+                "key": "3",
+                "label": "Selection",
+                "available": True,
+                "state": "on",
+                "tokens": "~12 tok",
+            }
+        ]
+    )
+    try:
+        overlay.update_context_items([
+            {
+                "id": "selection",
+                "key": "3",
+                "label": "Selection",
+                "available": False,
+                "state": "off",
+                "tokens": "",
+            }
+        ])
+        selection = overlay.context_choices()[0]
+        assert selection["state"] == "off"
+        assert selection["touched"] is False
+        assert selection["tokens"] == ""
+
+        assert overlay._cycle_context_key("3") is True
+        selection = overlay.context_choices()[0]
+        assert selection["state"] == "off"
+        assert selection["touched"] is False
+    finally:
+        overlay.close()
+        qapp.processEvents()

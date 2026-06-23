@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 import wave
@@ -14,6 +15,8 @@ from runtime.service_host import run_host
 
 _emit: Callable[[str, Any, Any], None] | None = None
 _playback_stop = threading.Event()
+_config_prewarm_lock = threading.Lock()
+_config_prewarm_generation = 0
 
 
 def set_event_sink(fn: Callable[[str, Any, Any], None]) -> None:
@@ -41,6 +44,34 @@ def _output_dir() -> Path:
     return out
 
 
+def _prewarm_after_config_reload(generation: int, provider: str) -> None:
+    """Warm STT/TTS after config reload without blocking the IPC response."""
+    stt_status = "skipped"
+    tts_status = "skipped"
+    try:
+        from core.macos_helper import handlers as stt_handlers
+
+        stt_handlers.stt_prewarm()
+        stt_status = "started"
+    except Exception as exc:  # noqa: BLE001
+        stt_status = f"error: {type(exc).__name__}: {exc}"
+    try:
+        from core import tts
+
+        tts.prewarm()
+        tts_status = "ok"
+    except Exception as exc:  # noqa: BLE001
+        tts_status = f"error: {type(exc).__name__}: {exc}"
+    with _config_prewarm_lock:
+        stale = generation != _config_prewarm_generation
+    suffix = " stale" if stale else ""
+    print(
+        f"[audio] config reload background prewarm{suffix}: "
+        f"tts_provider={provider!r} stt={stt_status} tts={tts_status}",
+        flush=True,
+    )
+
+
 def audio_config_reload() -> dict[str, Any]:
     """Reload .env-backed config in the audio process after Settings → Apply.
 
@@ -50,6 +81,7 @@ def audio_config_reload() -> dict[str, Any]:
     never takes effect until restart. Mirrors the desktop dialog's apply: reload
     config, drop cached TTS connections, then re-prewarm under the new settings.
     """
+    global _config_prewarm_generation
     import config
     from core import tts
     from core.macos_helper import handlers as stt_handlers
@@ -57,16 +89,18 @@ def audio_config_reload() -> dict[str, Any]:
     config.reload()
     tts.reset_connections()
     stt_handlers.stt_reset_model()
-    stt_handlers.stt_prewarm()
     provider = config.TTS_PROVIDER.lower()
-    prewarm = "skipped"
-    try:
-        tts.prewarm()
-        prewarm = "ok"
-    except Exception as exc:  # noqa: BLE001 — a bad key must not break Apply
-        prewarm = f"error: {type(exc).__name__}: {exc}"
-    print(f"[audio] config reloaded: tts_provider={provider!r} prewarm={prewarm}", flush=True)
-    return {"ok": True, "tts_provider": provider, "prewarm": prewarm}
+    with _config_prewarm_lock:
+        _config_prewarm_generation += 1
+        generation = _config_prewarm_generation
+    threading.Thread(
+        target=_prewarm_after_config_reload,
+        args=(generation, provider),
+        daemon=True,
+        name="audio-config-reload-prewarm",
+    ).start()
+    print(f"[audio] config reloaded: tts_provider={provider!r} prewarm=background", flush=True)
+    return {"ok": True, "tts_provider": provider, "prewarm": "background"}
 
 
 def audio_prewarm() -> dict[str, Any]:
@@ -122,6 +156,15 @@ def _write_empty_wav(path: Path, *, sample_rate: int = 22_050) -> dict[str, Any]
         wf.setframerate(sample_rate)
         wf.writeframes(b"")
     return {"path": str(path), "sample_rate": sample_rate, "bytes": 0, "provider": "none"}
+
+
+def _estimated_word_timestamps(text: str, duration_ms: int) -> dict[str, list]:
+    """Estimate word timings for providers that do not emit timestamps."""
+    words = re.findall(r"\S+", text.strip())
+    if not words or duration_ms <= 0:
+        return {"words": [], "start_ms": [], "estimated": True}
+    step = duration_ms / max(1, len(words))
+    return {"words": words, "start_ms": [int(i * step) for i in range(len(words))], "estimated": True}
 
 
 def tts_synthesize(text: str = "", voice: str | None = None) -> dict[str, Any]:
@@ -184,15 +227,19 @@ def tts_synthesize(text: str = "", voice: str | None = None) -> dict[str, Any]:
     if provider == "none" or not chunks:
         return _write_empty_wav(path)
 
-    if provider == "elevenlabs":
-        sample_rate = tts._EL_SAMPLE_RATE
+    sample_rate, _channels, dtype = tts.playback_format(provider)
+    if dtype == "int16":
         pcm_i16 = b"".join(chunks)
     else:
-        sample_rate = tts.SAMPLE_RATE
         audio_f32 = np.frombuffer(b"".join(chunks), dtype=np.float32)
         audio_f32 = np.nan_to_num(audio_f32)
         audio_f32 = np.clip(audio_f32, -1.0, 1.0)
         pcm_i16 = (audio_f32 * 32767.0).astype("<i2").tobytes()
+
+    duration_ms = int((len(pcm_i16) / 2) / sample_rate * 1000) if sample_rate else 0
+    word_timestamps = {"words": words, "start_ms": start_ms, "estimated": False}
+    if not words:
+        word_timestamps = _estimated_word_timestamps(text, duration_ms)
 
     with wave.open(str(path), "wb") as wf:
         wf.setnchannels(1)
@@ -204,7 +251,7 @@ def tts_synthesize(text: str = "", voice: str | None = None) -> dict[str, Any]:
         "sample_rate": sample_rate,
         "bytes": len(pcm_i16),
         "provider": provider,
-        "word_timestamps": {"words": words, "start_ms": start_ms},
+        "word_timestamps": word_timestamps,
     }
 
 
@@ -215,8 +262,13 @@ def play_file(path: str = "") -> dict[str, Any]:
     _playback_stop.clear()
     import sounddevice as sd
     import soundfile as sf
+    import numpy as np
+    import config
 
     data, sample_rate = sf.read(path, dtype="float32")
+    volume = max(0.0, min(2.0, float(getattr(config, "TTS_VOLUME", 1.0) or 1.0)))
+    if volume != 1.0:
+        data = np.clip(data * volume, -1.0, 1.0).astype("float32", copy=False)
     _event("audio.playback.started", {"path": path})
     sd.play(data, sample_rate)
     while not _playback_stop.is_set():

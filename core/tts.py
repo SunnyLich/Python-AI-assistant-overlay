@@ -22,7 +22,9 @@ full LLM response is available — this is the lowest-latency path.
 """
 from __future__ import annotations
 import config
+import io
 import threading
+import wave
 from typing import Generator, Iterable
 
 from core.system import macos_safety
@@ -42,6 +44,14 @@ _EL_DTYPE = "int16"
 _OPENAI_SAMPLE_RATE = 24000
 _OPENAI_DTYPE = "int16"
 
+# GPT-SoVITS API returns WAV by default; Wisp plays signed 16-bit PCM.
+_GPT_SOVITS_SAMPLE_RATE = 32000
+_GPT_SOVITS_DTYPE = "int16"
+
+# Kokoro returns float audio at 24 kHz; Wisp plays signed 16-bit PCM.
+_KOKORO_SAMPLE_RATE = 24000
+_KOKORO_DTYPE = "int16"
+
 
 def playback_format(provider: str | None = None) -> tuple[int, int, str]:
     """Return (sample_rate, channels, dtype) the player must use for `provider`.
@@ -57,6 +67,12 @@ def playback_format(provider: str | None = None) -> tuple[int, int, str]:
     if provider == "openai_compatible":
         rate = int(getattr(config, "TTS_CUSTOM_SAMPLE_RATE", 24000) or 24000)
         return rate, CHANNELS, "int16"
+    if provider == "gpt_sovits":
+        rate = int(getattr(config, "GPT_SOVITS_SAMPLE_RATE", _GPT_SOVITS_SAMPLE_RATE) or _GPT_SOVITS_SAMPLE_RATE)
+        return rate, CHANNELS, _GPT_SOVITS_DTYPE
+    if provider == "kokoro":
+        rate = int(getattr(config, "KOKORO_SAMPLE_RATE", _KOKORO_SAMPLE_RATE) or _KOKORO_SAMPLE_RATE)
+        return rate, CHANNELS, _KOKORO_DTYPE
     return SAMPLE_RATE, CHANNELS, DTYPE  # cartesia / default
 
 # ------------------------------------------------------------------
@@ -66,6 +82,9 @@ _cartesia_client = None
 _cartesia_ws_manager = None   # the context manager returned by websocket_connect()
 _cartesia_ws = None           # the entered connection object (has .context())
 _cartesia_ws_lock = threading.Lock()
+_kokoro_pipeline = None
+_kokoro_pipeline_lang = ""
+_kokoro_lock = threading.Lock()
 
 
 def _get_cartesia_ws():
@@ -100,6 +119,7 @@ def _reset_cartesia_ws() -> None:
 def reset_connections() -> None:
     """Discard cached TTS connections so new provider/key/voice settings apply."""
     _reset_cartesia_ws()
+    _reset_kokoro_pipeline()
 
 
 def prewarm():
@@ -112,6 +132,8 @@ def prewarm():
         return
     if config.TTS_PROVIDER.lower() == "cartesia":
         _get_cartesia_ws()
+    elif config.TTS_PROVIDER.lower() == "kokoro":
+        _get_kokoro_pipeline()
 
 
 def close():
@@ -170,6 +192,10 @@ def stream_audio_from_chunks(text_chunks: Iterable[str],
             model=config.TTS_CUSTOM_MODEL,
             voice=config.TTS_CUSTOM_VOICE,
         )
+    elif provider == "gpt_sovits":
+        yield from _stream_gpt_sovits("".join(text_chunks))
+    elif provider == "kokoro":
+        yield from _stream_kokoro("".join(text_chunks))
     elif provider == "none":
         # Drain the iterator so the caller's on_done fires only after LLM finishes.
         for _ in text_chunks:
@@ -253,6 +279,155 @@ def _stream_elevenlabs(text: str) -> Generator[bytes, None, None]:
 
 
 # ------------------------------------------------------------------
+# Kokoro local library
+# ------------------------------------------------------------------
+
+def _reset_kokoro_pipeline() -> None:
+    """Discard the cached Kokoro pipeline so language changes apply."""
+    global _kokoro_pipeline, _kokoro_pipeline_lang
+    with _kokoro_lock:
+        _kokoro_pipeline = None
+        _kokoro_pipeline_lang = ""
+
+
+def _get_kokoro_pipeline():
+    """Return a cached Kokoro pipeline for the configured language code."""
+    global _kokoro_pipeline, _kokoro_pipeline_lang
+    lang_code = (getattr(config, "KOKORO_LANG_CODE", "a") or "a").strip()
+    with _kokoro_lock:
+        if _kokoro_pipeline is None or _kokoro_pipeline_lang != lang_code:
+            try:
+                from kokoro import KPipeline  # type: ignore
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Kokoro support is not installed. Run: python -m pip install kokoro>=0.9.4 soundfile"
+                ) from exc
+            _kokoro_pipeline = KPipeline(lang_code=lang_code)
+            _kokoro_pipeline_lang = lang_code
+        return _kokoro_pipeline
+
+
+def _float_audio_to_pcm16(audio, *, source_rate: int, target_rate: int) -> bytes:
+    """Convert a Kokoro audio array/tensor to mono signed 16-bit PCM."""
+    import numpy as np
+
+    if hasattr(audio, "detach"):
+        audio = audio.detach().cpu().numpy()
+    samples = np.asarray(audio)
+    if samples.ndim > 1:
+        samples = samples.mean(axis=1)
+    if samples.dtype == np.int16:
+        pcm = samples
+    else:
+        samples = samples.astype(np.float32)
+        if samples.size >= 2 and source_rate != target_rate:
+            out_len = max(1, int(samples.size * target_rate / source_rate))
+            src_x = np.arange(samples.size, dtype=np.float32)
+            dst_x = np.linspace(0, samples.size - 1, out_len, dtype=np.float32)
+            samples = np.interp(dst_x, src_x, samples).astype(np.float32)
+        pcm = np.clip(samples, -1.0, 1.0)
+        pcm = (pcm * 32767.0).astype(np.int16)
+    return pcm.tobytes()
+
+
+def _stream_kokoro(text: str) -> Generator[bytes, None, None]:
+    """Synthesize speech with the local Kokoro Python package."""
+    if not text.strip():
+        return
+    pipeline = _get_kokoro_pipeline()
+    voice = (getattr(config, "KOKORO_VOICE", "af_heart") or "af_heart").strip()
+    speed = float(getattr(config, "KOKORO_SPEED", 1.0) or 1.0)
+    split_pattern = getattr(config, "KOKORO_SPLIT_PATTERN", r"\n+")
+    target_rate = int(getattr(config, "KOKORO_SAMPLE_RATE", _KOKORO_SAMPLE_RATE) or _KOKORO_SAMPLE_RATE)
+    generator = pipeline(text, voice=voice, speed=speed, split_pattern=split_pattern)
+    for _graphemes, _phonemes, audio in generator:
+        chunk = _float_audio_to_pcm16(audio, source_rate=_KOKORO_SAMPLE_RATE, target_rate=target_rate)
+        if chunk:
+            yield chunk
+
+
+# ------------------------------------------------------------------
+# GPT-SoVITS local API
+# ------------------------------------------------------------------
+
+def _gpt_sovits_tts_url(base_url: str) -> str:
+    """Return the GPT-SoVITS /tts endpoint URL from a base URL or full route."""
+    url = (base_url or "http://127.0.0.1:9880").strip().rstrip("/")
+    if url.endswith("/tts"):
+        return url
+    return f"{url}/tts"
+
+
+def _wav_bytes_to_pcm16(wav_bytes: bytes, *, target_rate: int) -> bytes:
+    """Decode mono 16-bit WAV bytes to PCM16, resampling if needed."""
+    with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+        channels = wf.getnchannels()
+        sample_width = wf.getsampwidth()
+        sample_rate = wf.getframerate()
+        frames = wf.readframes(wf.getnframes())
+    if sample_width != 2:
+        raise RuntimeError(f"GPT-SoVITS returned {sample_width * 8}-bit WAV; expected 16-bit PCM.")
+    if channels != 1:
+        import audioop
+
+        frames = audioop.tomono(frames, sample_width, 0.5, 0.5)
+    if sample_rate == target_rate:
+        return frames
+
+    import numpy as np
+
+    samples = np.frombuffer(frames, dtype=np.int16)
+    if samples.size < 2:
+        return frames
+    out_len = max(1, int(samples.size * target_rate / sample_rate))
+    src_x = np.arange(samples.size, dtype=np.float32)
+    dst_x = np.linspace(0, samples.size - 1, out_len, dtype=np.float32)
+    resampled = np.interp(dst_x, src_x, samples.astype(np.float32))
+    return np.clip(resampled, -32768, 32767).astype(np.int16).tobytes()
+
+
+def _stream_gpt_sovits(text: str) -> Generator[bytes, None, None]:
+    """Synthesize via a local GPT-SoVITS api_v2.py server."""
+    if not text.strip():
+        return
+    import requests
+
+    ref_audio_path = getattr(config, "GPT_SOVITS_REF_AUDIO_PATH", "")
+    prompt_lang = getattr(config, "GPT_SOVITS_PROMPT_LANG", "en")
+    text_lang = getattr(config, "GPT_SOVITS_TEXT_LANG", "en")
+    target_rate = int(getattr(config, "GPT_SOVITS_SAMPLE_RATE", _GPT_SOVITS_SAMPLE_RATE) or _GPT_SOVITS_SAMPLE_RATE)
+    if not ref_audio_path:
+        raise ValueError("GPT_SOVITS_REF_AUDIO_PATH is not configured.")
+    if not prompt_lang:
+        raise ValueError("GPT_SOVITS_PROMPT_LANG is not configured.")
+    if not text_lang:
+        raise ValueError("GPT_SOVITS_TEXT_LANG is not configured.")
+
+    payload = {
+        "text": text,
+        "text_lang": text_lang,
+        "ref_audio_path": ref_audio_path,
+        "prompt_text": getattr(config, "GPT_SOVITS_PROMPT_TEXT", ""),
+        "prompt_lang": prompt_lang,
+        "text_split_method": getattr(config, "GPT_SOVITS_TEXT_SPLIT_METHOD", "cut5"),
+        "batch_size": int(getattr(config, "GPT_SOVITS_BATCH_SIZE", 1) or 1),
+        "speed_factor": float(getattr(config, "GPT_SOVITS_SPEED_FACTOR", 1.0) or 1.0),
+        "seed": int(getattr(config, "GPT_SOVITS_SEED", -1) or -1),
+        "media_type": "wav",
+        "streaming_mode": False,
+    }
+    response = requests.post(
+        _gpt_sovits_tts_url(getattr(config, "GPT_SOVITS_URL", "")),
+        json=payload,
+        timeout=float(getattr(config, "GPT_SOVITS_TIMEOUT_SECONDS", 120) or 120),
+    )
+    if response.status_code >= 400:
+        message = response.text.strip()
+        raise RuntimeError(f"GPT-SoVITS returned HTTP {response.status_code}: {message[:500]}")
+    yield _wav_bytes_to_pcm16(response.content, target_rate=target_rate)
+
+
+# ------------------------------------------------------------------
 # OpenAI TTS  /  OpenAI-compatible endpoints
 # ------------------------------------------------------------------
 
@@ -302,6 +477,13 @@ def test_connection(
     custom_api_key: str | None = None,
     custom_voice: str | None = None,
     custom_model: str | None = None,
+    gpt_sovits_url: str | None = None,
+    gpt_sovits_ref_audio_path: str | None = None,
+    gpt_sovits_prompt_text: str | None = None,
+    gpt_sovits_prompt_lang: str | None = None,
+    gpt_sovits_text_lang: str | None = None,
+    kokoro_voice: str | None = None,
+    kokoro_lang_code: str | None = None,
 ) -> tuple[bool, str]:
     """Verify connection behavior."""
     provider = (provider or config.TTS_PROVIDER).lower().strip()
@@ -311,6 +493,29 @@ def test_connection(
     openai_api_key = config.OPENAI_API_KEY if openai_api_key is None else openai_api_key
     custom_base_url = config.TTS_CUSTOM_BASE_URL if custom_base_url is None else custom_base_url
     custom_api_key = config.TTS_CUSTOM_API_KEY if custom_api_key is None else custom_api_key
+    gpt_sovits_url = config.GPT_SOVITS_URL if gpt_sovits_url is None else gpt_sovits_url
+    gpt_sovits_ref_audio_path = (
+        config.GPT_SOVITS_REF_AUDIO_PATH
+        if gpt_sovits_ref_audio_path is None
+        else gpt_sovits_ref_audio_path
+    )
+    gpt_sovits_prompt_text = (
+        config.GPT_SOVITS_PROMPT_TEXT
+        if gpt_sovits_prompt_text is None
+        else gpt_sovits_prompt_text
+    )
+    gpt_sovits_prompt_lang = (
+        config.GPT_SOVITS_PROMPT_LANG
+        if gpt_sovits_prompt_lang is None
+        else gpt_sovits_prompt_lang
+    )
+    gpt_sovits_text_lang = (
+        config.GPT_SOVITS_TEXT_LANG
+        if gpt_sovits_text_lang is None
+        else gpt_sovits_text_lang
+    )
+    kokoro_voice = config.KOKORO_VOICE if kokoro_voice is None else kokoro_voice
+    kokoro_lang_code = config.KOKORO_LANG_CODE if kokoro_lang_code is None else kokoro_lang_code
     try:
         if provider == "none":
             return True, "TTS is disabled (provider=none)."
@@ -389,6 +594,55 @@ def test_connection(
                 if chunk:
                     return True, f"TTS route OK: {provider}"
             raise RuntimeError(f"{provider} connected but returned no audio.")
+        if provider == "gpt_sovits":
+            if not gpt_sovits_url:
+                raise ValueError("GPT_SOVITS_URL is not configured.")
+            if not gpt_sovits_ref_audio_path:
+                raise ValueError("GPT_SOVITS_REF_AUDIO_PATH is not configured.")
+            old_values = (
+                getattr(config, "GPT_SOVITS_URL", ""),
+                getattr(config, "GPT_SOVITS_REF_AUDIO_PATH", ""),
+                getattr(config, "GPT_SOVITS_PROMPT_TEXT", ""),
+                getattr(config, "GPT_SOVITS_PROMPT_LANG", "en"),
+                getattr(config, "GPT_SOVITS_TEXT_LANG", "en"),
+            )
+            try:
+                config.GPT_SOVITS_URL = gpt_sovits_url
+                config.GPT_SOVITS_REF_AUDIO_PATH = gpt_sovits_ref_audio_path
+                config.GPT_SOVITS_PROMPT_TEXT = gpt_sovits_prompt_text or ""
+                config.GPT_SOVITS_PROMPT_LANG = gpt_sovits_prompt_lang or "en"
+                config.GPT_SOVITS_TEXT_LANG = gpt_sovits_text_lang or "en"
+                for chunk in _stream_gpt_sovits("ok"):
+                    if chunk:
+                        return True, "TTS route OK: gpt_sovits"
+                raise RuntimeError("GPT-SoVITS connected but returned no audio.")
+            finally:
+                (
+                    config.GPT_SOVITS_URL,
+                    config.GPT_SOVITS_REF_AUDIO_PATH,
+                    config.GPT_SOVITS_PROMPT_TEXT,
+                    config.GPT_SOVITS_PROMPT_LANG,
+                    config.GPT_SOVITS_TEXT_LANG,
+                ) = old_values
+        if provider == "kokoro":
+            if not kokoro_voice:
+                raise ValueError("KOKORO_VOICE is not configured.")
+            if not kokoro_lang_code:
+                raise ValueError("KOKORO_LANG_CODE is not configured.")
+            old_values = (
+                getattr(config, "KOKORO_VOICE", "af_heart"),
+                getattr(config, "KOKORO_LANG_CODE", "a"),
+            )
+            try:
+                config.KOKORO_VOICE = kokoro_voice
+                config.KOKORO_LANG_CODE = kokoro_lang_code
+                for chunk in _stream_kokoro("ok"):
+                    if chunk:
+                        return True, "TTS route OK: kokoro"
+                raise RuntimeError("Kokoro connected but returned no audio.")
+            finally:
+                config.KOKORO_VOICE, config.KOKORO_LANG_CODE = old_values
+                _reset_kokoro_pipeline()
         raise ValueError(f"Unknown TTS provider: {provider}")
     except Exception as exc:
         if provider == "cartesia" and cartesia_api_key is None:

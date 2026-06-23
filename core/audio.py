@@ -196,6 +196,27 @@ def _speed_adjust_pcm(chunk: bytes, dtype: str, rate: float) -> bytes:
     return adjusted.tobytes()
 
 
+def _volume_adjust_pcm(chunk: bytes, dtype: str, volume: float) -> bytes:
+    """Apply a playback volume multiplier to raw PCM bytes."""
+    if not chunk:
+        return chunk
+    try:
+        volume = max(0.0, min(2.0, float(volume)))
+    except Exception:
+        volume = 1.0
+    if abs(volume - 1.0) < 0.01:
+        return chunk
+    np_dtype = np.float32 if dtype == "float32" else np.int16
+    samples = np.frombuffer(chunk, dtype=np_dtype)
+    if samples.size == 0:
+        return chunk
+    if np_dtype is np.float32:
+        adjusted = np.clip(samples.astype(np.float32) * volume, -1.0, 1.0).astype(np.float32)
+    else:
+        adjusted = np.clip(samples.astype(np.float32) * volume, -32768, 32767).astype(np.int16)
+    return adjusted.tobytes()
+
+
 # ------------------------------------------------------------------
 # Filler audio
 # ------------------------------------------------------------------
@@ -438,6 +459,11 @@ def _stream_and_play_chunks(text_chunks, on_done: callable | None,
                     except Exception:
                         pass
             adjusted_chunk = _speed_adjust_pcm(chunk, dtype, _current_tts_rate())
+            adjusted_chunk = _volume_adjust_pcm(
+                adjusted_chunk,
+                dtype,
+                getattr(config, "TTS_VOLUME", 1.0),
+            )
             stream.write(adjusted_chunk)
             if on_amplitude:
                 try:

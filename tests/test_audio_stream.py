@@ -62,6 +62,7 @@ class AudioStreamTests(unittest.TestCase):
         self._patches = [
             mock.patch.object(config, "TTS_PROVIDER", "cartesia"),
             mock.patch.object(config, "TTS_PLAYBACK_RATE", 1.0),
+            mock.patch.object(config, "TTS_VOLUME", 1.0, create=True),
             mock.patch.dict(audio.macos_safety.os.environ, {"WISP_MACOS_ENABLE_AUDIO": "1"}),
         ]
         for p in self._patches:
@@ -100,6 +101,15 @@ class AudioStreamTests(unittest.TestCase):
         self.assertEqual(done, [1])             # completion fired
         self.assertFalse(stream.aborted)
         self.assertEqual(len(amps), 2)          # amplitude only for real chunks
+
+    def test_volume_multiplier_applies_to_tts_chunks(self):
+        """Verify TTS volume scales generated speech before playback."""
+        stream = FakeStream()
+        with mock.patch.object(config, "TTS_VOLUME", 0.5, create=True):
+            self._run([_pcm(0.8, n=4)], stream)
+
+        samples = np.frombuffer(stream.writes[0], dtype=np.float32)
+        self.assertTrue(np.allclose(samples, 0.4))
 
     def test_stop_midstream_aborts_and_suppresses_on_done(self):
         # The first write triggers stop(); the next loop iteration must abort

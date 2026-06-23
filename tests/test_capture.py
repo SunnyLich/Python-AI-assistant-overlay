@@ -51,6 +51,119 @@ class CaptureTests(unittest.TestCase):
              mock.patch.object(self.capture, "_get_selected_text_clipboard", side_effect=RuntimeError("boom")):
             self.assertIsNone(self.capture.get_selected_text())
 
+    def test_clipboard_selection_fallback_restores_original_clipboard(self):
+        """Verify Ctrl+C selection fallback preserves the user's next paste."""
+        restored: list[str] = []
+        with mock.patch.object(self.capture, "_IS_MAC", False), \
+             mock.patch.object(self.capture.pyperclip, "paste", side_effect=["original clipboard", "selected text"]), \
+             mock.patch.object(self.capture.pyperclip, "copy", side_effect=restored.append), \
+             mock.patch("core.platform_utils.send_keys") as send_keys, \
+             mock.patch.object(self.capture.time, "sleep"):
+            self.assertEqual(self.capture._get_selected_text_clipboard(), "selected text")
+
+        send_keys.assert_called_once()
+        self.assertEqual(restored, ["original clipboard"])
+
+    def test_uia_selection_ignores_collapsed_text_range(self):
+        """Verify UIA insertion-point ranges are not treated as selected text."""
+        fake_uiac = types.ModuleType("comtypes.gen.UIAutomationClient")
+        fake_uiac.IUIAutomationTextPattern = object
+        fake_uiac.TextPatternRangeEndpoint_Start = 0
+        fake_uiac.TextPatternRangeEndpoint_End = 1
+        fake_comtypes = types.ModuleType("comtypes")
+        fake_gen = types.ModuleType("comtypes.gen")
+        fake_comtypes.gen = fake_gen
+        fake_gen.UIAutomationClient = fake_uiac
+
+        class FakeRange:
+            def CompareEndpoints(self, *_args):
+                return 0
+
+            def GetText(self, _limit):
+                return "not really selected"
+
+        class FakeSelections:
+            Length = 1
+
+            def GetElement(self, _idx):
+                return FakeRange()
+
+        class FakeTextPattern:
+            def GetSelection(self):
+                return FakeSelections()
+
+        class FakeRawPattern:
+            def QueryInterface(self, _interface):
+                return FakeTextPattern()
+
+        class FakeElement:
+            def GetCurrentPattern(self, _pattern_id):
+                return FakeRawPattern()
+
+        class FakeUia:
+            def GetFocusedElement(self):
+                return FakeElement()
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "comtypes": fake_comtypes,
+                "comtypes.gen": fake_gen,
+                "comtypes.gen.UIAutomationClient": fake_uiac,
+            },
+        ), mock.patch.object(self.capture, "_get_uia", return_value=FakeUia()):
+            self.assertIsNone(self.capture._get_selected_text_uia())
+
+    def test_uia_selection_returns_non_collapsed_text_range(self):
+        """Verify UIA selected ranges still return selected text."""
+        fake_uiac = types.ModuleType("comtypes.gen.UIAutomationClient")
+        fake_uiac.IUIAutomationTextPattern = object
+        fake_uiac.TextPatternRangeEndpoint_Start = 0
+        fake_uiac.TextPatternRangeEndpoint_End = 1
+        fake_comtypes = types.ModuleType("comtypes")
+        fake_gen = types.ModuleType("comtypes.gen")
+        fake_comtypes.gen = fake_gen
+        fake_gen.UIAutomationClient = fake_uiac
+
+        class FakeRange:
+            def CompareEndpoints(self, *_args):
+                return -1
+
+            def GetText(self, _limit):
+                return " selected text "
+
+        class FakeSelections:
+            Length = 1
+
+            def GetElement(self, _idx):
+                return FakeRange()
+
+        class FakeTextPattern:
+            def GetSelection(self):
+                return FakeSelections()
+
+        class FakeRawPattern:
+            def QueryInterface(self, _interface):
+                return FakeTextPattern()
+
+        class FakeElement:
+            def GetCurrentPattern(self, _pattern_id):
+                return FakeRawPattern()
+
+        class FakeUia:
+            def GetFocusedElement(self):
+                return FakeElement()
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "comtypes": fake_comtypes,
+                "comtypes.gen": fake_gen,
+                "comtypes.gen.UIAutomationClient": fake_uiac,
+            },
+        ), mock.patch.object(self.capture, "_get_uia", return_value=FakeUia()):
+            self.assertEqual(self.capture._get_selected_text_uia(), "selected text")
+
     def test_macos_selected_text_uses_native_helper(self):
         """Verify macos selected text uses native helper behavior."""
         with mock.patch.object(self.capture, "_get_selected_text_uia", return_value=None), \

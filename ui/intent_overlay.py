@@ -145,6 +145,9 @@ _CTX_GAP       = 4
 _CTX_CHIP_H    = 58
 _CTX_CHIP_W    = 68
 _CTX_TOP       = 8
+_CTX_PREVIEW_TOP = 6
+_CTX_PREVIEW_LINE_H = 22
+_CTX_PREVIEW_MAX = 3
 
 # ── Palette ─────────────────────────────────────────────────────────────────
 _BG         = QColor(20, 20, 30, 248)
@@ -307,10 +310,7 @@ class IntentOverlay(QWidget):
         self._warning_rects: list[tuple[QRect, str]] = []
         self._last_warning_idx: int | None = None
         self._auto_custom_mode = self._custom_row_index_without_key()
-        n_rows = len(self._rows)
-        conversation_h = _CONV_H if self._show_conversation_selector else 0
-        context_h = _CTX_H if self._context_items else 0
-        h = _PAD_V * 2 + conversation_h + context_h + _ROW_H * n_rows + 26   # 26px ESC hint
+        h = self._base_height()
         self._normal_h = h
         self.setFixedSize(_W, h)
         self._layout_conversation_selector(_PAD_V)
@@ -443,6 +443,19 @@ class IntentOverlay(QWidget):
         """Return the current per-prompt context source states."""
         return [dict(item) for item in self._context_items]
 
+    def _base_height(self) -> int:
+        """Return the picker height for the current rows and context previews."""
+        conversation_h = _CONV_H if self._show_conversation_selector else 0
+        context_h = _CTX_H if self._context_items else 0
+        return (
+            _PAD_V * 2
+            + conversation_h
+            + context_h
+            + _ROW_H * len(self._rows)
+            + self._context_preview_height()
+            + 26
+        )
+
     @staticmethod
     def _normalize_conversation_options(options: list[dict]) -> list[dict]:
         """Return compact history options for the overlay selector."""
@@ -551,6 +564,14 @@ class IntentOverlay(QWidget):
             next_item.setdefault("default_state", next_item.get("state", "off"))
             next_item.setdefault("touched", False)
             current = current_by_id.get(str(next_item.get("id") or ""))
+            if (
+                str(next_item.get("id") or "") == "selection"
+                and next_item.get("available") is False
+            ):
+                next_item["state"] = "off"
+                next_item["touched"] = False
+                refreshed.append(next_item)
+                continue
             if current is not None:
                 touched = bool(current.get("touched", False))
                 if touched:
@@ -563,7 +584,24 @@ class IntentOverlay(QWidget):
             refreshed.append(next_item)
         self._context_items = refreshed
         self._warning_rects = []
+        self._resize_for_context_preview()
         self.update()
+
+    def _resize_for_context_preview(self) -> None:
+        """Resize the picker when live context previews appear or disappear."""
+        next_h = self._base_height()
+        if next_h == self._normal_h:
+            return
+        self._normal_h = next_h
+        if self._custom_mode:
+            next_h += _INPUT_EXTRA
+        self.setFixedSize(_W, next_h)
+        if self._custom_mode:
+            self._input_line.setGeometry(
+                _PAD_H, self._normal_h - 20, _W - _PAD_H * 2, 34
+            )
+        if hasattr(self, "_screen_geometry"):
+            self._move_to_screen_center(next_h)
 
     # ── Paint ─────────────────────────────────────────────────────────────
 
@@ -650,6 +688,11 @@ class IntentOverlay(QWidget):
                            elided)
 
             y += _ROW_H
+
+        preview_h = self._context_preview_height()
+        if preview_h:
+            self._paint_context_preview(p, y, hint_font, ctx_token_font, palette)
+            y += preview_h
 
         # ESC hint
         if self._custom_mode:
@@ -825,6 +868,87 @@ class IntentOverlay(QWidget):
             if x + _CTX_CHIP_W > _W - _PAD_H:
                 break
 
+    def _context_preview_entries(self) -> list[tuple[str, str]]:
+        """Return numbered preview rows for context that will be sent or fetched."""
+        entries: list[tuple[str, str]] = []
+        for item in self._context_items:
+            if len(entries) >= _CTX_PREVIEW_MAX:
+                break
+            state = str(item.get("state") or "off").lower()
+            if state == "off":
+                continue
+            preview = " ".join(str(item.get("preview") or "").split())
+            if not preview:
+                continue
+            label = " ".join(str(item.get("label") or t("Context")).split())
+            entries.append((label, preview))
+        return entries
+
+    def _context_preview_height(self) -> int:
+        """Return the extra height needed for bottom context preview lines."""
+        entries = self._context_preview_entries()
+        if not entries:
+            return 0
+        return _CTX_PREVIEW_TOP + _CTX_PREVIEW_LINE_H * len(entries)
+
+    def _paint_context_preview(
+        self,
+        p: QPainter,
+        y: int,
+        label_font: QFont,
+        value_font: QFont,
+        palette: dict[str, QColor],
+    ) -> None:
+        """Paint short previews of enabled context at the bottom of the picker."""
+        entries = self._context_preview_entries()
+        if not entries:
+            return
+        top = y + _CTX_PREVIEW_TOP
+        number_w = 18
+        label_w = 98
+        preview_x = _PAD_H + number_w + label_w + 12
+        preview_w = _W - _PAD_H - preview_x
+        for idx, (label, preview) in enumerate(entries, start=1):
+            line_y = top + (idx - 1) * _CTX_PREVIEW_LINE_H
+            p.setFont(label_font)
+            p.setPen(QPen(palette["ctx_sub"]))
+            p.drawText(
+                _PAD_H,
+                line_y,
+                number_w,
+                _CTX_PREVIEW_LINE_H,
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                f"{idx}.",
+            )
+            label_text = QFontMetrics(label_font).elidedText(
+                label,
+                Qt.TextElideMode.ElideRight,
+                label_w,
+            )
+            p.drawText(
+                _PAD_H + number_w,
+                line_y,
+                label_w,
+                _CTX_PREVIEW_LINE_H,
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                label_text,
+            )
+            p.setFont(value_font)
+            p.setPen(QPen(palette["hint"]))
+            preview_text = QFontMetrics(value_font).elidedText(
+                preview,
+                Qt.TextElideMode.ElideRight,
+                preview_w,
+            )
+            p.drawText(
+                preview_x,
+                line_y,
+                preview_w,
+                _CTX_PREVIEW_LINE_H,
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                preview_text,
+            )
+
     def _cycle_context_key(self, name: str) -> bool:
         """Cycle a context source when its numeric overlay key is pressed."""
         for item in self._context_items:
@@ -836,6 +960,13 @@ class IntentOverlay(QWidget):
 
     def _cycle_context_item(self, item: dict) -> None:
         """Cycle one context source through its explicit prompt states."""
+        if str(item.get("id") or "") == "selection" and item.get("available") is False:
+            item["state"] = "off"
+            item["touched"] = False
+            self._note_interaction()
+            self._resize_for_context_preview()
+            self.update()
+            return
         state = str(item.get("state") or "off").lower()
         if state == "auto":
             item["state"] = "off"
@@ -845,6 +976,7 @@ class IntentOverlay(QWidget):
             item["state"] = "off"
         item["touched"] = True
         self._note_interaction()
+        self._resize_for_context_preview()
         self.update()
 
     def _context_item_at(self, pos: QPoint) -> dict | None:
@@ -1048,7 +1180,7 @@ class IntentOverlay(QWidget):
 
     # ── Key input ─────────────────────────────────────────────────────────
 
-    def _select(self, idx: int):
+    def _select(self, idx: int, *, drop_trigger_key: bool = True):
         """Handle select for intent overlay."""
         if self._handled:
             return
@@ -1056,7 +1188,10 @@ class IntentOverlay(QWidget):
             self._hovered = idx
             self._debug(f"select-custom idx={idx}")
             self._unhook()
-            QTimer.singleShot(0, self._enter_custom_mode)
+            QTimer.singleShot(
+                0,
+                lambda: self._enter_custom_mode(drop_trigger_key=drop_trigger_key),
+            )
             return
         self._handled = True
         self._hovered = idx
@@ -1150,6 +1285,12 @@ class IntentOverlay(QWidget):
             QEvent.Type.ShortcutOverride,
         }:
             self._debug_key("input-filter-key", event)
+            if event.type() == QEvent.Type.ShortcutOverride:
+                event.accept()
+                return True
+            if event.key() == Qt.Key.Key_Escape:
+                self._cancel()
+                return True
             if self._drop_next_keypress and event.type() == QEvent.Type.KeyPress:
                 self._debug_key("input-filter-before-drop", event)
                 custom_key = next((r["glyph"].lower() for r in self._rows if r["is_custom"]), "")
@@ -1192,7 +1333,7 @@ class IntentOverlay(QWidget):
 
     def _on_raw_key(self, name: str):
         """Handle raw key events."""
-        if self._custom_mode:
+        if getattr(self, "_closed", False) or self._handled or self._custom_mode:
             return
         if name in ('escape', 'esc'):
             self._cancel()
@@ -1202,12 +1343,15 @@ class IntentOverlay(QWidget):
             return
         for i, row in enumerate(self._rows):
             if name.lower() == row['glyph'].lower():
-                self._select(i)
+                self._select(i, drop_trigger_key=False)
                 return
 
     def keyPressEvent(self, event):
         """Handle key press event for intent overlay."""
         self._debug_key("overlay-keypress", event)
+        if self._custom_mode:
+            super().keyPressEvent(event)
+            return
         key_map: dict[Qt.Key, int] = {}
         for i, row in enumerate(self._rows):
             qt_key = getattr(Qt.Key, f"Key_{row['glyph']}", None)
@@ -1230,6 +1374,19 @@ class IntentOverlay(QWidget):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def _raw_shortcut_names(self) -> list[str]:
+        """Return overlay-local keys that should be captured by the raw hook."""
+        keys: list[str] = ["escape"]
+        for item in self._context_items:
+            key = str(item.get("key") or "").strip().lower()
+            if key and key not in keys:
+                keys.append(key)
+        for row in self._rows:
+            key = str(row.get("glyph") or "").strip().lower()
+            if key and key != "?" and key not in keys:
+                keys.append(key)
+        return keys
 
     def _win_force_foreground(self) -> None:
         """Force the overlay to the foreground on Windows, past the foreground lock.
@@ -1276,13 +1433,28 @@ class IntentOverlay(QWidget):
         self._debug("show")
         if _IS_WIN:
             import keyboard  # type: ignore
-            self._kb_hook = keyboard.on_press(
-                lambda e: None if (not e or not e.name or self._closed) else self._raw_key.emit(e.name),
-                # This picker is modal for a few seconds. Without suppression,
-                # context toggles like 1-7 also type into the app that was focused
-                # before the overlay appeared.
-                suppress=True,
-            )
+
+            def _on_key_event(e):
+                """Forward suppressed Windows key-down events to the Qt thread."""
+                if (
+                    not e
+                    or getattr(e, "event_type", None) != "down"
+                    or not getattr(e, "name", None)
+                    or self._closed
+                ):
+                    return
+                self._raw_key.emit(e.name)
+
+            # Capture only overlay command keys. A suppress-all hook can swallow
+            # modifier key-up events from the hotkey that opened the picker,
+            # leaving Windows with a stuck modifier after the overlay closes.
+            hooks = []
+            for name in self._raw_shortcut_names():
+                try:
+                    hooks.append(keyboard.on_press_key(name, _on_key_event, suppress=True))
+                except Exception:
+                    pass
+            self._kb_hook = hooks
         elif _IS_MAC:
             # No global keyboard hook on macOS: pynput's Listener installs a
             # CGEventTap that decodes keystrokes via main-thread-only HIToolbox
@@ -1325,7 +1497,9 @@ class IntentOverlay(QWidget):
             try:
                 if _IS_WIN:
                     import keyboard  # type: ignore
-                    keyboard.unhook(self._kb_hook)
+                    hooks = self._kb_hook if isinstance(self._kb_hook, list) else [self._kb_hook]
+                    for hook in hooks:
+                        keyboard.unhook(hook)
                 else:
                     self._kb_hook.stop()
             except Exception:

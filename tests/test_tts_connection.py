@@ -1,11 +1,24 @@
 """Tests for test tts connection."""
 
+import io
 import sys
 import types
 import unittest
+import wave
 from unittest.mock import patch
 
 from core import tts
+
+
+def _tiny_wav() -> bytes:
+    """Return a small mono PCM WAV for fake TTS responses."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(32000)
+        wf.writeframes(b"\x01\x00\x02\x00")
+    return buf.getvalue()
 
 
 class TtsConnectionTests(unittest.TestCase):
@@ -51,3 +64,100 @@ class TtsConnectionTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertIn("elevenlabs", message)
+
+    def test_gpt_sovits_requires_reference_audio(self):
+        """Verify GPT-SoVITS connection requires reference audio."""
+        ok, message = tts.test_connection(
+            "gpt_sovits",
+            gpt_sovits_url="http://127.0.0.1:9880",
+            gpt_sovits_ref_audio_path="",
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("GPT_SOVITS_REF_AUDIO_PATH", message)
+
+    def test_gpt_sovits_connection_posts_to_local_api(self):
+        """Verify GPT-SoVITS connection posts the expected local API request."""
+        calls = []
+
+        class FakeResponse:
+            """Fake requests response."""
+            status_code = 200
+            content = _tiny_wav()
+            text = ""
+
+        fake_requests = types.ModuleType("requests")
+
+        def fake_post(url, json, timeout):
+            """Capture the post request and return WAV bytes."""
+            calls.append({"url": url, "json": json, "timeout": timeout})
+            return FakeResponse()
+
+        fake_requests.post = fake_post
+
+        with patch.dict(sys.modules, {"requests": fake_requests}):
+            ok, message = tts.test_connection(
+                "gpt_sovits",
+                gpt_sovits_url="http://127.0.0.1:9880",
+                gpt_sovits_ref_audio_path=r"C:\voices\ref.wav",
+                gpt_sovits_prompt_text="hello there",
+                gpt_sovits_prompt_lang="en",
+                gpt_sovits_text_lang="en",
+            )
+
+        self.assertTrue(ok)
+        self.assertIn("gpt_sovits", message)
+        self.assertEqual(calls[0]["url"], "http://127.0.0.1:9880/tts")
+        self.assertEqual(calls[0]["json"]["ref_audio_path"], r"C:\voices\ref.wav")
+        self.assertEqual(calls[0]["json"]["prompt_text"], "hello there")
+        self.assertEqual(calls[0]["json"]["text"], "ok")
+
+    def test_kokoro_requires_voice(self):
+        """Verify Kokoro connection requires a voice name."""
+        ok, message = tts.test_connection(
+            "kokoro",
+            kokoro_voice="",
+            kokoro_lang_code="a",
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("KOKORO_VOICE", message)
+
+    def test_kokoro_connection_uses_local_pipeline(self):
+        """Verify Kokoro connection uses the local Python pipeline."""
+        calls = []
+
+        class FakeKPipeline:
+            """Fake Kokoro pipeline."""
+            def __init__(self, lang_code):
+                """Capture language code."""
+                self.lang_code = lang_code
+
+            def __call__(self, text, voice, speed, split_pattern):
+                """Capture synthesis args and return float audio."""
+                import numpy as np
+
+                calls.append({
+                    "lang_code": self.lang_code,
+                    "text": text,
+                    "voice": voice,
+                    "speed": speed,
+                    "split_pattern": split_pattern,
+                })
+                yield text, "phonemes", np.array([0.0, 0.25, -0.25], dtype=np.float32)
+
+        fake_module = types.ModuleType("kokoro")
+        fake_module.KPipeline = FakeKPipeline
+
+        with patch.dict(sys.modules, {"kokoro": fake_module}):
+            ok, message = tts.test_connection(
+                "kokoro",
+                kokoro_voice="af_heart",
+                kokoro_lang_code="a",
+            )
+
+        self.assertTrue(ok)
+        self.assertIn("kokoro", message)
+        self.assertEqual(calls[0]["text"], "ok")
+        self.assertEqual(calls[0]["voice"], "af_heart")
+        self.assertEqual(calls[0]["lang_code"], "a")

@@ -177,6 +177,7 @@ def test_setup_health_voice_sources_have_catalog_translations() -> None:
         "Microphone",
         "LLM route configured: {route}.",
         "TTS is off.",
+        "This provider does not send real word timestamps. The highlighted word is approximate and may not match the speech exactly.",
         "STT model configured: {model}.",
         "{count} hotkeys configured.",
         "Privacy redaction is on.",
@@ -192,6 +193,14 @@ def test_setup_health_voice_sources_have_catalog_translations() -> None:
         "Recommendation: open Addon Manager, inspect the addon diagnostics, then repair or disable it.",
         "Installed addon: ",
         "Technical detail: ",
+        "Installing Kokoro: {detail}.",
+        "starting pip",
+        "checking installed packages",
+        "resolving packages",
+        "downloading packages",
+        "installing packages",
+        "finalizing",
+        "working - see terminal for full pip log",
     }
     for language in LANGUAGES:
         catalog = _translations(language)

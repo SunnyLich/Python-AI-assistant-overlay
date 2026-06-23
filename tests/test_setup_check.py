@@ -55,3 +55,50 @@ def test_setup_check_treats_unconfigured_stt_as_optional(monkeypatch):
 
     assert by_name["Speech to text"]["status"] == "pass"
     assert "voice and dictation can stay off" in by_name["Speech to text"]["message"]
+
+
+def test_setup_check_accepts_gpt_sovits_when_reference_is_configured(monkeypatch):
+    """GPT-SoVITS TTS is configured when URL and reference audio are present."""
+    import config
+
+    monkeypatch.setattr(config, "reload", lambda: None)
+    monkeypatch.setattr(config, "LLM_PROVIDER", "ollama", raising=False)
+    monkeypatch.setattr(config, "LLM_MODEL", "llama-test", raising=False)
+    monkeypatch.setattr(config, "TTS_PROVIDER", "gpt_sovits", raising=False)
+    monkeypatch.setattr(config, "GPT_SOVITS_URL", "http://127.0.0.1:9880", raising=False)
+    monkeypatch.setattr(config, "GPT_SOVITS_REF_AUDIO_PATH", r"C:\voices\ref.wav", raising=False)
+    monkeypatch.setattr(config, "STT_MODEL", "base", raising=False)
+    monkeypatch.setattr(config, "HOTKEY_SNIP", "ctrl+alt+q", raising=False)
+    monkeypatch.setattr(config, "HOTKEY_VOICE", "f9", raising=False)
+    monkeypatch.setattr(config, "HOTKEY_ADD_CONTEXT", "alt+q", raising=False)
+    monkeypatch.setattr(config, "CALLER_ROWS", [{"hotkey": "ctrl+q"}], raising=False)
+    monkeypatch.setattr(config, "TRUST_PRIVACY_MODE", True, raising=False)
+
+    rows = setup_check.run_setup_check()
+    by_name = {row["name"]: row for row in rows}
+
+    assert by_name["TTS"]["status"] == "pass"
+    assert "gpt_sovits" in by_name["TTS"]["message"]
+
+
+def test_setup_check_accepts_kokoro_with_voice(monkeypatch):
+    """Kokoro TTS is configured when a built-in voice is selected."""
+    import config
+
+    monkeypatch.setattr(config, "reload", lambda: None)
+    monkeypatch.setattr(config, "LLM_PROVIDER", "ollama", raising=False)
+    monkeypatch.setattr(config, "LLM_MODEL", "llama-test", raising=False)
+    monkeypatch.setattr(config, "TTS_PROVIDER", "kokoro", raising=False)
+    monkeypatch.setattr(config, "KOKORO_VOICE", "af_heart", raising=False)
+    monkeypatch.setattr(config, "STT_MODEL", "base", raising=False)
+    monkeypatch.setattr(config, "HOTKEY_SNIP", "ctrl+alt+q", raising=False)
+    monkeypatch.setattr(config, "HOTKEY_VOICE", "f9", raising=False)
+    monkeypatch.setattr(config, "HOTKEY_ADD_CONTEXT", "alt+q", raising=False)
+    monkeypatch.setattr(config, "CALLER_ROWS", [{"hotkey": "ctrl+q"}], raising=False)
+    monkeypatch.setattr(config, "TRUST_PRIVACY_MODE", True, raising=False)
+
+    rows = setup_check.run_setup_check()
+    by_name = {row["name"]: row for row in rows}
+
+    assert by_name["TTS"]["status"] == "pass"
+    assert "kokoro" in by_name["TTS"]["message"]

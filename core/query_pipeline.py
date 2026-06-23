@@ -88,7 +88,7 @@ def _context_priority_note(priority_context: str, sources: set[str]) -> str:
     if priority not in sources or len(sources) < 2:
         return ""
     return (
-        f"Context priority: Prioritize {priority} because it was the active "
+        f"[Context priority]\nPrioritize {priority} because it was the active "
         "or last-used context when this request was captured. Use the other "
         "context as supporting context unless the user asks otherwise."
     )
@@ -144,42 +144,48 @@ def build_context(
     screenshot_b64 = inp.screenshot_b64
     privacy_enabled = bool(inp.trust_privacy_mode)
     reports: list[dict] = []
-    context_items: list[str] = []
+    context_blocks: list[str] = []
     for item in inp.buffered_items:
         redacted, report = _redact_with_report_if_enabled(
             item, privacy_enabled, "buffered_context"
         )
-        context_items.append(redacted)
+        if redacted:
+            context_blocks.append(f"[Buffered context]\n{redacted}")
         reports.append(report)
 
     for name, content, item_type in inp.drop_items:
+        label = str(name or "Dropped context").strip() or "Dropped context"
         if item_type == "image" and screenshot_b64 is None:
             screenshot_b64 = content  # first dropped image becomes the vision input
         elif item_type == "document_path":
             doc_text = read_document_file(content)
             if doc_text:
                 redacted, report = _redact_with_report_if_enabled(
-                    f"[{name}]\n{doc_text}", privacy_enabled, f"document:{name}"
+                    doc_text, privacy_enabled, f"document:{name}"
                 )
-                context_items.append(redacted)
+                if redacted:
+                    context_blocks.append(f"[Document: {label}]\n{redacted}")
                 reports.append(report)
         else:
             redacted, report = _redact_with_report_if_enabled(
                 content, privacy_enabled, f"dropped:{name}"
             )
-            context_items.append(redacted)
+            if redacted:
+                context_blocks.append(f"[Dropped context: {label}]\n{redacted}")
             reports.append(report)
 
     if inp.clipboard_text:
         redacted, report = _redact_with_report_if_enabled(
             inp.clipboard_text, privacy_enabled, "clipboard"
         )
-        context_items.append(redacted)
+        if redacted:
+            context_blocks.append(f"[Clipboard]\n{redacted}")
         reports.append(report)
 
     selected, selected_report = _redact_with_report_if_enabled(
         inp.selected, privacy_enabled, "selection"
     )
+    selected_block = f"[Selection]\n{selected}" if selected else ""
     ambient_text, ambient_report = _redact_with_report_if_enabled(
         inp.ambient_text, privacy_enabled, "ambient"
     )
@@ -188,22 +194,17 @@ def build_context(
     )
     reports.extend([selected_report, ambient_report, document_report])
 
-    all_contexts = context_items + ([selected] if selected else [])
+    all_contexts = context_blocks + ([selected_block] if selected_block else [])
     sources = _context_sources(ambient_text, all_contexts, active_document_text)
 
-    ctx_block = (
-        "\n\n".join(f"Context {i + 1}:\n{c}" for i, c in enumerate(all_contexts))
-        if len(all_contexts) > 1
-        else (all_contexts[0] if all_contexts else "")
-    )
+    ctx_block = "\n\n".join(all_contexts)
     active_doc_block = f"[Active document]\n{active_document_text}" if active_document_text else ""
     priority_note = _context_priority_note(inp.priority_context, sources)
 
-    # Assemble in order — priority note, ambient snapshot, user-provided context,
-    # active document — joined by the section separator. join() inserts separators
-    # only *between* present parts, so empty sections drop out without leaving a
-    # dangling "---" at the start.
-    ambient_ctx = "\n\n---\n".join(
+    # Assemble in priority order with explicit source headers. The LLM client
+    # already separates this whole block from the system prompt, so keep the
+    # inside readable instead of nesting generic dividers.
+    ambient_ctx = "\n\n".join(
         part
         for part in (priority_note, ambient_text, ctx_block, active_doc_block)
         if part

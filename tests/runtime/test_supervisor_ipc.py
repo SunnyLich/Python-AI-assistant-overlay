@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import logging
 import os
 import sys
 import time
@@ -158,6 +160,19 @@ def test_worker_stderr_log_file_is_created_in_run_log_dir(tmp_path):
         assert log_path.exists()
     finally:
         worker.shutdown()
+
+
+def test_kokoro_install_worker_stderr_is_promoted_to_console_log(caplog):
+    """Kokoro pip progress from the UI worker should be visible in the .bat console."""
+    worker = _worker("runtime.workers.ui_host", "ui")
+
+    class FakeProc:
+        stderr = io.BytesIO(b"[kokoro install] Running: python -m pip install kokoro\n")
+
+    with caplog.at_level(logging.INFO):
+        worker._stderr_loop(FakeProc())
+
+    assert "[ui] [kokoro install] Running: python -m pip install kokoro" in caplog.text
 
 
 def test_worker_respawns_after_process_death():

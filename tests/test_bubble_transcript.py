@@ -152,6 +152,64 @@ def test_windows_paths_are_breakable_bubble_units():
 
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_cjk_reply_stream_reveals_character_by_character():
+    """Verify Chinese replies do not highlight an entire sentence as one word."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from ui.bubble import SpeechBubble
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    bubble = SpeechBubble()
+
+    try:
+        bubble.append_chunk("你好世界")
+        bubble._advance_highlight()
+        bubble._rewrap()
+
+        reply_indexes = [
+            reply_idx
+            for line in bubble._all_line_segments
+            for _word, _bold, reply_idx, is_thought, _space_before in line
+            if not is_thought and reply_idx is not None
+        ]
+
+        assert bubble._pending_words == ["你", "好", "世", "界"]
+        assert bubble._full_text == "你好世界"
+        assert bubble._revealed_count == 1
+        assert reply_indexes == [0, 1, 2, 3]
+    finally:
+        bubble.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_cjk_timestamp_words_are_split_for_reveal():
+    """Verify provider timestamps that group Chinese text are split locally."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from ui.bubble import SpeechBubble
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    bubble = SpeechBubble()
+
+    try:
+        bubble._audio_started = True
+        bubble._timestamp_mode = True
+        bubble._audio_elapsed.start()
+
+        bubble._advance_highlight("你好")
+
+        assert bubble._pending_words == ["你", "好"]
+        assert bubble._full_text == "你好"
+        assert bubble._revealed_count == 1
+    finally:
+        bubble.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
 def test_bubble_font_size_applies_without_changing_width():
     """Verify bubble text size can change independently from bubble width."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

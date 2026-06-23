@@ -404,6 +404,8 @@ def test_settings_status_messages_translate_nested_values(monkeypatch):
         "LLM test failed: {message}": "LLM \u6e2c\u8a66\u5931\u6557\uff1a{message}",
         "LLM route uses {provider} but you are not logged in.": "LLM \u8def\u7531\u4f7f\u7528 {provider}\uff0c\u4f46\u4f60\u5c1a\u672a\u767b\u5165\u3002",
         "Microphone permission: {value}.": "\u9ea5\u514b\u98a8\u6b0a\u9650\uff1a{value}\u3002",
+        "Installing Kokoro: {detail}.": "\u6b63\u5728\u5b89\u88dd Kokoro\uff1a{detail}\u3002",
+        "downloading packages": "\u6b63\u5728\u4e0b\u8f09\u5957\u4ef6",
         "unavailable": "\u7121\u6cd5\u4f7f\u7528",
     }
     monkeypatch.setattr(dialog, "t", lambda text: translations.get(text, text))
@@ -414,6 +416,25 @@ def test_settings_status_messages_translate_nested_values(monkeypatch):
     assert (
         dialog._translate_status_message("Microphone permission: unavailable.")
         == "\u9ea5\u514b\u98a8\u6b0a\u9650\uff1a\u7121\u6cd5\u4f7f\u7528\u3002"
+    )
+    assert (
+        dialog._translate_status_message("Installing Kokoro: downloading packages.")
+        == "\u6b63\u5728\u5b89\u88dd Kokoro\uff1a\u6b63\u5728\u4e0b\u8f09\u5957\u4ef6\u3002"
+    )
+
+
+def test_kokoro_install_progress_text_classifies_pip_output():
+    """Verify raw pip output becomes short progress phases for the Settings UI."""
+    from ui.settings_panel.dialog import _kokoro_install_progress_text
+
+    assert _kokoro_install_progress_text("Collecting kokoro>=0.9.4") == (
+        "Installing Kokoro: resolving packages."
+    )
+    assert _kokoro_install_progress_text("Downloading torch-2.9.0.whl") == (
+        "Installing Kokoro: downloading packages."
+    )
+    assert _kokoro_install_progress_text("Installing collected packages: kokoro") == (
+        "Installing Kokoro: installing packages."
     )
 
 
@@ -949,6 +970,8 @@ def test_cancel_async_ui_updates_stops_test_and_auth_timers():
     dialog._latest_test_token = {"llm_test": 1}
     dialog._pending_test_results = [("llm_test", 1, True, "OK")]
     dialog._pending_test_results_lock = threading.Lock()
+    dialog._pending_test_progress = [("llm_test", 1, "Testing...")]
+    dialog._pending_test_progress_lock = threading.Lock()
     dialog._test_result_timer = FakeTimer()
     dialog._auth_poll_timer = FakeTimer()
     dialog._github_auth_poll_timer = FakeTimer()
@@ -961,6 +984,7 @@ def test_cancel_async_ui_updates_stops_test_and_auth_timers():
     assert dialog._running_test_tokens == set()
     assert dialog._latest_test_token == {}
     assert dialog._pending_test_results == []
+    assert dialog._pending_test_progress == []
     assert dialog._test_result_timer.stopped is True
     assert dialog._auth_poll_timer.stopped is True
     assert dialog._github_auth_poll_timer.stopped is True
@@ -1245,6 +1269,39 @@ def test_subscription_warning_marks_provider_credentials_headline():
 
         assert dialog._warning_headers["Provider credentials"].text().startswith("\u26a0 ")
         assert dialog._warning_headers["Provider credentials"].toolTip()
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_tts_provider_timing_notice_only_for_providers_without_word_timestamps():
+    """Verify TTS timing notice appears only when word sync is approximate."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLabel
+
+    from ui.i18n import t
+    from ui.settings_panel.dialog import SettingsDialog, _TTS_TIMING_NOTICE, _get, _set
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog()
+
+    try:
+        notice = dialog.findChild(QLabel, "ttsTimingNotice")
+        assert notice is not None
+
+        for provider in ("elevenlabs", "openai", "openai_compatible", "gpt_sovits", "kokoro"):
+            _set(dialog._fields["TTS_PROVIDER"], provider)
+            dialog._update_tts_provider_fields()
+            assert _get(dialog._fields["TTS_PROVIDER"]) == provider
+            assert not notice.isHidden()
+            assert notice.text() == t(_TTS_TIMING_NOTICE)
+
+        for provider in ("cartesia", "none"):
+            _set(dialog._fields["TTS_PROVIDER"], provider)
+            dialog._update_tts_provider_fields()
+            assert _get(dialog._fields["TTS_PROVIDER"]) == provider
+            assert notice.isHidden()
     finally:
         dialog.deleteLater()
         app.processEvents()

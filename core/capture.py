@@ -28,6 +28,8 @@ _log = logging.getLogger("wisp.capture")
 # ------------------------------------------------------------------
 _uia = None
 _UIA_TextPatternId = 10014
+_UIA_TextPatternRangeEndpoint_Start = 0
+_UIA_TextPatternRangeEndpoint_End = 1
 
 
 def _get_uia():
@@ -60,8 +62,29 @@ def _get_selected_text_uia() -> str | None:
         selections = tp.GetSelection()
         if selections.Length == 0:
             return None
-        text = selections.GetElement(0).GetText(-1)
-        return text.strip() if text else None
+        start_endpoint = getattr(
+            uiac,
+            "TextPatternRangeEndpoint_Start",
+            _UIA_TextPatternRangeEndpoint_Start,
+        )
+        end_endpoint = getattr(
+            uiac,
+            "TextPatternRangeEndpoint_End",
+            _UIA_TextPatternRangeEndpoint_End,
+        )
+        selected_parts: list[str] = []
+        for idx in range(selections.Length):
+            text_range = selections.GetElement(idx)
+            try:
+                if text_range.CompareEndpoints(start_endpoint, text_range, end_endpoint) == 0:
+                    continue
+            except Exception:
+                pass
+            text = text_range.GetText(-1)
+            text = text.strip() if text else ""
+            if text:
+                selected_parts.append(text)
+        return "\n".join(selected_parts) or None
     except Exception:
         return None
 

@@ -413,21 +413,27 @@ class SpeechBubble(QWidget):
         """Start revealing buffered words at speech rate (called when audio begins)."""
         self._thinking = False
         self._dot_timer.stop()
+        first_audio_start = not self._audio_started
         self._audio_started = True
         self._highlight_generation += 1
         self._audio_elapsed.start()   # t=0 for timestamp scheduling
-        if not self._reveal_mode:
-            # Reveal not yet started (e.g. very fast first chunk) — start fresh.
+        if first_audio_start and not self._timestamp_mode:
+            # The text may have streamed before audio was audible. Re-anchor the
+            # fallback reveal to playback start so it does not run ahead of TTS.
             self._reveal_mode = True
             self._timestamp_mode = False
             self._revealed_count = 0
-            self._full_text = " ".join(self._pending_words)
+            self._full_text = self._join_reveal_units(self._pending_words)
             self._lines = []
             self._all_line_segments = []
             self._line_segments = []
             self._apply_reveal_speed()
             self._reveal_timer.start()
-        # else: WPM already running from append_chunk — keep going, elapsed timer updated above.
+        elif not self._reveal_mode:
+            self._reveal_mode = True
+            self._timestamp_mode = False
+            self._apply_reveal_speed()
+            self._reveal_timer.start()
         # Drain any timestamp batches that arrived before audio started
         for words, start_ms in self._pre_audio_timestamps:
             self.schedule_words(words, start_ms)
@@ -455,17 +461,28 @@ class SpeechBubble(QWidget):
         elapsed = self._audio_elapsed.elapsed()
         playback_rate = self._current_tts_rate()
         generation = self._highlight_generation
-        for word, t_ms in zip(words, start_ms):
-            delay = max(0, int(t_ms / playback_rate - elapsed))
-            QTimer.singleShot(delay, lambda w=word, g=generation: self._advance_highlight(w, g))
+        schedule = list(zip(words, start_ms))
+        for i, (word, t_ms) in enumerate(schedule):
+            units = self._reveal_units(str(word))
+            if not units:
+                continue
+            base_delay = max(0, int(t_ms / playback_rate - elapsed))
+            if i + 1 < len(schedule):
+                next_delay = max(0, int(schedule[i + 1][1] / playback_rate - elapsed))
+            else:
+                next_delay = base_delay + max(220, 80 * len(units))
+            step_ms = max(45, min(160, int((next_delay - base_delay) / max(1, len(units)))))
+            for unit_idx, unit in enumerate(units):
+                delay = base_delay + unit_idx * step_ms
+                QTimer.singleShot(delay, lambda w=unit, g=generation: self._advance_highlight(w, g))
 
     def _advance_highlight(self, word: str | None = None, generation: int | None = None):
         """Handle advance highlight for speech bubble."""
         if generation is not None and generation != self._highlight_generation:
             return
         if word and self._revealed_count >= len(self._pending_words):
-            self._pending_words.append(word)
-            self._full_text = " ".join(self._pending_words)
+            self._pending_words.extend(self._reveal_units(word))
+            self._full_text = self._join_reveal_units(self._pending_words)
         if self._revealed_count < len(self._pending_words):
             self._revealed_count += 1
         self._rewrap()
@@ -507,17 +524,19 @@ class SpeechBubble(QWidget):
             self.update()
             return
         self._reply_chunk_count += 1
-        new_words = chunk.split()
+        new_words = self._reveal_units(chunk)
         if new_words:
             # If this chunk starts mid-word (no leading space) and the previous
             # chunk also ended mid-word (no trailing space), merge into last word.
             if (self._pending_words
                     and not chunk[0].isspace()
-                    and not self._last_chunk_ended_with_space):
+                    and not self._last_chunk_ended_with_space
+                    and not self._is_cjk(self._pending_words[-1][-1])
+                    and not self._is_cjk(new_words[0][0])):
                 self._pending_words[-1] += new_words[0]
                 new_words = new_words[1:]
             self._pending_words.extend(new_words)
-            self._full_text = " ".join(self._pending_words)
+        self._full_text += chunk
         self._last_chunk_ended_with_space = chunk[-1].isspace()
         # Kick off WPM reveal on first token so words always appear gradually,
         # even when TTS=none.  start_word_reveal() / schedule_words() will take
@@ -648,9 +667,9 @@ class SpeechBubble(QWidget):
             self._set_notice_action_size()
         else:
             self._restore_base_size()
-        self._pending_words = text.split()
+        self._pending_words = self._reveal_units(text)
         self._revealed_count = len(self._pending_words)
-        self._full_text = " ".join(self._pending_words)
+        self._full_text = self._join_reveal_units(self._pending_words)
         self._layout_action_buttons()
         self._rewrap()
         self.show()
@@ -798,9 +817,13 @@ class SpeechBubble(QWidget):
         for word, bold in thought_words:
             for u_i, unit in enumerate(self._wrap_units(word)):
                 words.append((unit, bold, None, True, u_i == 0))
-        for reply_idx, (word, bold) in enumerate(reply_words):
-            for u_i, unit in enumerate(self._wrap_units(word)):
-                words.append((unit, bold, reply_idx, False, u_i == 0))
+        reply_idx = 0
+        for word, bold in reply_words:
+            reveal_units = self._reveal_units(word) or [word]
+            for reveal_i, reveal_unit in enumerate(reveal_units):
+                for u_i, unit in enumerate(self._wrap_units(reveal_unit)):
+                    words.append((unit, bold, reply_idx, False, reveal_i == 0 and u_i == 0))
+                reply_idx += 1
         lines: list[list[tuple[str, bool, int | None, bool, bool]]] = []
         current: list[tuple[str, bool, int | None, bool, bool]] = []
         current_w = 0
@@ -953,6 +976,48 @@ class SpeechBubble(QWidget):
         if run:
             units.extend(cls._latin_wrap_units(run))
         return units or [word]
+
+    @classmethod
+    def _reveal_units(cls, text: str) -> list[str]:
+        """Split stream text into units that should advance one highlight tick."""
+        units: list[str] = []
+        run = ""
+        for ch in text:
+            if ch.isspace():
+                if run:
+                    units.append(run)
+                    run = ""
+                continue
+            if cls._is_cjk(ch):
+                if run:
+                    units.append(run)
+                    run = ""
+                units.append(ch)
+            else:
+                run += ch
+        if run:
+            units.append(run)
+        return units
+
+    @classmethod
+    def _join_reveal_units(cls, units: list[str]) -> str:
+        """Join reveal units without adding spaces inside CJK text."""
+        out = ""
+        prev = ""
+        for unit in units:
+            if not unit:
+                continue
+            if out and cls._space_between_reveal_units(prev, unit):
+                out += " "
+            out += unit
+            prev = unit
+        return out
+
+    @classmethod
+    def _space_between_reveal_units(cls, left: str, right: str) -> bool:
+        if not left or not right:
+            return False
+        return not cls._is_cjk(left[-1]) and not cls._is_cjk(right[0])
 
     @staticmethod
     def _latin_wrap_units(text: str) -> list[str]:

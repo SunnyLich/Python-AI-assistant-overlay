@@ -13,13 +13,22 @@
 # Source, docs, and config stay LF so cross-platform tooling and diffs are
 # stable even when a developer has core.autocrlf=true.
 .gitattributes text eol=lf
+.gitignore     text eol=lf
+.env.example   text eol=lf
 *.md      text eol=lf
 *.py      text eol=lf
 *.toml    text eol=lf
 *.txt     text eol=lf
 *.ps1     text eol=lf
+ui/locales/qt/*.ts text eol=lf
 *.yml     text eol=lf
 *.yaml    text eol=lf
 
 # Pin file used by pyenv to select the interpreter.
 .python-version text eol=lf
+
+# Binary/generated assets should not receive text normalization or noisy diffs.
+*.ico     binary
+*.png     binary
+*.wav     binary
+*.qm      binary

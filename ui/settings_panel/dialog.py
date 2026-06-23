@@ -8,7 +8,9 @@ Launch via tray icon â†’ Settings, or call open_settings().
 from __future__ import annotations
 import os
 import sys
+import importlib.util
 import logging
+import subprocess
 import threading
 import re
 from contextlib import contextmanager
@@ -16,7 +18,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QLineEdit, QTextEdit, QComboBox, QCheckBox,
     QPushButton, QTabWidget, QWidget, QFrame, QGroupBox, QMessageBox,
-    QScrollArea, QSizePolicy, QCompleter, QMenu,
+    QScrollArea, QSizePolicy, QCompleter, QMenu, QSlider,
 )
 from PySide6.QtCore import Qt, QTimer, QObject, Signal
 from PySide6.QtGui import QFont
@@ -47,6 +49,17 @@ _SETUP_CHECK_STATUS_LABELS = {
     "warn": "WARN",
     "fail": "FAIL",
 }
+_TTS_TIMESTAMPLESS_PROVIDERS = {
+    "elevenlabs",
+    "openai",
+    "openai_compatible",
+    "gpt_sovits",
+    "kokoro",
+}
+_TTS_TIMING_NOTICE = (
+    "This provider does not send real word timestamps. The highlighted word is approximate "
+    "and may not match the speech exactly."
+)
 
 
 # Sentinel data value for the "Custom / enter manually…" model combo entry.
@@ -254,7 +267,7 @@ class SettingsDialog(QDialog):
         self.setModal(False)
         enable_standard_window_controls(self)
         self._env = _read_env()
-        self._fields: dict[str, QLineEdit | QComboBox | QCheckBox | QTextEdit] = {}
+        self._fields: dict[str, QLineEdit | QComboBox | QCheckBox | QTextEdit | QSlider] = {}
         # Theme color templates: {"light": {bg,surface,text,accent}, "dark": {...}}.
         # The four App-tab swatches edit whichever mode is selected in the Theme
         # combo; switching modes swaps these without losing the other mode's edits.
@@ -281,6 +294,8 @@ class SettingsDialog(QDialog):
         self._active_preset_slug = self._env.get(_SETTINGS_PRESET_KEY, "")
         self._pending_test_results: list[tuple[str, int, bool, str]] = []
         self._pending_test_results_lock = threading.Lock()
+        self._pending_test_progress: list[tuple[str, int, str]] = []
+        self._pending_test_progress_lock = threading.Lock()
         self._pending_status_results: list[tuple[int, str, object, str]] = []
         self._pending_status_results_lock = threading.Lock()
         self._running_test_tokens: set[tuple[str, int]] = set()
@@ -2030,7 +2045,7 @@ class SettingsDialog(QDialog):
         # ── PROVIDER card ─────────────────────────────────────────────────
         provider_card, provider_cv = self._card("Provider")
         self._fields["TTS_PROVIDER"] = self._combo(
-            ["cartesia", "elevenlabs", "openai", "openai_compatible", "none"]
+            ["cartesia", "elevenlabs", "openai", "openai_compatible", "gpt_sovits", "kokoro", "none"]
         )
         tts_provider_tip = "Choose which service speaks assistant replies. None disables generated voice output."
         self._fields["TTS_PROVIDER"].currentIndexChanged.connect(
@@ -2041,6 +2056,11 @@ class SettingsDialog(QDialog):
         pf.setContentsMargins(0, 0, 0, 0)
         pf.setSpacing(8)
         pf.addRow(_tooltip_label("TTS Provider", tts_provider_tip), self._fields["TTS_PROVIDER"])
+        self._tts_timing_notice_lbl = QLabel(t(_TTS_TIMING_NOTICE))
+        self._tts_timing_notice_lbl.setObjectName("ttsTimingNotice")
+        self._tts_timing_notice_lbl.setWordWrap(True)
+        self._tts_timing_notice_lbl.setStyleSheet("color: #d8932a;")
+        pf.addRow("", self._tts_timing_notice_lbl)
         provider_cv.addWidget(pf_w)
         outer.addWidget(provider_card)
 
@@ -2181,6 +2201,51 @@ class SettingsDialog(QDialog):
         self._fields["TTS_CUSTOM_SAMPLE_RATE"] = QLineEdit()
         self._fields["TTS_CUSTOM_SAMPLE_RATE"].setPlaceholderText("e.g. 24000")
         custom_tts_rate_tip = "Output sample rate in Hz. Match the rate your speech server returns, commonly 24000."
+        self._fields["GPT_SOVITS_URL"] = QLineEdit()
+        self._fields["GPT_SOVITS_URL"].setPlaceholderText("http://127.0.0.1:9880")
+        gsv_url_tip = "Local GPT-SoVITS API URL. Start api_v2.py in GPT-SoVITS, then use its host and port here."
+        self._fields["GPT_SOVITS_REF_AUDIO_PATH"] = QLineEdit()
+        self._fields["GPT_SOVITS_REF_AUDIO_PATH"].setPlaceholderText(r"C:\voices\ref.wav")
+        gsv_ref_tip = "Path to a clean reference WAV on the machine running GPT-SoVITS."
+        self._fields["GPT_SOVITS_PROMPT_TEXT"] = QLineEdit()
+        self._fields["GPT_SOVITS_PROMPT_TEXT"].setPlaceholderText("Exact words spoken in the reference audio")
+        gsv_prompt_tip = "Exact transcript of the reference audio. Leave blank only if the GPT-SoVITS model can infer without it."
+        self._fields["GPT_SOVITS_PROMPT_LANG"] = QLineEdit()
+        self._fields["GPT_SOVITS_PROMPT_LANG"].setPlaceholderText("en")
+        gsv_prompt_lang_tip = "Language code for the reference audio transcript, such as en, zh, ja, ko, or yue."
+        self._fields["GPT_SOVITS_TEXT_LANG"] = QLineEdit()
+        self._fields["GPT_SOVITS_TEXT_LANG"].setPlaceholderText("en")
+        gsv_text_lang_tip = "Language code for assistant replies sent to GPT-SoVITS."
+        self._fields["GPT_SOVITS_SAMPLE_RATE"] = QLineEdit()
+        self._fields["GPT_SOVITS_SAMPLE_RATE"].setPlaceholderText("32000")
+        gsv_rate_tip = "Playback sample rate Wisp should use. The adapter resamples GPT-SoVITS output to this rate."
+        self._fields["KOKORO_VOICE"] = QLineEdit()
+        self._fields["KOKORO_VOICE"].setPlaceholderText("af_heart")
+        kokoro_voice_tip = "Built-in Kokoro voice name, such as af_heart, af_bella, af_sky, am_adam, or am_michael."
+        self._fields["KOKORO_LANG_CODE"] = QLineEdit()
+        self._fields["KOKORO_LANG_CODE"].setPlaceholderText("a")
+        kokoro_lang_tip = "Kokoro language code. Use a for American English, b for British English, e for Spanish, f for French."
+        self._fields["KOKORO_SPEED"] = QLineEdit()
+        self._fields["KOKORO_SPEED"].setPlaceholderText("1.0")
+        kokoro_speed_tip = "Speech speed multiplier. 1.0 is normal."
+        self._fields["KOKORO_SAMPLE_RATE"] = QLineEdit()
+        self._fields["KOKORO_SAMPLE_RATE"].setPlaceholderText("24000")
+        kokoro_rate_tip = "Kokoro's normal output is 24000 Hz. Keep this unless you have a reason to resample."
+        self._fields["TTS_VOLUME"] = QSlider(Qt.Orientation.Horizontal)
+        self._fields["TTS_VOLUME"].setRange(0, 150)
+        self._fields["TTS_VOLUME"].setSingleStep(5)
+        self._fields["TTS_VOLUME"].setPageStep(10)
+        self._fields["TTS_VOLUME"].setTickPosition(QSlider.TickPosition.TicksBelow)
+        self._fields["TTS_VOLUME"].setTickInterval(25)
+        tts_volume_tip = "Playback volume for generated speech. 100% is normal."
+        self._tts_volume_value_lbl = QLabel("100%")
+        self._tts_volume_value_lbl.setMinimumWidth(44)
+
+        def _update_volume_label(value: int) -> None:
+            """Update the visible TTS volume percentage."""
+            self._tts_volume_value_lbl.setText(f"{int(value)}%")
+
+        self._fields["TTS_VOLUME"].valueChanged.connect(_update_volume_label)
 
         # Cartesia group
         cartesia_w = QWidget()
@@ -2231,18 +2296,73 @@ class SettingsDialog(QDialog):
             self._fields["TTS_CUSTOM_SAMPLE_RATE"],
         )
 
-        for gw in (cartesia_w, eleven_w, openai_w, custom_w):
+        # GPT-SoVITS local API group
+        gsv_w = QWidget()
+        gsvf = _expanding_form_layout(gsv_w)
+        gsvf.setContentsMargins(0, 0, 0, 0)
+        gsvf.setSpacing(8)
+        gsv_note = QLabel(
+            f"<small>{t('Runs through a local GPT-SoVITS api_v2.py server. No cloud key is needed.')}</small>"
+        )
+        gsv_note.setWordWrap(True)
+        gsvf.addRow(gsv_note)
+        gsvf.addRow(_tooltip_label("API URL", gsv_url_tip), self._fields["GPT_SOVITS_URL"])
+        gsvf.addRow(_tooltip_label("Reference audio", gsv_ref_tip), self._fields["GPT_SOVITS_REF_AUDIO_PATH"])
+        gsvf.addRow(_tooltip_label("Reference transcript", gsv_prompt_tip), self._fields["GPT_SOVITS_PROMPT_TEXT"])
+        gsvf.addRow(_tooltip_label("Reference language", gsv_prompt_lang_tip), self._fields["GPT_SOVITS_PROMPT_LANG"])
+        gsvf.addRow(_tooltip_label("Reply language", gsv_text_lang_tip), self._fields["GPT_SOVITS_TEXT_LANG"])
+        gsvf.addRow(_tooltip_label("Playback sample rate (Hz)", gsv_rate_tip), self._fields["GPT_SOVITS_SAMPLE_RATE"])
+
+        # Kokoro local library group
+        kokoro_w = QWidget()
+        kf = _expanding_form_layout(kokoro_w)
+        kf.setContentsMargins(0, 0, 0, 0)
+        kf.setSpacing(8)
+        kokoro_note = QLabel(
+            f"<small>{t('Runs Kokoro directly in Wisp. No server, API key, reference audio, or voice clone is needed.')}</small>"
+        )
+        kokoro_note.setWordWrap(True)
+        self._kokoro_install_btn = QPushButton(t("Install Kokoro"))
+        self._kokoro_install_btn.clicked.connect(self._install_kokoro)
+        self._kokoro_install_status_lbl = QLabel()
+        self._kokoro_install_status_lbl.setWordWrap(True)
+        kf.addRow(kokoro_note)
+        kf.addRow(self._kokoro_install_btn, self._kokoro_install_status_lbl)
+        kf.addRow(_tooltip_label("Voice", kokoro_voice_tip), self._fields["KOKORO_VOICE"])
+        kf.addRow(_tooltip_label("Language code", kokoro_lang_tip), self._fields["KOKORO_LANG_CODE"])
+        kf.addRow(_tooltip_label("Speed", kokoro_speed_tip), self._fields["KOKORO_SPEED"])
+        kf.addRow(_tooltip_label("Sample rate (Hz)", kokoro_rate_tip), self._fields["KOKORO_SAMPLE_RATE"])
+
+        for gw in (cartesia_w, eleven_w, openai_w, custom_w, gsv_w, kokoro_w):
             keys_cv.addWidget(gw)
         self._tts_provider_groups = {
             "cartesia": cartesia_w,
             "elevenlabs": eleven_w,
             "openai": openai_w,
             "openai_compatible": custom_w,
+            "gpt_sovits": gsv_w,
+            "kokoro": kokoro_w,
         }
         # Sit directly under the Provider card (index 0) — the voice/key fields
         # belong with the provider that selects them, above the STT section.
         outer.insertWidget(1, keys_card)
         self._tts_provider_card = keys_card
+
+        # ── PLAYBACK card ────────────────────────────────────────────────
+        playback_card, playback_cv = self._card("Playback")
+        playback_w = QWidget()
+        playback_f = _expanding_form_layout(playback_w)
+        playback_f.setContentsMargins(0, 0, 0, 0)
+        playback_f.setSpacing(8)
+        volume_row = QWidget()
+        volume_h = QHBoxLayout(volume_row)
+        volume_h.setContentsMargins(0, 0, 0, 0)
+        volume_h.setSpacing(8)
+        volume_h.addWidget(self._fields["TTS_VOLUME"], 1)
+        volume_h.addWidget(self._tts_volume_value_lbl, 0)
+        playback_f.addRow(_tooltip_label("Volume", tts_volume_tip), volume_row)
+        playback_cv.addWidget(playback_w)
+        outer.addWidget(playback_card)
 
         # ── TEST card ─────────────────────────────────────────────────────
         test_card, test_cv = self._card("Test")
@@ -2253,6 +2373,7 @@ class SettingsDialog(QDialog):
         outer.addWidget(test_card)
 
         self._update_tts_provider_fields()
+        self._refresh_kokoro_install_status()
         outer.addStretch()
         scroll.setWidget(w)
         return scroll
@@ -2269,6 +2390,155 @@ class SettingsDialog(QDialog):
         card = getattr(self, "_tts_provider_card", None)
         if card is not None:
             card.setVisible(provider != "none")
+        notice = getattr(self, "_tts_timing_notice_lbl", None)
+        if isinstance(notice, QLabel):
+            notice.setVisible(provider in _TTS_TIMESTAMPLESS_PROVIDERS)
+            notice.setText(t(_TTS_TIMING_NOTICE))
+        if provider == "kokoro":
+            self._refresh_kokoro_install_status()
+
+    def _kokoro_installed(self) -> bool:
+        """Return True when the optional Kokoro package is importable."""
+        try:
+            importlib.invalidate_caches()
+            return importlib.util.find_spec("kokoro") is not None
+        except Exception:
+            return False
+
+    def _refresh_kokoro_install_status(self) -> None:
+        """Refresh Kokoro install button and status copy."""
+        label = getattr(self, "_kokoro_install_status_lbl", None)
+        button = getattr(self, "_kokoro_install_btn", None)
+        if not isinstance(label, QLabel) or not isinstance(button, QPushButton):
+            return
+        if self._kokoro_installed():
+            button.setEnabled(False)
+            button.setText(t("Kokoro installed"))
+            self._set_test_status(label, True, "Kokoro is installed.")
+        else:
+            button.setEnabled(True)
+            button.setText(t("Install Kokoro"))
+            self._set_test_status(label, "warn", "Kokoro is not installed.")
+
+    def _install_kokoro(self) -> None:
+        """Confirm and install optional Kokoro dependencies into Wisp's Python."""
+        if self._kokoro_installed():
+            self._refresh_kokoro_install_status()
+            return
+        voice = _get(self._fields["KOKORO_VOICE"]).strip() or "af_heart"
+        lang_code = _get(self._fields["KOKORO_LANG_CODE"]).strip() or "a"
+        speed = _get(self._fields["KOKORO_SPEED"]).strip() or "1.0"
+        sample_rate = _get(self._fields["KOKORO_SAMPLE_RATE"]).strip() or "24000"
+        volume = _get(self._fields["TTS_VOLUME"]).strip() or "1.0"
+        message = t(
+            "Wisp will install Kokoro into this Python environment.\n\n"
+            "Packages: kokoro>=0.9.4, soundfile\n"
+            "Estimated storage: up to about 2 GB if speech dependencies are missing; less if they are already installed. "
+            "First use may also download the Kokoro model cache.\n\n"
+            "Current Kokoro settings:\n"
+            "Voice: {voice}\n"
+            "Language code: {lang_code}\n"
+            "Speed: {speed}\n"
+            "Sample rate: {sample_rate} Hz\n"
+            "Volume: {volume}\n\n"
+            "On Windows, Kokoro may also need eSpeak NG installed separately if Test TTS reports a phoneme/espeak error.\n\n"
+            "Continue?"
+        ).format(
+            voice=voice,
+            lang_code=lang_code,
+            speed=speed,
+            sample_rate=sample_rate,
+            volume=volume,
+        )
+        answer = QMessageBox.question(
+            self,
+            t("Install Kokoro"),
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        button = getattr(self, "_kokoro_install_btn", None)
+        if isinstance(button, QPushButton):
+            button.setEnabled(False)
+        status = getattr(self, "_kokoro_install_status_lbl", None)
+        if not isinstance(status, QLabel):
+            return
+
+        test_key = "kokoro_install"
+        token = self._latest_test_token.get(test_key, 0) + 1
+        self._latest_test_token[test_key] = token
+        self._running_test_tokens.add((test_key, token))
+        self._set_test_pending(status, "Installing Kokoro: starting pip.")
+
+        def _progress(message: str) -> None:
+            self._queue_test_progress(test_key, token, message)
+
+        def _runner() -> tuple[bool, str]:
+            """Install Kokoro with pip in the current Python environment."""
+            command = [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--progress-bar=raw",
+                "kokoro>=0.9.4",
+                "soundfile",
+            ]
+            print(f"[kokoro install] Running: {' '.join(command)}", flush=True)
+            _settings_log.info("Installing Kokoro with command: %s", command)
+            _progress("Installing Kokoro: starting pip.")
+            tail: list[str] = []
+            last_progress = "Installing Kokoro: starting pip."
+            try:
+                process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+            except Exception as exc:
+                print(f"[kokoro install] Failed to start pip: {exc}", flush=True)
+                _settings_log.exception("Kokoro install could not start pip")
+                return False, f"Kokoro install failed: {exc}"
+            assert process.stdout is not None
+            print(f"[kokoro install] pip started with pid {process.pid}", flush=True)
+            for raw_line in process.stdout:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                print(f"[kokoro install] {line}", flush=True)
+                _settings_log.info("Kokoro install: %s", line)
+                tail.append(line)
+                tail = tail[-30:]
+                progress_message = _kokoro_install_progress_text(line)
+                if progress_message != last_progress:
+                    _progress(progress_message)
+                    last_progress = progress_message
+            returncode = process.wait()
+            if returncode == 0:
+                importlib.invalidate_caches()
+                print("[kokoro install] Completed successfully.", flush=True)
+                return True, "Kokoro installed. Click Test TTS to download/load the voice."
+            detail = "\n".join(tail).strip()
+            if len(detail) > 800:
+                detail = detail[-800:]
+            return False, f"Kokoro install failed: {detail or 'pip exited with an error.'}"
+
+        def _worker() -> None:
+            try:
+                ok, result_message = _runner()
+            except Exception as exc:
+                ok, result_message = False, f"Kokoro install failed: {exc}"
+            with self._pending_test_results_lock:
+                self._pending_test_results.append((test_key, token, ok, result_message))
+
+        threading.Thread(target=_worker, daemon=True, name="kokoro-install").start()
+        if not self._test_result_timer.isActive():
+            self._test_result_timer.start()
 
     def _tab_prompt(self) -> QWidget:
         """Handle tab prompt for settings dialog."""
@@ -3821,6 +4091,17 @@ class SettingsDialog(QDialog):
         _set(self._fields["TTS_CUSTOM_VOICE"], self._env.get("TTS_CUSTOM_VOICE", cfg.TTS_CUSTOM_VOICE))
         _set(self._fields["TTS_CUSTOM_MODEL"], self._env.get("TTS_CUSTOM_MODEL", cfg.TTS_CUSTOM_MODEL))
         _set(self._fields["TTS_CUSTOM_SAMPLE_RATE"], self._env.get("TTS_CUSTOM_SAMPLE_RATE", str(cfg.TTS_CUSTOM_SAMPLE_RATE)))
+        _set(self._fields["GPT_SOVITS_URL"], self._env.get("GPT_SOVITS_URL", cfg.GPT_SOVITS_URL))
+        _set(self._fields["GPT_SOVITS_REF_AUDIO_PATH"], self._env.get("GPT_SOVITS_REF_AUDIO_PATH", cfg.GPT_SOVITS_REF_AUDIO_PATH))
+        _set(self._fields["GPT_SOVITS_PROMPT_TEXT"], self._env.get("GPT_SOVITS_PROMPT_TEXT", cfg.GPT_SOVITS_PROMPT_TEXT))
+        _set(self._fields["GPT_SOVITS_PROMPT_LANG"], self._env.get("GPT_SOVITS_PROMPT_LANG", cfg.GPT_SOVITS_PROMPT_LANG))
+        _set(self._fields["GPT_SOVITS_TEXT_LANG"], self._env.get("GPT_SOVITS_TEXT_LANG", cfg.GPT_SOVITS_TEXT_LANG))
+        _set(self._fields["GPT_SOVITS_SAMPLE_RATE"], self._env.get("GPT_SOVITS_SAMPLE_RATE", str(cfg.GPT_SOVITS_SAMPLE_RATE)))
+        _set(self._fields["KOKORO_VOICE"], self._env.get("KOKORO_VOICE", cfg.KOKORO_VOICE))
+        _set(self._fields["KOKORO_LANG_CODE"], self._env.get("KOKORO_LANG_CODE", cfg.KOKORO_LANG_CODE))
+        _set(self._fields["KOKORO_SPEED"], self._env.get("KOKORO_SPEED", str(cfg.KOKORO_SPEED)))
+        _set(self._fields["KOKORO_SAMPLE_RATE"], self._env.get("KOKORO_SAMPLE_RATE", str(cfg.KOKORO_SAMPLE_RATE)))
+        _set(self._fields["TTS_VOLUME"], self._env.get("TTS_VOLUME", str(getattr(cfg, "TTS_VOLUME", 1.0))))
         self._update_tts_provider_fields()
         _set(self._fields["STT_MODEL"], self._env.get("STT_MODEL", cfg.STT_MODEL))
         self._rebuild_stt_languages()  # drop yue if the loaded model isn't large-v3
@@ -4108,6 +4389,11 @@ class SettingsDialog(QDialog):
         label.setText(_translate_status_message(message))
         label.setStyleSheet("color: #c0c040;")
 
+    def _queue_test_progress(self, test_key: str, token: int, message: str) -> None:
+        """Queue an in-progress status update from a worker thread."""
+        with self._pending_test_progress_lock:
+            self._pending_test_progress.append((test_key, token, message))
+
     def _set_status_label(self, label: QLabel, ok, message: str) -> None:
         """Set status label."""
         if ok is None:
@@ -4140,6 +4426,8 @@ class SettingsDialog(QDialog):
         self._latest_test_token.clear()
         with self._pending_test_results_lock:
             self._pending_test_results.clear()
+        with self._pending_test_progress_lock:
+            self._pending_test_progress.clear()
         if self._test_result_timer.isActive():
             self._test_result_timer.stop()
         for timer_name in ("_auth_poll_timer", "_github_auth_poll_timer"):
@@ -4225,14 +4513,21 @@ class SettingsDialog(QDialog):
         if not self._status_refresh_running and not pending:
             self._status_result_timer.stop()
 
-    def _start_async_test(self, test_key: str, status_label: QLabel, runner) -> None:
+    def _start_async_test(
+        self,
+        test_key: str,
+        status_label: QLabel,
+        runner,
+        *,
+        pending_message: str = "Testing...",
+    ) -> None:
         """Start async test."""
         if getattr(self, "_disposing", False):
             return
         token = self._latest_test_token.get(test_key, 0) + 1
         self._latest_test_token[test_key] = token
         self._running_test_tokens.add((test_key, token))
-        self._set_test_pending(status_label)
+        self._set_test_pending(status_label, pending_message)
 
         def _worker() -> None:
             """Handle worker for settings dialog."""
@@ -4252,9 +4547,18 @@ class SettingsDialog(QDialog):
         if getattr(self, "_disposing", False):
             self._cancel_async_ui_updates()
             return
+        with self._pending_test_progress_lock:
+            progress = list(self._pending_test_progress)
+            self._pending_test_progress.clear()
         with self._pending_test_results_lock:
             pending = list(self._pending_test_results)
             self._pending_test_results.clear()
+        for test_key, token, message in progress:
+            if self._latest_test_token.get(test_key) != token:
+                continue
+            label = getattr(self, f"_{test_key}_status_lbl", None)
+            if isinstance(label, QLabel):
+                self._set_test_pending(label, message)
         for test_key, token, ok, message in pending:
             self._running_test_tokens.discard((test_key, token))
             if self._latest_test_token.get(test_key) != token:
@@ -4262,7 +4566,13 @@ class SettingsDialog(QDialog):
             label = getattr(self, f"_{test_key}_status_lbl", None)
             if isinstance(label, QLabel):
                 self._set_test_status(label, ok, message)
-        if not self._running_test_tokens and not pending:
+            if test_key == "kokoro_install" and ok:
+                self._refresh_kokoro_install_status()
+            elif test_key == "kokoro_install":
+                button = getattr(self, "_kokoro_install_btn", None)
+                if isinstance(button, QPushButton):
+                    button.setEnabled(True)
+        if not self._running_test_tokens and not pending and not progress:
             self._test_result_timer.stop()
 
     def _test_llm_route(self, *, section_key: str, route_name: str, status_label: QLabel, image: bool = False) -> None:
@@ -4378,6 +4688,13 @@ class SettingsDialog(QDialog):
         custom_api_key = self._effective_secret_value("TTS_CUSTOM_API_KEY")
         custom_voice = _get(self._fields["TTS_CUSTOM_VOICE"]).strip()
         custom_model = _get(self._fields["TTS_CUSTOM_MODEL"]).strip()
+        gpt_sovits_url = _get(self._fields["GPT_SOVITS_URL"]).strip()
+        gpt_sovits_ref_audio_path = _get(self._fields["GPT_SOVITS_REF_AUDIO_PATH"]).strip()
+        gpt_sovits_prompt_text = _get(self._fields["GPT_SOVITS_PROMPT_TEXT"]).strip()
+        gpt_sovits_prompt_lang = _get(self._fields["GPT_SOVITS_PROMPT_LANG"]).strip()
+        gpt_sovits_text_lang = _get(self._fields["GPT_SOVITS_TEXT_LANG"]).strip()
+        kokoro_voice = _get(self._fields["KOKORO_VOICE"]).strip()
+        kokoro_lang_code = _get(self._fields["KOKORO_LANG_CODE"]).strip()
         self._start_async_test(
             "tts_test",
             self._tts_test_status_lbl,
@@ -4393,6 +4710,13 @@ class SettingsDialog(QDialog):
                 custom_api_key=custom_api_key,
                 custom_voice=custom_voice,
                 custom_model=custom_model,
+                gpt_sovits_url=gpt_sovits_url,
+                gpt_sovits_ref_audio_path=gpt_sovits_ref_audio_path,
+                gpt_sovits_prompt_text=gpt_sovits_prompt_text,
+                gpt_sovits_prompt_lang=gpt_sovits_prompt_lang,
+                gpt_sovits_text_lang=gpt_sovits_text_lang,
+                kokoro_voice=kokoro_voice,
+                kokoro_lang_code=kokoro_lang_code,
             ),
         )
 
@@ -4689,6 +5013,10 @@ class SettingsDialog(QDialog):
                 "ELEVENLABS_VOICE_ID", "ELEVENLABS_MODEL",
                 "OPENAI_TTS_VOICE", "OPENAI_TTS_MODEL",
                 "TTS_CUSTOM_BASE_URL", "TTS_CUSTOM_VOICE", "TTS_CUSTOM_MODEL", "TTS_CUSTOM_SAMPLE_RATE",
+                "GPT_SOVITS_URL", "GPT_SOVITS_REF_AUDIO_PATH", "GPT_SOVITS_PROMPT_TEXT",
+                "GPT_SOVITS_PROMPT_LANG", "GPT_SOVITS_TEXT_LANG", "GPT_SOVITS_SAMPLE_RATE",
+                "KOKORO_VOICE", "KOKORO_LANG_CODE", "KOKORO_SPEED", "KOKORO_SAMPLE_RATE",
+                "TTS_VOLUME",
                 "STT_MODEL", "STT_COMPUTE_TYPE", "STT_LANGUAGE", "STT_BEAM_SIZE", "STT_DEVICE",
             },
             "Prompts": {
@@ -5039,6 +5367,17 @@ class SettingsDialog(QDialog):
             "TTS_CUSTOM_VOICE":  _get(self._fields["TTS_CUSTOM_VOICE"]),
             "TTS_CUSTOM_MODEL":  _get(self._fields["TTS_CUSTOM_MODEL"]),
             "TTS_CUSTOM_SAMPLE_RATE": _get(self._fields["TTS_CUSTOM_SAMPLE_RATE"]),
+            "GPT_SOVITS_URL": _get(self._fields["GPT_SOVITS_URL"]),
+            "GPT_SOVITS_REF_AUDIO_PATH": _get(self._fields["GPT_SOVITS_REF_AUDIO_PATH"]),
+            "GPT_SOVITS_PROMPT_TEXT": _get(self._fields["GPT_SOVITS_PROMPT_TEXT"]),
+            "GPT_SOVITS_PROMPT_LANG": _get(self._fields["GPT_SOVITS_PROMPT_LANG"]),
+            "GPT_SOVITS_TEXT_LANG": _get(self._fields["GPT_SOVITS_TEXT_LANG"]),
+            "GPT_SOVITS_SAMPLE_RATE": _get(self._fields["GPT_SOVITS_SAMPLE_RATE"]),
+            "KOKORO_VOICE": _get(self._fields["KOKORO_VOICE"]),
+            "KOKORO_LANG_CODE": _get(self._fields["KOKORO_LANG_CODE"]),
+            "KOKORO_SPEED": _get(self._fields["KOKORO_SPEED"]),
+            "KOKORO_SAMPLE_RATE": _get(self._fields["KOKORO_SAMPLE_RATE"]),
+            "TTS_VOLUME": _get(self._fields["TTS_VOLUME"]),
             "STT_MODEL":         _get(self._fields["STT_MODEL"]),
             "STT_COMPUTE_TYPE":  _get(self._fields["STT_COMPUTE_TYPE"]),
             "STT_LANGUAGE":      _get(self._fields["STT_LANGUAGE"]),
@@ -5324,6 +5663,8 @@ _PROVIDER_LABELS: dict[str, str] = {
     "cartesia":   "Cartesia",
     "elevenlabs": "ElevenLabs",
     "openai_compatible": "OpenAI-compatible (custom)",
+    "gpt_sovits": "GPT-SoVITS (local)",
+    "kokoro": "Kokoro (local)",
     "none":       "None",
 }
 
@@ -5379,6 +5720,15 @@ def _set(widget, value: str):
         widget.setText(value)
     elif isinstance(widget, QTextEdit):
         widget.setPlainText(value)
+    elif isinstance(widget, QSlider):
+        try:
+            if "." in str(value):
+                widget.setValue(int(round(float(value) * 100)))
+            else:
+                raw = int(str(value).strip())
+                widget.setValue(raw if raw > 2 else raw * 100)
+        except Exception:
+            widget.setValue(100)
 
 
 def _get(widget) -> str:
@@ -5390,6 +5740,8 @@ def _get(widget) -> str:
         return widget.text()
     elif isinstance(widget, QTextEdit):
         return widget.toPlainText()
+    elif isinstance(widget, QSlider):
+        return f"{widget.value() / 100:.2f}".rstrip("0").rstrip(".")
     return ""
 
 
@@ -5455,6 +5807,24 @@ def _translate_status_value(value: str) -> str:
     return text
 
 
+def _kokoro_install_progress_text(line: str) -> str:
+    """Return a short user-facing install phase for a raw pip output line."""
+    lower = str(line or "").lower()
+    if "requirement already satisfied" in lower:
+        detail = "checking installed packages"
+    elif "collecting " in lower or "looking in indexes" in lower or "resolving" in lower:
+        detail = "resolving packages"
+    elif "downloading" in lower or "progress " in lower:
+        detail = "downloading packages"
+    elif "installing collected packages" in lower:
+        detail = "installing packages"
+    elif "successfully installed" in lower:
+        detail = "finalizing"
+    else:
+        detail = "working - see terminal for full pip log"
+    return f"Installing Kokoro: {detail}."
+
+
 def _translate_status_message(message: str) -> str:
     """Handle translate status message for UI settings panel dialog."""
     text = str(message or "")
@@ -5470,6 +5840,8 @@ def _translate_status_message(message: str) -> str:
         (r"^Screen recording permission: (?P<value>.+)\.$", "Screen recording permission: {value}."),
         (r"^Microphone permission: (?P<value>.+)\.$", "Microphone permission: {value}."),
         (r"^LLM test failed: (?P<message>.+)$", "LLM test failed: {message}"),
+        (r"^Kokoro install failed: (?P<message>.+)$", "Kokoro install failed: {message}"),
+        (r"^Installing Kokoro: (?P<detail>.+)\.$", "Installing Kokoro: {detail}."),
         (r"^LLM route uses (?P<provider>.+) but you are not logged in\.$", "LLM route uses {provider} but you are not logged in."),
     )
     for pattern, template in dynamic_patterns:
@@ -5480,6 +5852,8 @@ def _translate_status_message(message: str) -> str:
                 groups["message"] = _translate_status_message(groups["message"])
             if "value" in groups:
                 groups["value"] = _translate_status_value(groups["value"])
+            if "detail" in groups:
+                groups["detail"] = t(groups["detail"])
             return t(template).format(**groups)
     for prefix in (
         "Error reading status: ",

@@ -677,6 +677,11 @@ def _load_config() -> None:
     global ELEVENLABS_VOICE_ID, ELEVENLABS_MODEL
     global OPENAI_TTS_VOICE, OPENAI_TTS_MODEL
     global TTS_CUSTOM_BASE_URL, TTS_CUSTOM_VOICE, TTS_CUSTOM_MODEL, TTS_CUSTOM_SAMPLE_RATE
+    global GPT_SOVITS_URL, GPT_SOVITS_REF_AUDIO_PATH, GPT_SOVITS_PROMPT_TEXT
+    global GPT_SOVITS_PROMPT_LANG, GPT_SOVITS_TEXT_LANG, GPT_SOVITS_SAMPLE_RATE
+    global GPT_SOVITS_TEXT_SPLIT_METHOD, GPT_SOVITS_BATCH_SIZE, GPT_SOVITS_SPEED_FACTOR
+    global GPT_SOVITS_SEED, GPT_SOVITS_TIMEOUT_SECONDS
+    global KOKORO_VOICE, KOKORO_LANG_CODE, KOKORO_SPEED, KOKORO_SAMPLE_RATE, KOKORO_SPLIT_PATTERN
     global THEME_MODE, DARK_MODE, ICON_AUTO_HIDE, CHAT_AUTO_ELABORATE, CHAT_ELABORATE_PROMPT
     global TRUST_PRIVACY_MODE
     global APP_LANGUAGE, ASSISTANT_LANGUAGE
@@ -698,7 +703,7 @@ def _load_config() -> None:
     global BUBBLE_SCROLL_ENABLED, BUBBLE_SCROLL_SNAP_ENABLED, BUBBLE_SCROLL_SNAP_DELAY_MS
     global ICON_SIZE, ICON_BACKSTOP_MS, BUBBLE_HIDE_DELAY_MS
     global BUBBLE_REVEAL_WPM, BUBBLE_HOLD_REVEAL_WPM
-    global TTS_PLAYBACK_RATE, TTS_HOLD_PLAYBACK_RATE
+    global TTS_PLAYBACK_RATE, TTS_HOLD_PLAYBACK_RATE, TTS_VOLUME
     global MEMORY_LLM_PROVIDER, MEMORY_LLM_MODEL, MEMORY_LLM_FALLBACKS, MEMORY_AUTO_CONSOLIDATE
     global MEMORY_CONSOLIDATION_INTERVAL, MEMORY_TOP_K, MEMORY_STM_TOKEN_BUDGET
     global SETTINGS
@@ -744,7 +749,7 @@ def _load_config() -> None:
     VISION_LLM_FALLBACKS = os.getenv("VISION_LLM_FALLBACKS", "")
 
     # --- TTS ---
-    # cartesia | elevenlabs | openai | openai_compatible | none
+    # cartesia | elevenlabs | openai | openai_compatible | gpt_sovits | kokoro | none
     TTS_PROVIDER      = os.getenv("TTS_PROVIDER", "none")
     CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "")
     # ElevenLabs: voice id is optional (blank uses the account default voice).
@@ -760,6 +765,25 @@ def _load_config() -> None:
     TTS_CUSTOM_VOICE       = os.getenv("TTS_CUSTOM_VOICE", "")
     TTS_CUSTOM_MODEL       = os.getenv("TTS_CUSTOM_MODEL", "")
     TTS_CUSTOM_SAMPLE_RATE = env_int("TTS_CUSTOM_SAMPLE_RATE", 24000)
+    # GPT-SoVITS local api_v2.py server. The app only calls the local HTTP API;
+    # GPT-SoVITS itself is installed/run separately by the user.
+    GPT_SOVITS_URL = os.getenv("GPT_SOVITS_URL", "http://127.0.0.1:9880")
+    GPT_SOVITS_REF_AUDIO_PATH = os.getenv("GPT_SOVITS_REF_AUDIO_PATH", "")
+    GPT_SOVITS_PROMPT_TEXT = os.getenv("GPT_SOVITS_PROMPT_TEXT", "")
+    GPT_SOVITS_PROMPT_LANG = os.getenv("GPT_SOVITS_PROMPT_LANG", "en")
+    GPT_SOVITS_TEXT_LANG = os.getenv("GPT_SOVITS_TEXT_LANG", "en")
+    GPT_SOVITS_SAMPLE_RATE = env_int("GPT_SOVITS_SAMPLE_RATE", 32000)
+    GPT_SOVITS_TEXT_SPLIT_METHOD = os.getenv("GPT_SOVITS_TEXT_SPLIT_METHOD", "cut5")
+    GPT_SOVITS_BATCH_SIZE = env_int("GPT_SOVITS_BATCH_SIZE", 1)
+    GPT_SOVITS_SPEED_FACTOR = env_float("GPT_SOVITS_SPEED_FACTOR", 1.0)
+    GPT_SOVITS_SEED = env_int("GPT_SOVITS_SEED", -1)
+    GPT_SOVITS_TIMEOUT_SECONDS = env_float("GPT_SOVITS_TIMEOUT_SECONDS", 120.0)
+    # Kokoro local Python package. No server and no reference voice are needed.
+    KOKORO_VOICE = os.getenv("KOKORO_VOICE", "af_heart")
+    KOKORO_LANG_CODE = os.getenv("KOKORO_LANG_CODE", "a")
+    KOKORO_SPEED = env_float("KOKORO_SPEED", 1.0)
+    KOKORO_SAMPLE_RATE = env_int("KOKORO_SAMPLE_RATE", 24000)
+    KOKORO_SPLIT_PATTERN = os.getenv("KOKORO_SPLIT_PATTERN", r"\n+")
 
     # --- App behaviour ---
     THEME_MODE            = os.getenv("THEME_MODE", "system")  # "dark" | "light" | "system"
@@ -907,6 +931,7 @@ def _load_config() -> None:
     BUBBLE_HOLD_REVEAL_WPM = env_int("BUBBLE_HOLD_REVEAL_WPM", 480)
     TTS_PLAYBACK_RATE      = env_float("TTS_PLAYBACK_RATE",      1.0)
     TTS_HOLD_PLAYBACK_RATE = env_float("TTS_HOLD_PLAYBACK_RATE", 1.35)
+    TTS_VOLUME             = env_float("TTS_VOLUME",             1.0)
 
     # --- Memory ---
     MEMORY_LLM_PROVIDER             = active_profile.memory_llm.provider

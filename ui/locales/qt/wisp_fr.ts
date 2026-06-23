@@ -2882,7 +2882,167 @@ Laisser le modèle décider — expose un outil de document ouvert pendant la r�
       <source>e.g. 3</source>
       <translation>p. ex. 3</translation>
     </message>
-  <message><source>These folders are the only places the model can list or read files. Each keybind chooses whether local files are off, read-only, ask-before-write, or automatic.</source><translation>Ces dossiers sont les seuls endroits où le modèle peut lister ou lire des fichiers. Chaque raccourci choisit si les fichiers locaux sont désactivés, en lecture seule, soumis à confirmation avant écriture ou automatiques.</translation></message><message><source>Read only</source><translation>Lecture seule</translation></message><message><source>Local files:</source><translation>Fichiers locaux :</translation></message><message><source>No extra tools found. Enable addons that add model tools.</source><translation>Aucun outil supplémentaire trouvé. Activez des addons qui ajoutent des outils pour le modèle.</translation></message></context>
+    <message>
+      <source>These folders are the only places the model can list or read files. Each keybind chooses whether local files are off, read-only, ask-before-write, or automatic.</source>
+      <translation>Ces dossiers sont les seuls endroits où le modèle peut lister ou lire des fichiers. Chaque raccourci choisit si les fichiers locaux sont désactivés, en lecture seule, soumis à confirmation avant écriture ou automatiques.</translation>
+    </message>
+    <message>
+      <source>Read only</source>
+      <translation>Lecture seule</translation>
+    </message>
+    <message>
+      <source>Local files:</source>
+      <translation>Fichiers locaux :</translation>
+    </message>
+    <message>
+      <source>No extra tools found. Enable addons that add model tools.</source>
+      <translation>Aucun outil supplémentaire trouvé. Activez des addons qui ajoutent des outils pour le modèle.</translation>
+    </message>
+    <message>
+      <source>Kokoro (local)</source>
+      <translation>Kokoro (local)</translation>
+    </message>
+    <message>
+      <source>Install Kokoro</source>
+      <translation>Installer Kokoro</translation>
+    </message>
+    <message>
+      <source>Kokoro installed</source>
+      <translation>Kokoro installe</translation>
+    </message>
+    <message>
+      <source>Kokoro is installed.</source>
+      <translation>Kokoro est installe.</translation>
+    </message>
+    <message>
+      <source>Kokoro is not installed.</source>
+      <translation>Kokoro n'est pas installe.</translation>
+    </message>
+    <message>
+      <source>Kokoro install failed: {message}</source>
+      <translation>L'installation de Kokoro a echoue : {message}</translation>
+    </message>
+    <message>
+      <source>Kokoro installed. Click Test TTS to download/load the voice.</source>
+      <translation>Kokoro est installe. Cliquez sur Tester TTS pour telecharger/charger la voix.</translation>
+    </message>
+    <message>
+      <source>Playback</source>
+      <translation>Lecture</translation>
+    </message>
+    <message>
+      <source>Volume</source>
+      <translation>Volume</translation>
+    </message>
+    <message>
+      <source>Playback volume for generated speech. 100% is normal.</source>
+      <translation>Volume de lecture pour la voix generee. 100 % est normal.</translation>
+    </message>
+    <message>
+      <source>Runs Kokoro directly in Wisp. No server, API key, reference audio, or voice clone is needed.</source>
+      <translation>Execute Kokoro directement dans Wisp. Aucun serveur, cle API, audio de reference ni clonage de voix n'est necessaire.</translation>
+    </message>
+    <message>
+      <source>Voice</source>
+      <translation>Voix</translation>
+    </message>
+    <message>
+      <source>Language code</source>
+      <translation>Code de langue</translation>
+    </message>
+    <message>
+      <source>Speed</source>
+      <translation>Vitesse</translation>
+    </message>
+    <message>
+      <source>Sample rate (Hz)</source>
+      <translation>Frequence d'echantillonnage (Hz)</translation>
+    </message>
+    <message>
+      <source>Built-in Kokoro voice name, such as af_heart, af_bella, af_sky, am_adam, or am_michael.</source>
+      <translation>Nom de voix integree Kokoro, par exemple af_heart, af_bella, af_sky, am_adam ou am_michael.</translation>
+    </message>
+    <message>
+      <source>Kokoro language code. Use a for American English, b for British English, e for Spanish, f for French.</source>
+      <translation>Code de langue Kokoro. Utilisez a pour l'anglais americain, b pour l'anglais britannique, e pour l'espagnol, f pour le francais.</translation>
+    </message>
+    <message>
+      <source>Speech speed multiplier. 1.0 is normal.</source>
+      <translation>Multiplicateur de vitesse de parole. 1.0 est normal.</translation>
+    </message>
+    <message>
+      <source>Kokoro's normal output is 24000 Hz. Keep this unless you have a reason to resample.</source>
+      <translation>La sortie normale de Kokoro est 24000 Hz. Gardez cette valeur sauf si vous avez une raison de reechantillonner.</translation>
+    </message>
+    <message>
+      <source>Wisp will install Kokoro into this Python environment.
+
+Packages: kokoro&gt;=0.9.4, soundfile
+Estimated storage: up to about 2 GB if speech dependencies are missing; less if they are already installed. First use may also download the Kokoro model cache.
+
+Current Kokoro settings:
+Voice: {voice}
+Language code: {lang_code}
+Speed: {speed}
+Sample rate: {sample_rate} Hz
+Volume: {volume}
+
+On Windows, Kokoro may also need eSpeak NG installed separately if Test TTS reports a phoneme/espeak error.
+
+Continue?</source>
+      <translation>Wisp va installer Kokoro dans cet environnement Python.
+
+Paquets : kokoro&gt;=0.9.4, soundfile
+Stockage estime : jusqu a environ 2 Go si des dependances vocales manquent ; moins si elles sont deja installees. La premiere utilisation peut aussi telecharger le cache du modele Kokoro.
+
+Parametres Kokoro actuels :
+Voix : {voice}
+Code de langue : {lang_code}
+Vitesse : {speed}
+Frequence d'echantillonnage : {sample_rate} Hz
+Volume : {volume}
+
+Sous Windows, Kokoro peut aussi necessiter eSpeak NG installe separement si Tester TTS signale une erreur de phonemes/espeak.
+
+Continuer ?</translation>
+    </message>
+    <message>
+      <source>Installing Kokoro...</source>
+      <translation>Installation de Kokoro...</translation>
+    </message>
+    <message>
+      <source>Installing Kokoro: {detail}.</source>
+      <translation>Installation de Kokoro : {detail}.</translation>
+    </message>
+    <message>
+      <source>starting pip</source>
+      <translation>demarrage de pip</translation>
+    </message>
+    <message>
+      <source>checking installed packages</source>
+      <translation>verification des paquets installes</translation>
+    </message>
+    <message>
+      <source>resolving packages</source>
+      <translation>resolution des paquets</translation>
+    </message>
+    <message>
+      <source>downloading packages</source>
+      <translation>telechargement des paquets</translation>
+    </message>
+    <message>
+      <source>installing packages</source>
+      <translation>installation des paquets</translation>
+    </message>
+    <message>
+      <source>finalizing</source>
+      <translation>finalisation</translation>
+    </message>
+    <message>
+      <source>working - see terminal for full pip log</source>
+      <translation>travail en cours - consultez le terminal pour le journal pip complet</translation>
+    </message>
+  </context>
   <context>
     <name>Wisp</name>
     <message>
@@ -3416,6 +3576,10 @@ Laisser le modèle décider — expose un outil de document ouvert pendant la r�
     <message>
       <source>Fetch the full readable text of a specific web page URL on demand. Use this when the user asks about a website/page and the passive browser preview is missing, partial, stale, or not enough.</source>
       <translation>Récupère à la demande le texte lisible complet d’une URL de page web précise. À utiliser lorsque l’utilisateur demande un site/une page et que l’aperçu passif du navigateur est manquant, partiel, obsolète ou insuffisant.</translation>
+    </message>
+    <message>
+      <source>This provider does not send real word timestamps. The highlighted word is approximate and may not match the speech exactly.</source>
+      <translation>Ce fournisseur n’envoie pas de véritables horodatages mot par mot. Le mot surligné est approximatif et peut ne pas correspondre exactement à la parole.</translation>
     </message>
     <message>
       <source>Custom</source>

@@ -5,11 +5,7 @@ The current architecture is supervisor-first: product flows are coordinated by
 `runtime.supervisor`, while UI, native OS work, audio, and model/brain work are
 isolated into worker processes.
 
-Rendered image:
-
-![Wisp runtime communication graph](communication_graph.png)
-
-Mermaid source: [`communication_graph.mmd`](communication_graph.mmd)
+Mermaid source for the larger runtime map: [`communication_graph.mmd`](communication_graph.mmd)
 
 ## Process Graph
 

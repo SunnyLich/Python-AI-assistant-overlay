@@ -95,6 +95,7 @@ class AudioSettings:
     tts_provider: str
     tts_playback_rate: float
     tts_hold_playback_rate: float
+    tts_volume: float
     stt_model: str
     stt_device: str
     stt_language: str
@@ -188,6 +189,7 @@ class AppSettings:
                 tts_provider=str(values.get("TTS_PROVIDER", "")),
                 tts_playback_rate=float(values.get("TTS_PLAYBACK_RATE", 1.0)),
                 tts_hold_playback_rate=float(values.get("TTS_HOLD_PLAYBACK_RATE", 1.0)),
+                tts_volume=float(values.get("TTS_VOLUME", 1.0)),
                 stt_model=str(values.get("STT_MODEL", "")),
                 stt_device=str(values.get("STT_DEVICE", "")),
                 stt_language=str(values.get("STT_LANGUAGE", "")),

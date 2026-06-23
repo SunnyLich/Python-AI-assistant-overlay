@@ -13,7 +13,7 @@ Press a hotkey, choose an intent, and Wisp captures the right context, streams t
 [![Local first](https://img.shields.io/badge/local--first-context%20and%20memory-4B8F8C?style=flat-square)](#privacy-and-control)
 [![License](https://img.shields.io/badge/license-MIT-7C3AED?style=flat-square)](#license)
 
-[Quick start](#quick-start) | [What it does](#what-wisp-does) | [Configuration](#configuration) | [Developer docs](#developer-docs)
+[Quick start](#quick-start) | [What it does](#what-wisp-does) | [Configuration](#configuration) | [Privacy](#privacy-and-control)
 
 </div>
 
@@ -23,7 +23,7 @@ Press a hotkey, choose an intent, and Wisp captures the right context, streams t
 
 Wisp is for the moments when opening a chat app would break your flow.
 
-Highlight text, press `Ctrl+Q`, hit one intent key, and Wisp asks your configured model with the current screen context already attached. Replies stream into a compact bubble next to the floating icon. If TTS is enabled, the answer is spoken as it arrives.
+Highlight text, press `Ctrl+Q`, hit one intent key, and Wisp asks your configured model with only the context sources you enabled. Replies stream into a compact bubble next to the floating icon. If TTS is enabled, the answer is spoken as it arrives.
 
 | Instead of... | Wisp lets you... |
 | --- | --- |
@@ -36,7 +36,7 @@ Highlight text, press `Ctrl+Q`, hit one intent key, and Wisp asks your configure
 ## Highlights
 
 - **Overlay first** - a floating icon, intent picker, and reply bubble stay on top without taking over your desktop.
-- **Privacy by default** - you control exactly which context sources are included, privacy mode keeps redaction warnings on, and nothing extra is sent beyond the query you make.
+- **Privacy by default** - Wisp has no hosted storage layer; data stays on your machine unless you send it to your chosen model, and privacy mode can warn or redact before sensitive context leaves.
 - **Highly customizable** - every hotkey, intent key, prompt, context source, paste-back behavior, model route, voice setting, and bubble dimension can be changed.
 - **Approachable GUI** - Settings, setup checks, privacy reports, memory tools, and model warnings explain what is happening without requiring you to read the code.
 - **Context capture** - Wisp can read selected text, clipboard text, focused UI, open documents, browser content, recent files, and optional screenshots.
@@ -53,11 +53,12 @@ Highlight text, press `Ctrl+Q`, hit one intent key, and Wisp asks your configure
 ```text
 highlight text, choose context, or draw a snip
   -> press the caller hotkey
-  -> Wisp captures only the enabled context
+  -> Wisp captures only the selected or enabled context
   -> pick an intent or type a custom prompt
+  -> send directly to your configured model provider
   -> stream model reply
   -> show bubble + optional TTS
-  -> store useful memory locally
+  -> optionally store useful memory locally
 ```
 
 Example flows:
@@ -106,47 +107,9 @@ Start Wisp Debug.sh
 
 ## Configuration
 
-Copy the example environment file:
+Use the Settings window for normal setup. It can store provider keys, choose model routes, configure voice, run a setup check, explain missing optional features, and show warnings for unsupported model capabilities.
 
-```bash
-cp .env.example .env
-```
-
-On Windows PowerShell:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Set one model route first:
-
-```env
-LLM_PROVIDER=groq
-LLM_MODEL=llama-3.1-8b-instant
-LLM_FALLBACKS=anthropic:claude-haiku-4-5; openai:gpt-5.4-mini
-```
-
-Optional vision route:
-
-```env
-VISION_LLM_PROVIDER=anthropic
-VISION_LLM_MODEL=claude-opus-4-8
-```
-
-Optional voice:
-
-```env
-STT_MODEL=base
-TTS_PROVIDER=none
-
-# Cloud / compatible TTS examples:
-# TTS_PROVIDER=cartesia
-# TTS_PROVIDER=elevenlabs
-# TTS_PROVIDER=openai
-# TTS_PROVIDER=openai_compatible
-```
-
-The Settings window can store provider keys, run a setup check, explain missing optional features, and show warnings for unsupported model capabilities.
+For source builds and advanced setups, `.env.example` documents the available configuration keys. You usually do not need to edit those by hand.
 
 ## Default Hotkeys
 
@@ -163,70 +126,22 @@ The Settings window can store provider keys, run a setup check, explain missing 
 | `S` | Custom prompt mode |
 | `Esc` | Cancel the picker |
 
-Every caller, hotkey, label, prompt, context source, paste-back setting, and UI dimension is configurable from `.env` or Settings.
+Every caller, hotkey, label, prompt, context source, paste-back setting, and UI dimension is configurable from Settings.
 
 ## Privacy And Control
 
-Wisp is designed as a local desktop assistant, not a hosted service.
+Wisp is designed as a local desktop assistant. Storage stays on your machine, and requests go directly to the model provider or local server you configure.
 
-- Your configured model provider receives only the query you make and the context sources you enabled for that caller.
+- Local data stays local: settings, chats, memory, privacy reports, and configuration are stored on your machine.
+- Model requests go straight from your machine to the provider or local server you configured.
+- Your configured model provider receives only the prompt you send and the context sources selected or enabled for that caller.
+- Wisp may inspect available context locally to show token estimates, availability, and privacy redaction counts before you send. Previewing a source does not send it to the model provider or save it as chat/memory.
 - Context is controlled per hotkey profile: ambient app context, clipboard, documents, browser pages, GitHub context, memory, tools, and screenshots can each be enabled, disabled, or routed on demand.
 - Privacy mode keeps privacy-first setup checks and warning behavior enabled, including redaction status before sensitive context is sent.
-- Memory is stored locally on disk.
 - Optional voice, document reading, browser content, screenshots, GitHub Copilot, and addons stay inactive until configured.
+- Cloud TTS, model providers, compatible servers, or GitHub Copilot are contacted only when you configure and use those features.
 - Addons run in isolated Python host processes and must declare the capabilities they need.
 - Setup checks avoid importing heavy provider, audio, or STT stacks unless the feature is enabled.
-
-## Architecture
-
-Wisp runs as one supervisor plus isolated workers:
-
-| Layer | Owns |
-| --- | --- |
-| `runtime/supervisor/` | App lifecycle, hotkeys, context buffers, worker routing |
-| `wisp-ui` worker | Qt icon, intent picker, bubble, settings, chat, memory UI |
-| `wisp-native` worker | OS capture, global hotkeys, platform integration |
-| `wisp-audio` worker | STT, TTS, filler audio, playback |
-| `wisp-brain` worker | LLM routing, tools, memory, agent flows |
-| `addons/<id>/` | Optional extensions, one host process per addon |
-
-For the longer map, read [docs/OVERVIEW.md](docs/OVERVIEW.md) and [docs/COMMUNICATION_GRAPH.md](docs/COMMUNICATION_GRAPH.md).
-
-## Development
-
-Install runtime and developer tools with the platform setup script:
-
-```powershell
-.\scripts\setup_dev.ps1
-.\.venv\Scripts\python.exe scripts\check_dev_environment.py
-```
-
-```bash
-bash scripts/setup_dev.sh
-.venv/bin/python scripts/check_dev_environment.py
-```
-
-Run tests:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest
-```
-
-```bash
-.venv/bin/python -m pytest
-```
-
-Focused lint/type baseline:
-
-```powershell
-.\.venv\Scripts\python.exe -m ruff check core\context_hotkey.py core\llm_clients\messages.py runtime\supervisor\tool_modes.py ui\agent\combo_helpers.py ui\settings_panel\helpers.py tests\test_context_hotkey_snapshot.py
-.\.venv\Scripts\python.exe -m mypy core\settings_model.py core\llm_clients\logging_utils.py runtime\supervisor\tool_modes.py ui\agent\combo_helpers.py --follow-imports=skip
-```
-
-```bash
-.venv/bin/python -m ruff check core/context_hotkey.py core/llm_clients/messages.py runtime/supervisor/tool_modes.py ui/agent/combo_helpers.py ui/settings_panel/helpers.py tests/test_context_hotkey_snapshot.py
-.venv/bin/python -m mypy core/settings_model.py core/llm_clients/logging_utils.py runtime/supervisor/tool_modes.py ui/agent/combo_helpers.py --follow-imports=skip
-```
 
 ## Platform Status
 
@@ -238,13 +153,15 @@ Focused lint/type baseline:
 | Linux X11 | Functional |
 | Linux Wayland | Limited; use X11 for the full hotkey/screenshot path |
 
-## Developer Docs
+<details>
+<summary>Contributor docs</summary>
 
 - [Developer README](docs/DEVELOPER_README.md) - setup, runtime entrypoints, checks, and debugging notes.
 - [Code overview](docs/OVERVIEW.md) - subsystem ownership and runtime boundaries.
-- [Communication graph](docs/COMMUNICATION_GRAPH.md) - supervisor, worker, UI, memory, addon, and agent flow.
 - [Addon guide](addons/README.md) - addon manifest, permissions, hooks, tools, hotkeys, and packaging.
 - [Building an EXE](docs/BUILDING_EXE.md) - Windows packaging notes.
+
+</details>
 
 ## License
 

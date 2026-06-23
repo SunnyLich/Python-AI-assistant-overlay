@@ -252,7 +252,7 @@ def test_brain_query_workflow_assembles_context_and_redacts_secrets(
     assert "[fake-llm]" in text
     assert "Selected traceback text" in text
     assert "[Browser/Web]" in text
-    assert "Context priority: Prioritize Browser/Web" in text
+    assert "[Context priority]\nPrioritize Browser/Web" in text
     assert "[REDACTED_CREDENTIAL]" in text
     assert "supersecret" not in text
     assert any(event == "reply.chunk" for event, _data in events)
@@ -517,9 +517,9 @@ def test_context_buffer_drop_priority_and_privacy_workflow():
 
     assert out.screenshot_b64 == "BASE64PNG"
     assert out.user_message == "Summarize the current task."
-    assert "Context priority: Prioritize Browser/Web" in out.ambient_ctx
-    assert out.ambient_ctx.index("Buffered Alt+Q context") < out.ambient_ctx.index("[notes.md]")
-    assert out.ambient_ctx.index("[notes.md]") < out.ambient_ctx.index("raw dropped text")
+    assert "[Context priority]\nPrioritize Browser/Web" in out.ambient_ctx
+    assert out.ambient_ctx.index("Buffered Alt+Q context") < out.ambient_ctx.index("[Document: notes.md]")
+    assert out.ambient_ctx.index("[Document: notes.md]") < out.ambient_ctx.index("raw dropped text")
     assert out.ambient_ctx.index("raw dropped text") < out.ambient_ctx.index("Selected user text")
     assert "[BEARER_TOKEN]" in out.ambient_ctx
     assert "[REDACTED_CREDENTIAL]" in out.ambient_ctx

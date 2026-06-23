@@ -40,6 +40,7 @@ Still planned:
 Entry point:
 
 - Settings button exposes a reusable setup-check entry point.
+- The old right-click menu item is not the setup-check entry point.
 - Current build: the entry point opens a lightweight setup/status dialog.
 - Future calibration work can add a fuller wizard and store completion state
   with a setting such as `WISP_SETUP_COMPLETED=true` so Wisp can suggest the

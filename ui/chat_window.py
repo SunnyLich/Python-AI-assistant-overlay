@@ -898,7 +898,7 @@ class ChatWindow(QWidget):
             f" border: 1px solid {_BORDER}; border-radius: 6px; font-size: 9pt;"
             " font-weight: 700; }}"
             f"QPushButton:hover {{ background: {_ACCENT_BG_28}; }}"
-            f"QPushButton:disabled {{ color: #666; border-color: {_WHITE_BG_10}; }}"
+            f"QPushButton:disabled {{ color: #666666; border-color: {_WHITE_BG_10}; }}"
         )
         new_chat.clicked.connect(self.start_new_conversation)
         self._new_chat_btn = new_chat
@@ -1622,7 +1622,7 @@ class ChatWindow(QWidget):
             f"QPushButton {{ background: {_ACCENT}; color: #1c1c24; border: none;"
             f" border-radius: 6px; font-size: 10pt; font-weight: bold; }}"
             f"QPushButton:hover {{ background: #b8b8ff; }}"
-            f"QPushButton:disabled {{ background: #444; color: #666; }}"
+            f"QPushButton:disabled {{ background: #444444; color: #666666; }}"
         )
         self._send_btn.clicked.connect(self._on_send_clicked)
         h.addWidget(self._attach_btn)

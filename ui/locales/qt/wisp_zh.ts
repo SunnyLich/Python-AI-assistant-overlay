@@ -769,6 +769,22 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>继续</translation>
     </message>
     <message>
+      <source>New chat</source>
+      <translation>新对话</translation>
+    </message>
+    <message>
+      <source>Choose conversation</source>
+      <translation>选择对话</translation>
+    </message>
+    <message>
+      <source>Latest conversation</source>
+      <translation>最新对话</translation>
+    </message>
+    <message>
+      <source>No history yet</source>
+      <translation>暂无历史记录</translation>
+    </message>
+    <message>
       <source>Continue Run</source>
       <translation>继续运行</translation>
     </message>

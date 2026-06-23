@@ -21,8 +21,9 @@ model_files/
 # Local planning docs (living, not for VCS)
 MACOS_NATIVE_PLAN.md
 FLOWS_SPLIT_PLAN.md
+AUTO_AGENT_TOOL_CAPABILITY_PLAN.md
 docs/OS_TEST_CHECKLIST.md
-
+Wisp Website/
 # Memory (vector store + fallback JSON; contains personal user data)
 memory/
 !memory/.gitkeep

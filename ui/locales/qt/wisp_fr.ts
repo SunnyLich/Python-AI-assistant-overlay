@@ -769,6 +769,22 @@ Cartes, bordures et boutons sont ombrés automatiquement à partir de ces quatre
       <translation>Continuer</translation>
     </message>
     <message>
+      <source>New chat</source>
+      <translation>Nouvelle conversation</translation>
+    </message>
+    <message>
+      <source>Choose conversation</source>
+      <translation>Choisir une conversation</translation>
+    </message>
+    <message>
+      <source>Latest conversation</source>
+      <translation>Dernière conversation</translation>
+    </message>
+    <message>
+      <source>No history yet</source>
+      <translation>Aucun historique pour le moment</translation>
+    </message>
+    <message>
       <source>Continue Run</source>
       <translation>Continuer l’exécution</translation>
     </message>

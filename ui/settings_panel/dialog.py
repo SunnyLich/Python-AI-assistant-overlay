@@ -1714,15 +1714,15 @@ class SettingsDialog(QDialog):
 
     # ---- Custom provider helpers ----
 
-    _CUSTOM_PRESETS: list[tuple[str, str, str]] = [
-        ("DeepSeek",     "https://api.deepseek.com/v1",          "deepseek-chat"),
-        ("OpenRouter",   "https://openrouter.ai/api/v1",         "openai/gpt-4o"),
-        ("Mistral",      "https://api.mistral.ai/v1",            "mistral-large-latest"),
-        ("xAI (Grok)",   "https://api.x.ai/v1",                  "grok-3"),
-        ("Together AI",  "https://api.together.xyz/v1",          "meta-llama/Llama-3-70b-chat-hf"),
-        ("Cerebras",     "https://api.cerebras.ai/v1",           "llama-3.3-70b"),
-        ("Ollama (local)", "http://localhost:11434/v1",           "llama3"),
-        ("LM Studio (local)", "http://localhost:1234/v1",        "local-model"),
+    _CUSTOM_PRESETS: list[tuple[str, str, str, str]] = [
+        ("DeepSeek",     "https://api.deepseek.com/v1",          "deepseek-chat", ""),
+        ("OpenRouter",   "https://openrouter.ai/api/v1",         "openai/gpt-4o", ""),
+        ("Mistral",      "https://api.mistral.ai/v1",            "mistral-large-latest", ""),
+        ("xAI (Grok)",   "https://api.x.ai/v1",                  "grok-3", ""),
+        ("Together AI",  "https://api.together.xyz/v1",          "meta-llama/Llama-3-70b-chat-hf", ""),
+        ("Cerebras",     "https://api.cerebras.ai/v1",           "llama-3.3-70b", ""),
+        ("Ollama (local)", "http://localhost:11434/v1",           "llama3", "ollama"),
+        ("LM Studio (local)", "http://localhost:1234/v1",        "local-model", ""),
     ]
 
     def _show_custom_presets_menu(self) -> None:
@@ -1731,19 +1731,21 @@ class SettingsDialog(QDialog):
         from PySide6.QtGui import QAction
 
         menu = QMenu(self)
-        for name, url, model_hint in self._CUSTOM_PRESETS:
+        for name, url, model_hint, api_key_hint in self._CUSTOM_PRESETS:
             action = QAction(name, self)
             action.setToolTip(url)
             action.triggered.connect(
-                lambda checked, u=url, h=model_hint: self._apply_custom_preset(u, h)
+                lambda checked, u=url, h=model_hint, k=api_key_hint: self._apply_custom_preset(u, h, k)
             )
             menu.addAction(action)
         btn = self.sender()
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
-    def _apply_custom_preset(self, base_url: str, model_hint: str) -> None:
+    def _apply_custom_preset(self, base_url: str, model_hint: str, api_key_hint: str = "") -> None:
         """Apply custom preset."""
         self._fields["CUSTOM_BASE_URL"].setText(base_url)
+        if api_key_hint:
+            self._fields["CUSTOM_API_KEY"].setText(api_key_hint)
         for section_rows in self._model_section_rows.values():
             for row in section_rows:
                 if (row["api_key_combo"].currentData() or "") == "custom":

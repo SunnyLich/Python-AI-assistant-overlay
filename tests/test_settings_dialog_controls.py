@@ -1120,6 +1120,28 @@ def test_custom_provider_is_model_route_option_without_api_key_table_row():
 
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_ollama_custom_preset_fills_dummy_api_key():
+    """Verify Ollama custom preset fills the local dummy API key."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog()
+
+    try:
+        dialog._fields["CUSTOM_API_KEY"].clear()
+        dialog._apply_custom_preset("http://localhost:11434/v1", "llama3", "ollama")
+
+        assert dialog._fields["CUSTOM_BASE_URL"].text() == "http://localhost:11434/v1"
+        assert dialog._fields["CUSTOM_API_KEY"].text() == "ollama"
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
 def test_tool_warning_marks_associated_settings_headlines():
     """Verify tool warning marks associated settings headlines behavior."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

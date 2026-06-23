@@ -769,6 +769,22 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Continuar</translation>
     </message>
     <message>
+      <source>New chat</source>
+      <translation>Nuevo chat</translation>
+    </message>
+    <message>
+      <source>Choose conversation</source>
+      <translation>Elegir conversación</translation>
+    </message>
+    <message>
+      <source>Latest conversation</source>
+      <translation>Última conversación</translation>
+    </message>
+    <message>
+      <source>No history yet</source>
+      <translation>Aún no hay historial</translation>
+    </message>
+    <message>
       <source>Continue Run</source>
       <translation>Continuar ejecución</translation>
     </message>

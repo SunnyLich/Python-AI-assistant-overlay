@@ -73,7 +73,29 @@ Example flows:
 | You want to ask the model by voice | Hold `F9`, speak, then release | Wisp transcribes your voice and sends it as a model query |
 | You want to dictate into another app | Hold `F8`, speak, then release | Wisp transcribes your speech directly into the focused text field |
 
+![Wisp Ctrl+Alt+Q screen snip demo](ReadMe%202nd%20Demo.gif)
+
 ## Quick Start
+
+There are two supported ways to start Wisp.
+
+### Option 1: Packaged App
+
+Use this if you want the app without cloning the repo or managing Python dependencies.
+
+1. Download the latest asset for your platform from [GitHub Releases](https://github.com/SunnyLich/Python-AI-assistant-overlay/releases).
+2. Unpack the archive and start the packaged app.
+3. Open Settings to add your model provider keys, voice settings, and preferred hotkeys.
+
+| OS | Release artifact | Start with |
+| --- | --- | --- |
+| Windows | `Wisp-<tag>-windows-x64.zip` | `Wisp.exe` |
+| macOS | `Wisp-<tag>-macos-<arch>.zip` | `Wisp.app` |
+| Linux | `Wisp-<tag>-linux-x64.tar.gz` | `Wisp` |
+
+### Option 2: Repo Launcher
+
+Use this if you want to run from source, develop Wisp, or test the latest checkout.
 
 Clone the repo:
 
@@ -82,15 +104,17 @@ git clone https://github.com/SunnyLich/Python-AI-assistant-overlay.git
 cd Python-AI-assistant-overlay
 ```
 
-Then launch with the script for your platform:
+Then start Wisp with the repo launcher for your platform:
 
-| OS | Launcher | Dependency source |
+| OS | Start with | Dependency source |
 | --- | --- | --- |
 | Windows | `Start Wisp.bat` | `requirements.txt` |
 | macOS | `Start Wisp.command` | `requirements-macos.lock` |
 | Linux | `Start Wisp.sh` | `requirements.txt` |
 
 The first launch provisions the Python environment and installs dependencies. Later launches go straight into the app.
+
+To build your own packaged copy, see [Building an EXE](docs/BUILDING_EXE.md) for local build commands and the tagged-release workflow.
 
 Requirements:
 

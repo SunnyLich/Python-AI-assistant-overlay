@@ -47,6 +47,17 @@ def test_top_p_unsupported_value_detected():
     assert _unsupported_parameter_name(exc) == "top_p"
 
 
+def test_nested_reasoning_effort_unsupported_value_drops_reasoning_object():
+    """Verify nested unsupported Responses fields drop their top-level object."""
+    exc = _exc(
+        "Unsupported value: 'reasoning.effort' does not support high with this model. "
+        "Only the default value is supported."
+    )
+    assert _unsupported_parameter_name(exc) == "reasoning.effort"
+    kwargs = {"model": "gpt-5.5", "reasoning": {"effort": "high"}, "input": "hi"}
+    assert _without_unsupported_parameter(kwargs, exc) == {"model": "gpt-5.5", "input": "hi"}
+
+
 def test_legacy_unsupported_parameter_still_detected():
     """Verify legacy unsupported parameter still detected behavior."""
     exc = _exc(

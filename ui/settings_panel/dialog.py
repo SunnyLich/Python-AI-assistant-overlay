@@ -131,6 +131,14 @@ _DICTATE_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Light LLM cleanup", "llm"),
 )
 
+_CHAT_REASONING_EFFORT_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("Provider default", ""),
+    ("Minimal", "minimal"),
+    ("Low", "low"),
+    ("Medium", "medium"),
+    ("High", "high"),
+)
+
 _FILE_ACCESS_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Off", "off"),
     ("Read only", "read"),
@@ -812,6 +820,7 @@ class SettingsDialog(QDialog):
             snapshot[f"{prefix}_CUSTOM_KEY"] = _get(blk["custom_key"])
             snapshot[f"{prefix}_CUSTOM_LABEL"] = _get(blk["custom_label"])
             snapshot[f"{prefix}_CONTEXT_AMBIENT"] = str(blk["context_ambient"].isChecked())
+            snapshot[f"{prefix}_CONTEXT_CLIPBOARD"] = str(blk["context_clipboard"].isChecked())
             for name in (
                 "context_documents_mode", "context_browser_mode",
                 "context_github_mode", "context_memory_mode", "context_screenshot",
@@ -829,6 +838,7 @@ class SettingsDialog(QDialog):
         if hasattr(self, "_voice_block"):
             vb = self._voice_block
             snapshot["VOICE_CONTEXT_AMBIENT"] = str(vb["context_ambient"].isChecked())
+            snapshot["VOICE_CONTEXT_CLIPBOARD"] = str(vb["context_clipboard"].isChecked())
             for name in (
                 "context_documents_mode", "context_browser_mode",
                 "context_github_mode", "context_memory_mode", "context_screenshot",
@@ -1402,6 +1412,56 @@ class SettingsDialog(QDialog):
             )
             model_layout.addWidget(card)
 
+        advanced_group, advanced_layout = self._collapsible_group("Advanced settings")
+        self._fields["WISP_UNIFIED_CHAT_TOOL_LOOP"] = QCheckBox(t("Use unified chat tool loop"))
+        self._fields["WISP_UNIFIED_CHAT_TOOL_LOOP"].setToolTip(
+            "Default on. Routes chat tool calls through the shared observe-act-observe loop. "
+            "Turn off only to fall back to the older provider-specific chat loop."
+        )
+        self._fields["CHAT_TOOL_TRACE_UI"] = QCheckBox(t("Show chat tool-loop trace"))
+        self._fields["CHAT_TOOL_TRACE_UI"].setToolTip(
+            "Show temporary progress lines in Chat that identify the tool loop and tool calls. "
+            "Useful for testing; leave off for normal use."
+        )
+        reasoning_combo = _NoScrollCombo()
+        reasoning_combo.setToolTip(
+            "OpenAI Responses reasoning effort for chat. Provider default sends no explicit reasoning field; "
+            "unsupported routes automatically retry without it."
+        )
+        for label, value in _CHAT_REASONING_EFFORT_OPTIONS:
+            reasoning_combo.addItem(t(label), value)
+        self._fields["CHAT_REASONING_EFFORT"] = reasoning_combo
+        self._fields["CHAT_AUTO_ELABORATE"] = QCheckBox(t("Auto-elaborate when opening chat"))
+        self._fields["CHAT_AUTO_ELABORATE"].setToolTip(
+            "When enabled, opening Chat after a short overlay reply asks the model for a fuller explanation."
+        )
+        self._fields["CHAT_ELABORATE_PROMPT"] = QLineEdit()
+        self._fields["CHAT_ELABORATE_PROMPT"].setPlaceholderText(t("e.g. Please elaborate on that."))
+        self._chat_elaborate_prompt_label = _tooltip_label(
+            "Elaborate prompt",
+            "Prompt used when Auto-elaborate asks the model to expand the latest short response.",
+        )
+        advanced_form_w = QWidget()
+        advanced_form = _expanding_form_layout(advanced_form_w)
+        advanced_form.setSpacing(8)
+        advanced_form.setContentsMargins(0, 0, 0, 0)
+        advanced_form.addRow("", self._fields["WISP_UNIFIED_CHAT_TOOL_LOOP"])
+        advanced_form.addRow("", self._fields["CHAT_TOOL_TRACE_UI"])
+        advanced_form.addRow(
+            _tooltip_label(
+                "Reasoning effort",
+                "OpenAI Responses reasoning effort for chat. Unsupported models are retried without this field.",
+            ),
+            self._fields["CHAT_REASONING_EFFORT"],
+        )
+        advanced_form.addRow("", self._fields["CHAT_AUTO_ELABORATE"])
+        advanced_form.addRow(self._chat_elaborate_prompt_label, self._fields["CHAT_ELABORATE_PROMPT"])
+        self._fields["CHAT_AUTO_ELABORATE"].toggled.connect(  # type: ignore[attr-defined]
+            self._update_chat_elaborate_prompt_visibility
+        )
+        self._update_chat_elaborate_prompt_visibility()
+        advanced_layout.addWidget(advanced_form_w)
+        model_layout.addWidget(advanced_group)
         outer.addWidget(model_group)
 
         outer.addStretch()
@@ -2697,9 +2757,8 @@ class SettingsDialog(QDialog):
         self._fields["HOTKEY_CLEAR_CONTEXT"] = self._kb_special_row("Clear context")
         self._fields["HOTKEY_SNIP"]          = self._kb_special_row("Snip screen region")
         self._fields["INTENT_CONTEXT_TOGGLE_KEYS"] = QLineEdit()
-        self._fields["INTENT_CONTEXT_TOGGLE_KEYS"].setFixedWidth(120)
-        self._fields["INTENT_CONTEXT_TOGGLE_KEYS"].setPlaceholderText("1234567")
-        intent_keys_tip = "Ordered keys for toggling App, Browser/Web, Selection, Clipboard, Screenshot, Memory, and Files in the intent overlay."
+        self._fields["INTENT_CONTEXT_TOGGLE_KEYS"].setPlaceholderText("12345678")
+        self._fields["INTENT_CONTEXT_TOGGLE_KEYS"].hide()
         self._fields["INTENT_OVERLAY_TIMEOUT_MS"] = QLineEdit()
         self._fields["INTENT_OVERLAY_TIMEOUT_MS"].setFixedWidth(90)
         self._fields["INTENT_OVERLAY_TIMEOUT_MS"].setPlaceholderText("60000")
@@ -2709,26 +2768,30 @@ class SettingsDialog(QDialog):
         context_key_h.setContentsMargins(0, 2, 0, 2)
         context_key_h.setSpacing(10)
         context_key_h.addSpacing(128)
-        context_key_h.addWidget(_tooltip_label("Intent context keys:", intent_keys_tip))
-        context_key_h.addWidget(self._fields["INTENT_CONTEXT_TOGGLE_KEYS"])
         context_key_h.addWidget(_tooltip_label("Timeout ms:", intent_timeout_tip))
         context_key_h.addWidget(self._fields["INTENT_OVERLAY_TIMEOUT_MS"])
         context_key_h.addStretch()
         self._keybinds_layout.addWidget(context_key_row)
 
         snip_ctx = QWidget()
-        snip_h = QHBoxLayout(snip_ctx)
-        snip_h.setContentsMargins(0, 2, 0, 2)
-        snip_h.setSpacing(10)
-        self._fields["SNIP_CONTEXT_AMBIENT"] = QCheckBox("Ambient")
-        self._fields["SNIP_CONTEXT_DOCUMENTS"] = QCheckBox("Open docs")
-        self._fields["SNIP_CONTEXT_TOOLS"] = QCheckBox("Tools")
-        snip_h.addSpacing(128)
-        snip_h.addWidget(QLabel(t("Snip context:")))
-        snip_h.addWidget(self._fields["SNIP_CONTEXT_AMBIENT"])
-        snip_h.addWidget(self._fields["SNIP_CONTEXT_DOCUMENTS"])
-        snip_h.addWidget(self._fields["SNIP_CONTEXT_TOOLS"])
-        snip_h.addStretch()
+        snip_h = QGridLayout(snip_ctx)
+        snip_h.setContentsMargins(128, 2, 0, 2)
+        snip_h.setHorizontalSpacing(8)
+        snip_h.setVerticalSpacing(4)
+        snip_title = QLabel(t("Context"))
+        snip_title.setStyleSheet("font-weight: 600; color: palette(placeholder-text);")
+        snip_h.addWidget(snip_title, 0, 0, 1, 3)
+        self._fields["SNIP_CONTEXT_AMBIENT"] = QCheckBox(t("On"))
+        self._fields["SNIP_CONTEXT_DOCUMENTS"] = QCheckBox(t("Open docs"))
+        self._fields["SNIP_CONTEXT_TOOLS"] = QCheckBox(t("Tools"))
+        snip_h.addWidget(
+            self._context_source_block("App", 0, self._fields["SNIP_CONTEXT_AMBIENT"], self._fields["SNIP_CONTEXT_DOCUMENTS"]),
+            1,
+            0,
+        )
+        snip_h.addWidget(self._context_source_block("Screenshot", 4, QLabel(t("On"))), 1, 1)
+        snip_h.addWidget(self._context_source_block("Tools", -1, self._fields["SNIP_CONTEXT_TOOLS"]), 1, 2)
+        snip_h.setColumnStretch(3, 1)
         self._keybinds_layout.addWidget(snip_ctx)
 
         outer_layout.addWidget(other_card)
@@ -2759,10 +2822,51 @@ class SettingsDialog(QDialog):
         self._keybinds_layout.addWidget(row_w)
         return key_edit
 
+    def _intent_context_keys(self) -> str:
+        """Return the configured context toggle keys, padded for all sources."""
+        try:
+            raw = _get(self._fields.get("INTENT_CONTEXT_TOGGLE_KEYS"))  # type: ignore[arg-type]
+        except Exception:
+            raw = ""
+        raw = raw or getattr(self, "_env", {}).get("INTENT_CONTEXT_TOGGLE_KEYS", "12345678")
+        keys: list[str] = []
+        for ch in str(raw or "") + "12345678":
+            if ch.isspace() or ch in keys:
+                continue
+            keys.append(ch)
+            if len(keys) >= 8:
+                break
+        return "".join(keys)
+
+    def _context_source_block(self, label: str, key_index: int, *controls: QWidget) -> QFrame:
+        """Create a compact context source block with the overlay key embedded."""
+        frame = QFrame()
+        frame.setFrameShape(QFrame.Shape.StyledPanel)
+        frame.setStyleSheet("QFrame { border: 1px solid palette(mid); border-radius: 4px; }")
+        frame.setMinimumWidth(104)
+        frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        box = QVBoxLayout(frame)
+        box.setContentsMargins(8, 6, 8, 6)
+        box.setSpacing(3)
+        title = QLabel(t(label))
+        title.setStyleSheet("font-weight: 600; border: none;")
+        box.addWidget(title)
+        if key_index >= 0:
+            keys = self._intent_context_keys()
+            key_text = keys[key_index] if key_index < len(keys) else ""
+            key_label = QLabel(f"{t('Keys:')} {key_text}")
+            key_label.setStyleSheet("color: palette(placeholder-text); border: none;")
+            box.addWidget(key_label)
+        for control in controls:
+            control.setStyleSheet(f"{control.styleSheet()} border: none;")
+            box.addWidget(control)
+        return frame
+
     def _build_context_controls(
         self,
         *,
         context_ambient: bool = True,
+        context_clipboard: bool = False,
         context_documents_mode: str = "auto",
         context_browser_mode: str = "off",
         context_github_mode: str = "off",
@@ -2779,7 +2883,7 @@ class SettingsDialog(QDialog):
         context_h = QGridLayout(context_row)
         context_h.setContentsMargins(0, 0, 0, 0)
         context_h.setHorizontalSpacing(8)
-        context_h.setVerticalSpacing(4)
+        context_h.setVerticalSpacing(6)
         ambient_tip = "Include nearby app/window context that Wisp can capture automatically."
         docs_tip = (
             "Open documents:\n"
@@ -2818,9 +2922,11 @@ class SettingsDialog(QDialog):
             "Ask before writing - show a diff before edits or creates.\n"
             "Write automatically - apply edits without asking."
         )
-        ambient_cb = QCheckBox("Ambient")
+        ambient_cb = QCheckBox("On")
         ambient_cb.setChecked(context_ambient)
         ambient_cb.setToolTip(ambient_tip)
+        clipboard_cb = QCheckBox("On")
+        clipboard_cb.setChecked(context_clipboard)
         docs_combo = _context_mode_combo(context_documents_mode, allow_auto=True)
         browser_combo = _context_mode_combo(context_browser_mode, allow_auto=True)
         github_combo = _context_mode_combo(context_github_mode, allow_auto=True)
@@ -2831,23 +2937,26 @@ class SettingsDialog(QDialog):
         for label, value in _FILE_ACCESS_OPTIONS:
             file_combo.addItem(t(label), value)
         _set(file_combo, normalize_file_access_mode(file_access))
-        context_h.addWidget(QLabel(t("Context:")), 0, 0)
-        context_h.addWidget(ambient_cb, 0, 1)
-        context_h.addWidget(_tooltip_label("Screenshot:", screenshot_tip), 0, 2)
-        context_h.addWidget(screenshot_combo, 0, 3)
-        context_h.addWidget(_tooltip_label("Open docs:", docs_tip), 0, 4)
-        context_h.addWidget(docs_combo, 0, 5)
-        context_h.addWidget(_tooltip_label("Git/GitHub:", github_tip), 1, 0)
-        context_h.addWidget(github_combo, 1, 1)
-        context_h.addWidget(_tooltip_label("Browser/Web:", browser_tip), 1, 2)
-        context_h.addWidget(browser_combo, 1, 3)
-        context_h.addWidget(_tooltip_label("Memory:", memory_tip), 1, 4)
-        context_h.addWidget(memory_combo, 1, 5)
-        context_h.addWidget(_tooltip_label("Local files:", file_tip), 2, 0)
-        context_h.addWidget(file_combo, 2, 1)
-        context_h.setColumnStretch(6, 1)
+        title = QLabel(t("Context"))
+        title.setStyleSheet("font-weight: 600; color: palette(placeholder-text);")
+        context_h.addWidget(title, 0, 0, 1, 4)
+        context_h.addWidget(self._context_source_block("App", 0, ambient_cb, docs_combo), 1, 0)
+        context_h.addWidget(self._context_source_block("Browser/Web", 1, browser_combo), 1, 1)
+        context_h.addWidget(self._context_source_block("Clipboard", 3, clipboard_cb), 1, 2)
+        context_h.addWidget(self._context_source_block("Screenshot", 4, screenshot_combo), 1, 3)
+        context_h.addWidget(self._context_source_block("Git/GitHub", 5, github_combo), 2, 0)
+        context_h.addWidget(self._context_source_block("Memory", 6, memory_combo), 2, 1)
+        context_h.addWidget(self._context_source_block("Local files", 7, file_combo), 2, 2)
+        context_h.setColumnStretch(3, 1)
+        docs_combo.setToolTip(docs_tip)
+        browser_combo.setToolTip(browser_tip)
+        github_combo.setToolTip(github_tip)
+        memory_combo.setToolTip(memory_tip)
+        screenshot_combo.setToolTip(screenshot_tip)
+        file_combo.setToolTip(file_tip)
         controls = {
             "context_ambient": ambient_cb,
+            "context_clipboard": clipboard_cb,
             "context_documents_mode": docs_combo,
             "context_browser_mode": browser_combo,
             "context_github_mode": github_combo,
@@ -2901,6 +3010,7 @@ class SettingsDialog(QDialog):
         custom_key: str = "s",
         custom_label: str = "",
         context_ambient: bool = True,
+        context_clipboard: bool = False,
         context_documents: bool = True,
         context_tools: bool = False,
         context_documents_mode: str | None = None,
@@ -2963,6 +3073,7 @@ class SettingsDialog(QDialog):
         docs_mode = context_documents_mode or ("auto" if context_documents else ("model" if context_tools else "off"))
         context_row, context_controls = self._build_context_controls(
             context_ambient=context_ambient,
+            context_clipboard=context_clipboard,
             context_documents_mode=docs_mode,
             context_browser_mode=context_browser_mode,
             context_github_mode=context_github_mode,
@@ -3005,6 +3116,7 @@ class SettingsDialog(QDialog):
             "label":          label_edit,
             "paste_back":     paste_cb,
             "context_ambient": context_controls["context_ambient"],
+            "context_clipboard": context_controls["context_clipboard"],
             "context_documents": context_controls["context_documents_mode"],
             "context_documents_mode": context_controls["context_documents_mode"],
             "context_browser_mode": context_controls["context_browser_mode"],
@@ -3314,13 +3426,6 @@ class SettingsDialog(QDialog):
         self._fields["ICON_AUTO_HIDE"].setToolTip(
             "Hide the floating icon when Wisp is idle, then show it again while listening or responding."
         )
-        self._fields["CHAT_AUTO_ELABORATE"] = QCheckBox(t("Auto-elaborate when opening chat"))
-        self._fields["CHAT_AUTO_ELABORATE"].setToolTip(
-            "Automatically send the elaborate prompt when you open chat from a short bubble response."
-        )
-        self._fields["CHAT_ELABORATE_PROMPT"] = QLineEdit()
-        self._fields["CHAT_ELABORATE_PROMPT"].setPlaceholderText(t("e.g. Please elaborate on that."))
-        elaborate_prompt_tip = "Prompt used when Auto-elaborate asks the model to expand the latest short response."
         app_language = _NoScrollCombo()
         for label, value in LANGUAGE_OPTIONS:
             app_language.addItem(t(label), value)
@@ -3376,13 +3481,6 @@ class SettingsDialog(QDialog):
         f.addRow(_tooltip_label("Accent color", theme_color_tip), _accent_row)
         f.addRow("", self._fields["TRUST_PRIVACY_MODE"])
         f.addRow("", self._fields["ICON_AUTO_HIDE"])
-        f.addRow("", self._fields["CHAT_AUTO_ELABORATE"])
-        self._chat_elaborate_prompt_label = _tooltip_label("Elaborate prompt", elaborate_prompt_tip)
-        f.addRow(self._chat_elaborate_prompt_label, self._fields["CHAT_ELABORATE_PROMPT"])
-        self._fields["CHAT_AUTO_ELABORATE"].toggled.connect(  # type: ignore[attr-defined]
-            self._update_chat_elaborate_prompt_visibility
-        )
-        self._update_chat_elaborate_prompt_visibility()
         f.addRow(_tooltip_label("App language", app_language_tip), self._fields["APP_LANGUAGE"])
         f.addRow(_tooltip_label("Assistant language", assistant_language_tip), self._fields["ASSISTANT_LANGUAGE"])
         f.addRow(_sep(), _sep())
@@ -3905,6 +4003,26 @@ class SettingsDialog(QDialog):
             self._register_warning_header(title, hdr, uppercase=True)
         return card, cv
 
+    def _collapsible_group(self, title: str, *, checked: bool = False) -> tuple[QWidget, QVBoxLayout]:
+        """Return a button-expanded settings body."""
+        group = QWidget()
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        toggle = QPushButton(t(title))
+        toggle.setCheckable(True)
+        toggle.setChecked(checked)
+        toggle.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        body = QWidget(group)
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(12, 4, 0, 0)
+        body_layout.setSpacing(8)
+        layout.addWidget(toggle)
+        layout.addWidget(body)
+        body.setVisible(checked)
+        toggle.toggled.connect(body.setVisible)
+        return group, body_layout
+
     def _register_warning_header(
         self,
         key: str,
@@ -4259,6 +4377,24 @@ class SettingsDialog(QDialog):
         _load_section("LLM",        "LLM_PROVIDER",        "LLM_MODEL",        "LLM_FALLBACKS",        cfg.LLM_PROVIDER,        cfg.LLM_MODEL,        cfg.LLM_FALLBACKS)
         _load_section("VISION_LLM", "VISION_LLM_PROVIDER", "VISION_LLM_MODEL", "VISION_LLM_FALLBACKS", cfg.VISION_LLM_PROVIDER, cfg.VISION_LLM_MODEL, cfg.VISION_LLM_FALLBACKS)
         _load_section("MEMORY_LLM", "MEMORY_LLM_PROVIDER", "MEMORY_LLM_MODEL", "MEMORY_LLM_FALLBACKS", cfg.MEMORY_LLM_PROVIDER, cfg.MEMORY_LLM_MODEL, cfg.MEMORY_LLM_FALLBACKS)
+        self._fields["WISP_UNIFIED_CHAT_TOOL_LOOP"].setChecked(
+            self._env.get(
+                "WISP_UNIFIED_CHAT_TOOL_LOOP",
+                str(getattr(cfg, "UNIFIED_CHAT_TOOL_LOOP", True)),
+            ).strip().lower()
+            in {"1", "true", "yes", "on"}
+        )  # type: ignore[attr-defined]
+        self._fields["CHAT_TOOL_TRACE_UI"].setChecked(
+            self._env.get(
+                "CHAT_TOOL_TRACE_UI",
+                str(getattr(cfg, "CHAT_TOOL_TRACE_UI", False)),
+            ).strip().lower()
+            in {"1", "true", "yes", "on"}
+        )  # type: ignore[attr-defined]
+        _set(
+            self._fields["CHAT_REASONING_EFFORT"],
+            self._env.get("CHAT_REASONING_EFFORT", getattr(cfg, "CHAT_REASONING_EFFORT", "high")),
+        )
 
         # ── TTS / Custom keys (still in self._fields) ─────────────────────
         for name, label in [
@@ -4306,7 +4442,7 @@ class SettingsDialog(QDialog):
         _set(self._fields["HOTKEY_SNIP"],          self._env.get("HOTKEY_SNIP",          cfg.HOTKEY_SNIP))
         _set(self._fields["INTENT_CONTEXT_TOGGLE_KEYS"], self._env.get(
             "INTENT_CONTEXT_TOGGLE_KEYS",
-            getattr(cfg, "INTENT_CONTEXT_TOGGLE_KEYS", "1234567"),
+            getattr(cfg, "INTENT_CONTEXT_TOGGLE_KEYS", "12345678"),
         ))
         _set(self._fields["INTENT_OVERLAY_TIMEOUT_MS"], self._env.get(
             "INTENT_OVERLAY_TIMEOUT_MS",
@@ -4404,6 +4540,7 @@ class SettingsDialog(QDialog):
                 custom_key = self._env.get(f"CALLER_{n}_CUSTOM_KEY", cr.get("custom_key", "s")),
                 custom_label = self._env.get(f"CALLER_{n}_CUSTOM_LABEL", cr.get("custom_label", "")),
                 context_ambient = self._env.get(f"CALLER_{n}_CONTEXT_AMBIENT", str(cr.get("context_ambient", True))).lower() == "true",
+                context_clipboard = self._env.get(f"CALLER_{n}_CONTEXT_CLIPBOARD", str(cr.get("context_clipboard", False))).lower() == "true",
                 context_documents = documents_mode == "auto",
                 context_tools = any(mode == "model" for mode in (documents_mode, browser_mode, github_mode, memory_mode)),
                 context_documents_mode = documents_mode,
@@ -4424,6 +4561,9 @@ class SettingsDialog(QDialog):
         vb = self._voice_block
         vb["context_ambient"].setChecked(
             self._env.get("VOICE_CONTEXT_AMBIENT", str(vc.get("context_ambient", True))).lower() == "true"
+        )
+        vb["context_clipboard"].setChecked(
+            self._env.get("VOICE_CONTEXT_CLIPBOARD", str(vc.get("context_clipboard", False))).lower() == "true"
         )
         _set(
             vb["context_documents_mode"],
@@ -5196,7 +5336,8 @@ class SettingsDialog(QDialog):
                 "LLM_PROVIDER", "LLM_MODEL", "LLM_FALLBACKS",
                 "VISION_LLM_PROVIDER", "VISION_LLM_MODEL", "VISION_LLM_FALLBACKS",
                 "MEMORY_LLM_PROVIDER", "MEMORY_LLM_MODEL", "MEMORY_LLM_FALLBACKS",
-                "TOOL_LLM_MODEL", "CUSTOM_BASE_URL",
+                "TOOL_LLM_MODEL", "WISP_UNIFIED_CHAT_TOOL_LOOP", "CHAT_TOOL_TRACE_UI", "CHAT_REASONING_EFFORT",
+                "CHAT_AUTO_ELABORATE", "CHAT_ELABORATE_PROMPT", "CUSTOM_BASE_URL",
                 "GITHUB_CLIENT_ID", "GITHUB_OAUTH_SCOPES",
                 "COPILOT_CLI_URL", "COPILOT_CLI_PATH",
             },
@@ -5226,7 +5367,7 @@ class SettingsDialog(QDialog):
                 "ICON_AUTO_HIDE", "DOLL_AUTO_HIDE",
                 "THEME_DARK_BG", "THEME_DARK_SURFACE", "THEME_DARK_TEXT", "THEME_DARK_ACCENT",
                 "THEME_LIGHT_BG", "THEME_LIGHT_SURFACE", "THEME_LIGHT_TEXT", "THEME_LIGHT_ACCENT",
-                "CHAT_AUTO_ELABORATE", "CHAT_ELABORATE_PROMPT", "APP_LANGUAGE", "ASSISTANT_LANGUAGE",
+                "APP_LANGUAGE", "ASSISTANT_LANGUAGE",
                 "ICON_SIZE", "DOLL_SIZE", "ICON_BACKSTOP_MS", "DOLL_ICON_BACKSTOP_MS",
                 "BUBBLE_WIDTH", "BUBBLE_LINES", "BUBBLE_FONT_SIZE",
                 "BUBBLE_COLOR", "BUBBLE_TEXT_COLOR",
@@ -5549,6 +5690,9 @@ class SettingsDialog(QDialog):
             "MEMORY_LLM_PROVIDER": mem_p,
             "MEMORY_LLM_MODEL":    mem_m,
             "MEMORY_LLM_FALLBACKS": mem_f,
+            "WISP_UNIFIED_CHAT_TOOL_LOOP": str(self._fields["WISP_UNIFIED_CHAT_TOOL_LOOP"].isChecked()),  # type: ignore[attr-defined]
+            "CHAT_TOOL_TRACE_UI": str(self._fields["CHAT_TOOL_TRACE_UI"].isChecked()),  # type: ignore[attr-defined]
+            "CHAT_REASONING_EFFORT": _get(self._fields["CHAT_REASONING_EFFORT"]),
             "TTS_PROVIDER":      _get(self._fields["TTS_PROVIDER"]),
             "CARTESIA_VOICE_ID": _get(self._fields["CARTESIA_VOICE_ID"]),
             "ELEVENLABS_VOICE_ID": _get(self._fields["ELEVENLABS_VOICE_ID"]),
@@ -5631,6 +5775,7 @@ class SettingsDialog(QDialog):
             "HOTKEY_DICTATE": _get(self._fields["HOTKEY_DICTATE"]),
             "DICTATE_MODE": _get(self._fields["DICTATE_MODE"]),
             "VOICE_CONTEXT_AMBIENT": str(vb["context_ambient"].isChecked()),
+            "VOICE_CONTEXT_CLIPBOARD": str(vb["context_clipboard"].isChecked()),
             "VOICE_CONTEXT_DOCUMENTS_MODE": str(vb["context_documents_mode"].currentData()),
             "VOICE_CONTEXT_BROWSER_MODE": str(vb["context_browser_mode"].currentData()),
             "VOICE_CONTEXT_GITHUB_MODE": str(vb["context_github_mode"].currentData()),
@@ -5657,6 +5802,7 @@ class SettingsDialog(QDialog):
             vals[f"CALLER_{n}_CUSTOM_KEY"]    = _get(blk["custom_key"])
             vals[f"CALLER_{n}_CUSTOM_LABEL"]  = _get(blk["custom_label"])
             vals[f"CALLER_{n}_CONTEXT_AMBIENT"] = str(blk["context_ambient"].isChecked())  # type: ignore
+            vals[f"CALLER_{n}_CONTEXT_CLIPBOARD"] = str(blk["context_clipboard"].isChecked())  # type: ignore
             documents_mode = str(blk["context_documents_mode"].currentData())  # type: ignore[attr-defined]
             browser_mode = str(blk["context_browser_mode"].currentData())  # type: ignore[attr-defined]
             github_mode = str(blk["context_github_mode"].currentData())  # type: ignore[attr-defined]

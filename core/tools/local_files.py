@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import difflib
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import config
 from core.agent.runtime import AgentPermissions, PermissionDenied, ToolResult
@@ -16,7 +16,7 @@ READ_FILE_TOOLS = {"list_files", "read_file"}
 WRITE_FILE_TOOLS = {"create_file", "edit_file", "write_file"}
 FILE_ACCESS_MODES = ("off", "read", "ask", "auto")
 
-ApprovalCallback = Callable[[dict], bool]
+ApprovalCallback = Callable[[dict], bool | dict[str, Any]]
 FileEventCallback = Callable[[dict], None]
 
 

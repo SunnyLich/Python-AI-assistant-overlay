@@ -395,6 +395,7 @@ def test_chat_context_policy_controls_are_compact_menu_chips(monkeypatch):
             "selection",
             "clipboard",
             "screenshot",
+            "github",
             "memory",
             "files",
         }

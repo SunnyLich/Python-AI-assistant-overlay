@@ -2077,13 +2077,13 @@ def _agent_approval_callback(ctx: StreamContext) -> Callable[[dict], bool]:
     return request_approval
 
 
-def _live_file_approval_callback(ctx: StreamContext) -> Callable[[dict], bool]:
+def _live_file_approval_callback(ctx: StreamContext) -> Callable[[dict], dict[str, Any]]:
     """Return a callback that asks the UI before live model file writes."""
-    def request_approval(request: dict) -> bool:
+    def request_approval(request: dict) -> dict[str, Any]:
         """Ask the supervisor/UI to resolve one live file approval."""
         approval_id = uuid.uuid4().hex
         event = threading.Event()
-        state: dict[str, Any] = {"event": event, "approved": False}
+        state: dict[str, Any] = {"event": event, "approved": False, "feedback": ""}
         with _LIVE_FILE_APPROVALS_LOCK:
             _LIVE_FILE_APPROVALS[approval_id] = state
 
@@ -2094,8 +2094,11 @@ def _live_file_approval_callback(ctx: StreamContext) -> Callable[[dict], bool]:
         try:
             while not event.wait(0.1):
                 if ctx.cancelled:
-                    return False
-            return bool(state["approved"])
+                    return {"approved": False, "feedback": ""}
+            return {
+                "approved": bool(state["approved"]),
+                "feedback": str(state.get("feedback") or ""),
+            }
         finally:
             with _LIVE_FILE_APPROVALS_LOCK:
                 _LIVE_FILE_APPROVALS.pop(approval_id, None)
@@ -2123,7 +2126,11 @@ def brain_agent_approval_respond(approval_id: str = "", approved: bool = False) 
 
 
 @handler("brain.live_file.approval.respond")
-def brain_live_file_approval_respond(approval_id: str = "", approved: bool = False) -> dict[str, Any]:
+def brain_live_file_approval_respond(
+    approval_id: str = "",
+    approved: bool = False,
+    feedback: str = "",
+) -> dict[str, Any]:
     """Resolve one pending live model file-edit approval prompt."""
     cleaned = approval_id.strip()
     if not cleaned:
@@ -2135,10 +2142,14 @@ def brain_live_file_approval_respond(approval_id: str = "", approved: bool = Fal
         return {"ok": False, "message": "approval request is no longer pending"}
 
     state["approved"] = bool(approved)
+    state["feedback"] = str(feedback or "").strip()
     event = state.get("event")
     if isinstance(event, threading.Event):
         event.set()
-    return {"ok": True, "approved": bool(approved)}
+    result = {"ok": True, "approved": bool(approved)}
+    if state["feedback"]:
+        result["feedback"] = state["feedback"]
+    return result
 
 
 @handler("brain.agent.control")

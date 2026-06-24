@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 
 LogCallback = Callable[[str], None]
 ModelCallback = Callable[[str], str]
-ApprovalCallback = Callable[[dict], bool]
+ApprovalCallback = Callable[[dict], bool | dict[str, Any]]
 
 
 class AgentTaskLike(Protocol):

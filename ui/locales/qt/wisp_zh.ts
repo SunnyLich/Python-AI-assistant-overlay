@@ -805,6 +805,10 @@ Cards, borders and buttons are shaded automatically from these four.</source>
       <translation>上下文：</translation>
     </message>
     <message>
+      <source>Keys:</source>
+      <translation>键：</translation>
+    </message>
+    <message>
       <source>Intent context keys:</source>
       <translation>意图上下文键：</translation>
     </message>
@@ -3041,6 +3045,54 @@ Continue?</source>
     <message>
       <source>working - see terminal for full pip log</source>
       <translation>正在处理 - 完整 pip 日志请查看终端</translation>
+    </message>
+    <message>
+      <source>Wisp wants permission to modify a local file.</source>
+      <translation>Wisp 想要修改本地文件的权限。</translation>
+    </message>
+    <message>
+      <source>Why: Files is set to ask before write, so Wisp needs approval before changing disk.</source>
+      <translation>原因：文件设置为写入前询问，因此 Wisp 在更改磁盘前需要获得批准。</translation>
+    </message>
+    <message>
+      <source>Tool:</source>
+      <translation>工具：</translation>
+    </message>
+    <message>
+      <source>Target:</source>
+      <translation>目标：</translation>
+    </message>
+    <message>
+      <source>Change: replace {old} chars with {new} chars</source>
+      <translation>更改：将 {old} 个字符替换为 {new} 个字符</translation>
+    </message>
+    <message>
+      <source>Change: overwrite file with {chars} chars</source>
+      <translation>更改：用 {chars} 个字符覆盖文件</translation>
+    </message>
+    <message>
+      <source>Change: create file with {chars} chars</source>
+      <translation>更改：创建包含 {chars} 个字符的文件</translation>
+    </message>
+    <message>
+      <source>Diff: +{added} -{removed} lines</source>
+      <translation>差异：+{added} -{removed} 行</translation>
+    </message>
+    <message>
+      <source>Approve this file change?</source>
+      <translation>批准此文件更改？</translation>
+    </message>
+    <message>
+      <source>Request Changes</source>
+      <translation>请求更改</translation>
+    </message>
+    <message>
+      <source>Send Changes</source>
+      <translation>发送更改</translation>
+    </message>
+    <message>
+      <source>Tell Wisp what to change before trying again.</source>
+      <translation>告诉 Wisp 重试前需要更改什么。</translation>
     </message>
   </context>
   <context>

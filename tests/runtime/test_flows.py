@@ -452,7 +452,9 @@ def test_query_flow_streams_reply_and_adds_chat_conversation_with_context():
     assert "[Clipboard]" in query["ambient_text"]
     assert "[Buffered context]" in query["ambient_text"]
     assert "[Dropped context]" in query["ambient_text"]
-    assert [c["params"]["text"] for c in ui.calls_for("ui.reply.chunk")] == ["he", "llo"]
+    chunks = [c["params"] for c in ui.calls_for("ui.reply.chunk")]
+    assert chunks[0] == {"text": "Using tools...", "is_progress": True}
+    assert [c["text"] for c in chunks[1:]] == ["he", "llo"]
     assert ui.calls_for("ui.reply.done")
     chat_params = ui.last_call("ui.chat.add_conversation")["params"]
     assert chat_params["assistant"] == "hello"
@@ -484,8 +486,8 @@ def test_query_bubble_splits_exposed_thought_segments():
         ui.emit("ui.intent.chosen", {"custom": "create a file"})
 
     chunks = [call["params"] for call in ui.calls_for("ui.reply.chunk")]
-    assert "".join(chunk["text"] for chunk in chunks if chunk["is_thought"]) == "checking files"
-    assert "".join(chunk["text"] for chunk in chunks if not chunk["is_thought"]) == "Created it."
+    assert "".join(chunk["text"] for chunk in chunks if chunk.get("is_thought")) == "checking files"
+    assert "".join(chunk["text"] for chunk in chunks if not chunk.get("is_thought") and not chunk.get("is_progress")) == "Created it."
 
 
 def test_query_bubble_replaces_partial_stream_with_final_text():
@@ -636,6 +638,77 @@ def test_context_modes_map_on_browser_and_git_to_frontloaded_context():
     assert "[Browser/Web]" in query["ambient_text"]
     assert "https://example.test/page" in query["ambient_text"]
     assert "Example page text" in query["ambient_text"]
+
+
+def test_query_with_tools_uses_longer_brain_timeout():
+    """Tool-enabled overlay queries get extra time before supervisor timeout."""
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "off",
+            "context_browser_mode": "off",
+            "context_github_mode": "off",
+            "context_memory_mode": "on",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+            "file_access": "ask",
+        }
+    ]
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="")})
+    brain = FakeWorker(stream_handlers={"brain.query": query_stream("ok")})
+    with caller_config(rows):
+        _flow, _native, ui, brain, _audio = make_flow(native=native, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "hello"})
+
+    query = brain.last_call("brain.query")["params"]
+    assert query["use_tools"] is True
+    assert query["file_access_mode"] == "ask"
+    assert brain.last_call("brain.query")["timeout"] == 300.0
+    assert ui.calls_for("ui.reply.chunk")[0]["params"] == {"text": "Using tools...", "is_progress": True}
+    assert set(query["allowed_tools"]) >= {"list_files", "read_file", "create_file", "edit_file", "write_file"}
+
+
+def test_query_begins_chat_conversation_before_tool_enabled_brain_call():
+    """Verify overlay prompts are saved before long tool waits or approval prompts."""
+    rows = [
+        {
+            "paste_back": False,
+            "context_ambient": True,
+            "context_documents_mode": "off",
+            "context_browser_mode": "off",
+            "context_github_mode": "off",
+            "context_memory_mode": "off",
+            "context_screenshot": "off",
+            "context_clipboard": False,
+            "file_access": "ask",
+        }
+    ]
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="")})
+    events: list[str] = []
+
+    def begin_chat(params: dict[str, Any]) -> dict[str, Any]:
+        events.append("begin")
+        assert params["user"] == "edit file"
+        return {"started": True, "conversation_index": 2}
+
+    def stream(_params: dict[str, Any], _on_event) -> dict[str, Any]:
+        events.append("brain")
+        return {"text": "done"}
+
+    brain = FakeWorker(stream_handlers={"brain.query": stream})
+    ui = FakeWorker(handlers={"ui.chat.begin_conversation": begin_chat})
+    with caller_config(rows):
+        _flow, _native, ui, brain, _audio = make_flow(native=native, ui=ui, brain=brain)
+        _flow.begin_caller(0)
+        ui.emit("ui.intent.chosen", {"custom": "edit file"})
+
+    assert events == ["begin", "brain"]
+    final_chat = ui.last_call("ui.chat.add_conversation")["params"]
+    assert final_chat["assistant"] == "done"
+    assert final_chat["append_user"] is False
+    assert final_chat["conversation_index"] == 2
 
 
 def test_browser_url_captured_at_hotkey_time_fetches_content_by_handle():
@@ -2108,6 +2181,10 @@ def test_rewrite_flow_pastes_back_to_original_pid():
     assert ui.calls_for("ui.reply.done"), "bubble should be finished after paste"
     assert not ui.calls_for("ui.reply.notice"), "rewrite status must not go in the bubble"
     assert not native.calls_for("native.notify"), "successful paste should not notify"
+    chat_params = ui.last_call("ui.chat.add_conversation")["params"]
+    assert chat_params["user"] == "Fix grammar"
+    assert chat_params["assistant"] == "good grammar"
+    assert "[Selected text]\nbad grammar" in chat_params["context"]
 
 
 def test_rewrite_flow_includes_app_context_as_source():
@@ -2364,6 +2441,10 @@ def test_snip_region_captures_file_and_queries_with_image():
     assert native.last_call("native.capture.region")["params"]["region"]["width"] == 3
     query = brain.last_call("brain.query")["params"]
     assert query["screenshot_b64"] == base64.b64encode(image_bytes).decode("ascii")
+    chat_params = ui.last_call("ui.chat.add_conversation")["params"]
+    assert chat_params["user"] == "What is in this image?"
+    assert chat_params["assistant"] == "vision reply"
+    assert chat_params["image_base64"] == query["screenshot_b64"]
 
 
 def test_voice_flow_records_transcribes_and_queries():
@@ -2390,6 +2471,9 @@ def test_voice_flow_records_transcribes_and_queries():
     assert audio.calls_for("audio.record.stop_transcribe")
     assert ui.last_call("ui.reply.transcript")["params"]["text"] == "voice prompt"
     assert brain.last_call("brain.query")["params"]["intent_prompt"] == "voice prompt"
+    chat_params = ui.last_call("ui.chat.add_conversation")["params"]
+    assert chat_params["user"] == "voice prompt"
+    assert chat_params["assistant"] == "voice reply"
 
 
 def test_voice_start_starts_recording_before_context_capture():
@@ -3279,6 +3363,7 @@ def test_chat_request_keeps_file_tools_off_when_caller_files_are_off():
     params = brain.last_call("brain.chat")["params"]
     assert params["use_tools"] is False
     assert params["file_access_mode"] == "off"
+    assert brain.last_call("brain.chat")["timeout"] == 120.0
     assert not ({"list_files", "read_file", "create_file", "edit_file", "write_file"} & set(params["allowed_tools"]))
 
 
@@ -3302,6 +3387,12 @@ def test_chat_request_inherits_first_caller_file_tools():
     params = brain.last_call("brain.chat")["params"]
     assert params["use_tools"] is True
     assert params["file_access_mode"] == "ask"
+    assert brain.last_call("brain.chat")["timeout"] == 300.0
+    assert ui.calls_for("ui.chat.chunk")[0]["params"] == {
+        "request_id": "chat-1",
+        "text": "Using tools...",
+        "is_progress": True,
+    }
     assert set(params["allowed_tools"]) >= {"list_files", "read_file", "create_file", "edit_file", "write_file"}
     assert set(params["pinned_tools"]) >= {"list_files", "read_file", "create_file", "edit_file", "write_file"}
 
@@ -3331,7 +3422,9 @@ def test_chat_live_file_approval_routes_to_ui_and_brain():
     assert brain.last_call("brain.live_file.approval.respond")["params"] == {
         "approval_id": "file-1",
         "approved": True,
+        "feedback": "",
     }
+    assert brain.last_call("brain.live_file.approval.respond")["wait"] is False
 
 
 def test_icon_summon_routes_to_first_caller_like_default_hotkey():

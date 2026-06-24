@@ -5,6 +5,9 @@
       "settings": {
         "log_prefix": "[healthcheckcustomized]"
       }
+    },
+    "hi-notepad-test": {
+      "enabled": false
     }
   }
 }

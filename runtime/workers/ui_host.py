@@ -39,6 +39,7 @@ _CONTEXT_SOURCE_LABELS = {
     "Selection",
     "Clipboard",
     "Screenshot",
+    "Git/GitHub",
     "Memory",
     "Files",
     "Context",
@@ -181,6 +182,38 @@ def _translate_notice_text(text: str) -> str:
         else:
             out.append(t(line))
     return "\n".join(out)
+
+
+def _live_file_approval_summary(params: dict[str, Any]) -> tuple[str, str, str]:
+    """Return action, path, and display text for live file approvals."""
+    details = params.get("details") if isinstance(params.get("details"), dict) else {}
+    action = str(params.get("action") or "file edit")
+    path = str(params.get("path") or details.get("path") or "").strip()
+    diff = str(params.get("diff") or details.get("diff") or "").strip()
+    plus = sum(1 for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
+    minus = sum(1 for line in diff.splitlines() if line.startswith("-") and not line.startswith("---"))
+    lines = [
+        t("Wisp wants permission to modify a local file."),
+        t("Why: Files is set to ask before write, so Wisp needs approval before changing disk."),
+    ]
+    if action:
+        lines.append(f"{t('Tool:')} {action}")
+    if path:
+        lines.append(f"{t('Target:')} {path}")
+    if "old_chars" in details or "new_chars" in details:
+        lines.append(
+            t("Change: replace {old} chars with {new} chars").format(
+                old=int(details.get("old_chars") or 0),
+                new=int(details.get("new_chars") or 0),
+            )
+        )
+    elif "chars" in details:
+        template = "Change: overwrite file with {chars} chars" if details.get("exists") else "Change: create file with {chars} chars"
+        lines.append(t(template).format(chars=int(details.get("chars") or 0)))
+    if diff:
+        lines.append(t("Diff: +{added} -{removed} lines").format(added=plus, removed=minus))
+    lines.append(t("Approve this file change?"))
+    return action, path, "\n".join(lines)
 
 
 def _ui_log_dir() -> Path:
@@ -1993,6 +2026,8 @@ class QtProtocolHost:
             return self._chat_context_preview(**params)
         if method == "ui.chat.add_conversation":
             return self._chat_add_conversation(**params)
+        if method == "ui.chat.begin_conversation":
+            return self._chat_begin_conversation(**params)
         if method == "ui.chat.active_history":
             return self._chat_active_history()
         if method == "ui.chat.ingest":
@@ -2676,16 +2711,23 @@ class QtProtocolHost:
                     kind, payload = stream.get()
                     if kind == "chunk":
                         is_thought = False
+                        is_progress = False
                         if isinstance(payload, dict):
                             chunk = str(payload.get("text") or "")
                             is_thought = bool(payload.get("is_thought"))
+                            is_progress = bool(payload.get("is_progress"))
                         else:
                             chunk = str(payload or "")
-                        if not is_thought:
+                        if not is_thought and not is_progress:
                             streamed_text += chunk
                             yield chunk
                         else:
-                            yield {"type": "chunk", "text": chunk, "is_thought": True}
+                            item = {"type": "chunk", "text": chunk}
+                            if is_thought:
+                                item["is_thought"] = True
+                            if is_progress:
+                                item["is_progress"] = True
+                            yield item
                     elif kind == "done":
                         final_text = ""
                         file_context = []
@@ -2771,29 +2813,169 @@ class QtProtocolHost:
 
     def _live_file_approval_request(self, **params: Any) -> dict[str, Any]:
         """Ask the user to approve a live model file write/edit."""
+        action, path, text = _live_file_approval_summary(params)
+        state: dict[str, Any] = {"done": False, "approved": False, "feedback": "", "surface": ""}
+        loop = None
+        chat_resolver = {"fn": None}
+        chat_panel = {"shown": False}
+
+        def finish(surface: str, value: bool, feedback: str = "") -> None:
+            if state["done"]:
+                return
+            state["done"] = True
+            state["approved"] = bool(value)
+            state["feedback"] = str(feedback or "").strip()
+            state["surface"] = surface
+            if surface != "chat" and callable(chat_resolver["fn"]):
+                try:
+                    chat_resolver["fn"](bool(value), str(feedback or ""))
+                except Exception:
+                    traceback.print_exc()
+            if surface == "chat":
+                try:
+                    bubble = self._ensure_bubble()
+                    thinking = getattr(bubble, "start_thinking", None)
+                    if callable(thinking):
+                        thinking()
+                except Exception:
+                    pass
+            if loop is not None:
+                loop.quit()
+
+        def show_chat_panel() -> bool:
+            try:
+                self._show_chat(force_new=False)
+            except Exception:
+                traceback.print_exc()
+            if chat_panel["shown"]:
+                return True
+            chat = self._chat
+            if chat is None or not chat.isVisible():
+                return False
+            request = getattr(chat, "request_live_file_approval", None)
+            if not callable(request):
+                return False
+            request_params = dict(params)
+            request_params["_on_decision"] = lambda result: finish(
+                "chat",
+                bool((result or {}).get("approved")) if isinstance(result, dict) else False,
+                str((result or {}).get("feedback") or "") if isinstance(result, dict) else "",
+            )
+            request_params["_register_resolver"] = lambda resolver: chat_resolver.update({"fn": resolver})
+            result = request(request_params)
+            if isinstance(result, dict) and result.get("shown"):
+                chat_panel["shown"] = True
+                if "approved" in result and result.get("approved"):
+                    finish("chat", bool(result.get("approved")), str(result.get("feedback") or ""))
+                return True
+            return False
+
+        chat_shown = show_chat_panel()
+        bubble_result = self._live_file_approval_bubble(
+            dict(params),
+            text,
+            on_decision=lambda value, feedback="": finish("bubble", bool(value), str(feedback or "")),
+            on_feedback=show_chat_panel,
+        )
+        bubble_shown = bool(bubble_result.get("shown"))
+        if chat_shown or bubble_shown:
+            if not state["done"]:
+                from PySide6.QtCore import QEventLoop
+
+                loop = QEventLoop()
+                loop.exec()
+            return {
+                "approved": bool(state["approved"]),
+                "feedback": str(state.get("feedback") or "").strip(),
+                "surface": str(state.get("surface") or ("chat" if chat_shown else "bubble")),
+            }
+
+        if bubble_result.get("shown"):
+            return {
+                "approved": bool(bubble_result.get("approved")),
+                "feedback": str(bubble_result.get("feedback") or "").strip(),
+                "surface": "bubble",
+            }
+
         from PySide6.QtWidgets import QMessageBox
 
-        details = params.get("details") if isinstance(params.get("details"), dict) else {}
-        action = str(params.get("action") or "file edit")
-        path = str(params.get("path") or details.get("path") or "").strip()
         diff = str(params.get("diff") or details.get("diff") or "").strip()
-        lines = [t("Wisp wants permission to modify a local file.")]
-        if action:
-            lines.append(f"{t('Action:')} {action}")
-        if path:
-            lines.append(f"{t('Path:')} {path}")
 
         box = QMessageBox(self._chat or self._overlay)
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle(t("Approve File Change"))
-        box.setText("\n".join(lines))
-        box.setInformativeText(t("Allow this file change?"))
+        box.setWindowTitle(t("Approve this file change?"))
+        box.setText(text)
+        box.setInformativeText(t("Approve this file change?"))
         if diff:
             box.setDetailedText(diff[:20000])
         box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         box.setDefaultButton(QMessageBox.StandardButton.No)
         approved = box.exec() == QMessageBox.StandardButton.Yes
-        return {"approved": bool(approved)}
+        return {"approved": bool(approved), "feedback": "", "surface": "modal"}
+
+    def _live_file_approval_bubble(
+        self,
+        request: dict[str, Any],
+        text: str,
+        *,
+        on_decision=None,
+        on_feedback=None,
+    ) -> dict[str, Any]:
+        """Ask for live file approval through the overlay bubble actions."""
+        state = {"done": False, "approved": False, "feedback": ""}
+        loop = None
+
+        def finish(value: bool, feedback: str = "") -> None:
+            if state["done"]:
+                return
+            state["done"] = True
+            state["approved"] = bool(value)
+            state["feedback"] = str(feedback or "").strip()
+            if callable(on_decision):
+                on_decision(bool(value), str(feedback or ""))
+            if loop is not None:
+                loop.quit()
+
+        def request_changes() -> None:
+            if callable(on_feedback):
+                on_feedback()
+                return
+            try:
+                self._show_chat(force_new=False)
+                chat = self._chat
+                request_fn = getattr(chat, "request_live_file_approval", None) if chat is not None else None
+                if callable(request_fn):
+                    result = request_fn(dict(request))
+                    if isinstance(result, dict) and result.get("shown"):
+                        finish(bool(result.get("approved")), str(result.get("feedback") or ""))
+                        return
+            except Exception:
+                traceback.print_exc()
+            finish(False)
+
+        overlay = self._ensure_overlay()
+        notify = getattr(overlay, "notify_agent_approval", None)
+        if not callable(notify):
+            return {"shown": False, "approved": False}
+        result = notify(
+            text,
+            resolved=False,
+            on_approve=lambda: finish(True),
+            on_feedback=request_changes,
+            on_decline=lambda: finish(False),
+        )
+        if not isinstance(result, dict) or not result.get("actionable"):
+            return {"shown": False, "approved": False}
+        if not state["done"] and not callable(on_decision):
+            from PySide6.QtCore import QEventLoop
+
+            loop = QEventLoop()
+            loop.exec()
+        return {
+            "shown": True,
+            "approved": bool(state["approved"]),
+            "feedback": str(state.get("feedback") or "").strip(),
+        }
 
     def _chat_add_conversation(
         self,
@@ -2805,6 +2987,8 @@ class QtProtocolHost:
         file_context: list | None = None,
         tool_context: dict | None = None,
         context_policy: dict | None = None,
+        append_user: bool = True,
+        conversation_index: int | None = None,
     ) -> dict[str, Any]:
         """Handle chat add conversation for qt protocol host."""
         import uuid as _uuid
@@ -2812,7 +2996,7 @@ class QtProtocolHost:
         from core.conversation_store import store as conversation_store
 
         now = datetime.now(timezone.utc).isoformat()
-        idx = self._active_conversation_idx
+        idx = conversation_index if conversation_index is not None else self._active_conversation_idx
         if idx is not None and 0 <= idx < len(self._all_conversations):
             conv_id = str(self._all_conversations[idx].get("id") or _uuid.uuid4())
             self._all_conversations[idx]["id"] = conv_id
@@ -2865,7 +3049,11 @@ class QtProtocolHost:
             if context_text:
                 current_context = str(conv.get("context") or "").strip()
                 conv["context"] = f"{current_context}\n\n---\n{context_text}" if current_context else context_text
-            conv.setdefault("messages", []).extend([user_msg, assistant_msg])
+            messages = conv.setdefault("messages", [])
+            if append_user:
+                messages.append(user_msg)
+            if assistant:
+                messages.append(assistant_msg)
             self._merge_file_context(conv, normalized_file_context)
             self._merge_tool_context(conv, normalized_tool_context)
             normalized_policy = self._normalized_context_policy(context_policy or {})
@@ -2881,7 +3069,7 @@ class QtProtocolHost:
             {
                 "id": conv_id,
                 "project_id": self._active_project_id,
-                "messages": [user_msg, assistant_msg],
+                "messages": [msg for msg in (user_msg if append_user else None, assistant_msg if assistant else None) if msg],
                 "context": context_text,
                 "created_at": now,
                 "updated_at": now,
@@ -2895,6 +3083,32 @@ class QtProtocolHost:
         if self._chat is not None:
             self._chat.ingest_new_conversations(select_new=True)
         return {"count": len(self._all_conversations), "continued": False}
+
+    def _chat_begin_conversation(
+        self,
+        user: str = "",
+        context: str = "",
+        image_base64: str | None = None,
+        attachments: list | None = None,
+        context_policy: dict | None = None,
+    ) -> dict[str, Any]:
+        """Persist a user chat turn as soon as a prompt is submitted."""
+        result = self._chat_add_conversation(
+            user=user,
+            assistant="",
+            context=context,
+            image_base64=image_base64,
+            attachments=attachments,
+            context_policy=context_policy,
+            append_user=True,
+        )
+        idx = self._active_conversation_idx
+        return {
+            "started": True,
+            "conversation_index": idx,
+            "continued": bool(result.get("continued")),
+            "count": result.get("count"),
+        }
 
     @staticmethod
     def _normalized_file_context(items: list) -> list[dict[str, Any]]:

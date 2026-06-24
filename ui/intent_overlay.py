@@ -143,7 +143,7 @@ _CONV_TOP      = 4
 _CTX_H         = 92
 _CTX_GAP       = 4
 _CTX_CHIP_H    = 58
-_CTX_CHIP_W    = 68
+_CTX_CHIP_W    = 60
 _CTX_TOP       = 8
 _CTX_PREVIEW_TOP = 6
 _CTX_PREVIEW_LINE_H = 22
@@ -208,14 +208,14 @@ def _theme_palette() -> dict[str, QColor]:
 
 
 def _context_toggle_keys() -> str:
-    """Return seven unique overlay-local context toggle keys."""
-    raw = str(getattr(config, "INTENT_CONTEXT_TOGGLE_KEYS", "1234567") or "1234567")
+    """Return eight unique overlay-local context toggle keys."""
+    raw = str(getattr(config, "INTENT_CONTEXT_TOGGLE_KEYS", "12345678") or "12345678")
     keys: list[str] = []
-    for ch in raw + "1234567":
+    for ch in raw + "12345678":
         if ch.isspace() or ch in keys:
             continue
         keys.append(ch)
-        if len(keys) >= 7:
+        if len(keys) >= 8:
             break
     return "".join(keys)
 
@@ -229,6 +229,7 @@ def _default_context_items() -> list[dict]:
         ("selection", t("Selection")),
         ("clipboard", t("Clipboard")),
         ("screenshot", t("Screenshot")),
+        ("github", t("Git/GitHub")),
         ("memory", t("Memory")),
         ("files", t("Files")),
     ]
@@ -813,10 +814,8 @@ class IntentOverlay(QWidget):
         """Paint the per-prompt context controls."""
         palette = palette or _theme_palette()
         key_font = QFont("Segoe UI", 8, QFont.Weight.Bold)
-        x = _PAD_H
         top = y + _CTX_TOP
-        for item in self._context_items:
-            rect = QRect(x, top, _CTX_CHIP_W, _CTX_CHIP_H)
+        for item, rect in self._context_chip_rects(top):
             state = str(item.get("state") or "off").lower()
             color = palette["ctx_on"] if state == "on" else (
                 palette["ctx_auto"] if state == "auto" else palette["ctx_off"]
@@ -868,10 +867,6 @@ class IntentOverlay(QWidget):
                 )
                 p.drawText(rect.x() + 4, rect.y() + 46, rect.width() - 8, 11,
                            Qt.AlignmentFlag.AlignCenter, tokens)
-
-            x += _CTX_CHIP_W + _CTX_GAP
-            if x + _CTX_CHIP_W > _W - _PAD_H:
-                break
 
     def _context_preview_entries(self) -> list[tuple[str, str]]:
         """Return numbered preview rows for context that will be sent or fetched."""
@@ -1008,16 +1003,27 @@ class IntentOverlay(QWidget):
         """Return the context chip under a mouse position."""
         if not self._context_items:
             return None
-        x = _PAD_H
         top = _PAD_V + (_CONV_H if self._show_conversation_selector else 0) + _CTX_TOP
-        for item in self._context_items:
-            rect = QRect(x, top, _CTX_CHIP_W, _CTX_CHIP_H)
+        for item, rect in self._context_chip_rects(top):
             if rect.contains(pos):
                 return item
-            x += _CTX_CHIP_W + _CTX_GAP
-            if x + _CTX_CHIP_W > _W - _PAD_H:
-                break
         return None
+
+    def _context_chip_width(self) -> int:
+        """Return a chip width that fits every context source in one row."""
+        count = max(1, len(self._context_items))
+        available = _W - (_PAD_H * 2) - (_CTX_GAP * (count - 1))
+        return max(44, min(_CTX_CHIP_W, available // count))
+
+    def _context_chip_rects(self, top: int) -> list[tuple[dict, QRect]]:
+        """Return context chip hit/paint rects."""
+        chip_w = self._context_chip_width()
+        rects: list[tuple[dict, QRect]] = []
+        x = _PAD_H
+        for item in self._context_items:
+            rects.append((item, QRect(x, top, chip_w, _CTX_CHIP_H)))
+            x += chip_w + _CTX_GAP
+        return rects
 
     def _toggle_conversation_mode(self) -> bool:
         """Swap between continuing the selected chat and starting fresh."""

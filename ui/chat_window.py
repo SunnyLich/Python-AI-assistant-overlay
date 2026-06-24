@@ -16,7 +16,7 @@ import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
 
-from PySide6.QtCore import QMimeData, QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEventLoop, QMimeData, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -440,6 +440,9 @@ def _policy_state(policy: dict, source: str) -> str:
     if source == "browser":
         mode = tool_modes.context_mode(policy, "browser")
         return "auto" if mode == "model" else ("on" if mode == "auto" else "off")
+    if source == "github":
+        mode = tool_modes.context_mode(policy, "github")
+        return "auto" if mode == "model" else ("on" if mode == "auto" else "off")
     if source == "selection":
         return "on" if policy.get("_context_selection_enabled", False) else "off"
     if source == "clipboard":
@@ -463,6 +466,8 @@ def _apply_policy_state(policy: dict, source: str, state: str) -> dict:
         updated["context_documents_mode"] = "off" if state == "off" else ("model" if state == "auto" else "auto")
     elif source == "browser":
         updated["context_browser_mode"] = "off" if state == "off" else ("model" if state == "auto" else "auto")
+    elif source == "github":
+        updated["context_github_mode"] = "off" if state == "off" else ("model" if state == "auto" else "auto")
     elif source == "selection":
         updated["_context_selection_enabled"] = state != "off"
     elif source == "clipboard":
@@ -1642,13 +1647,13 @@ class ChatWindow(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(6)
 
-        raw_keys = str(getattr(config, "INTENT_CONTEXT_TOGGLE_KEYS", "1234567") or "1234567")
+        raw_keys = str(getattr(config, "INTENT_CONTEXT_TOGGLE_KEYS", "12345678") or "12345678")
         keys: list[str] = []
-        for ch in raw_keys + "1234567":
+        for ch in raw_keys + "12345678":
             if ch.isspace() or ch in keys:
                 continue
             keys.append(ch)
-            if len(keys) == 7:
+            if len(keys) == 8:
                 break
         rows = [
             (
@@ -1669,13 +1674,18 @@ class ChatWindow(QWidget):
                 [("off", t("Off")), ("on", t("On")), ("auto", t("Let model decide"))],
             ),
             (
+                "github",
+                f"{keys[5]} {t('Git/GitHub')}",
+                [("off", t("Off")), ("on", t("On")), ("auto", t("Let model decide"))],
+            ),
+            (
                 "memory",
-                f"{keys[5]} {t('Memory')}",
+                f"{keys[6]} {t('Memory')}",
                 [("off", t("Off")), ("on", t("On")), ("auto", t("Let model decide"))],
             ),
             (
                 "files",
-                f"{keys[6]} {t('Files')}",
+                f"{keys[7]} {t('Files')}",
                 [("off", t("Off")), ("read", t("Read only")), ("ask", t("Ask before write")), ("auto", t("Auto"))],
             ),
         ]
@@ -1749,7 +1759,7 @@ class ChatWindow(QWidget):
             return "0 tok", ""
         if source == "memory":
             return _deferred_token_label(), t("Memory tokens are estimated after the prompt is known.")
-        if source in {"ambient", "browser", "selection", "clipboard"}:
+        if source in {"ambient", "browser", "github", "selection", "clipboard"}:
             return _deferred_token_label(), t("This context is fetched when you send the message, so this token cost is not known yet.")
         return _deferred_token_label(), ""
 
@@ -2339,6 +2349,7 @@ class ChatWindow(QWidget):
             if msg_hint is not None:
                 layout.insertWidget(layout.count() - 1, msg_hint)
         conv["messages"].append(user_message)
+        self._persist()
 
         self._current_ai_text = ""
         self._current_ai_reply_text = ""
@@ -2391,7 +2402,7 @@ class ChatWindow(QWidget):
         """Handle chunk events."""
         if isinstance(chunk, dict):
             text = str(chunk.get("text") or "")
-            if bool(chunk.get("is_thought")):
+            if bool(chunk.get("is_thought")) or bool(chunk.get("is_progress")):
                 _merge_display_segments(self._current_ai_segments, text, True)
                 if self._current_ai_label:
                     self._current_ai_label.setHtml(
@@ -2443,6 +2454,154 @@ class ChatWindow(QWidget):
         if isinstance(item, dict):
             self._current_file_context = _normalized_file_context(item.get("file_context") or [])
             self._current_tool_context = _normalized_tool_context(item.get("tool_context") or {})
+
+    def request_live_file_approval(self, request: dict) -> dict:
+        """Show a file-tool approval request inline in the active chat."""
+        details = request.get("details") if isinstance(request.get("details"), dict) else {}
+        action = str(request.get("action") or "file edit")
+        path = str(request.get("path") or details.get("path") or "").strip()
+        diff = str(request.get("diff") or details.get("diff") or "").strip()
+        plus = sum(1 for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
+        minus = sum(1 for line in diff.splitlines() if line.startswith("-") and not line.startswith("---"))
+        callback = request.get("_on_decision")
+        register_resolver = request.get("_register_resolver")
+        title = t("Approve this file change?")
+        lines = [f"<b>{html.escape(title)}</b>"]
+        if action:
+            lines.append(html.escape(t("Why: Files is set to ask before write, so Wisp needs approval before changing disk.")))
+            lines.append(f"{html.escape(t('Tool:'))} {html.escape(action)}")
+        if path:
+            lines.append(f"{html.escape(t('Target:'))} {html.escape(path)}")
+        if "old_chars" in details or "new_chars" in details:
+            lines.append(
+                html.escape(
+                    t("Change: replace {old} chars with {new} chars").format(
+                        old=int(details.get("old_chars") or 0),
+                        new=int(details.get("new_chars") or 0),
+                    )
+                )
+            )
+        elif "chars" in details:
+            template = "Change: overwrite file with {chars} chars" if details.get("exists") else "Change: create file with {chars} chars"
+            lines.append(html.escape(t(template).format(chars=int(details.get("chars") or 0))))
+        if diff:
+            lines.append(html.escape(t("Diff: +{added} -{removed} lines").format(added=plus, removed=minus)))
+        if diff:
+            preview = html.escape(diff[:1200])
+            if len(diff) > 1200:
+                preview += "\n..."
+            lines.append(f"<pre style='white-space: pre-wrap;'>{preview}</pre>")
+
+        layout = self._active_layout()
+        if layout is None:
+            return {"approved": False, "shown": False}
+
+        frame = QFrame()
+        frame.setObjectName("liveFileApprovalPanel")
+        frame.setStyleSheet(
+            f"QFrame#liveFileApprovalPanel {{ background: {_ACCENT_BG_18}; color: {_TEXT};"
+            f" border: 1px solid {_ACCENT_BG_60}; border-radius: 6px; }}"
+        )
+        outer = QVBoxLayout(frame)
+        outer.setContentsMargins(10, 8, 10, 8)
+        outer.setSpacing(8)
+        label = QLabel("<br>".join(lines))
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setWordWrap(True)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        outer.addWidget(label)
+        feedback_box = QTextEdit()
+        feedback_box.setPlaceholderText(t("Tell Wisp what to change before trying again."))
+        feedback_box.setFixedHeight(72)
+        feedback_box.setVisible(False)
+        feedback_box.setStyleSheet(
+            f"QTextEdit {{ background: {_USER_BG}; color: {_TEXT}; border: 1px solid {_BORDER};"
+            " border-radius: 6px; padding: 6px; }}"
+        )
+        outer.addWidget(feedback_box)
+        row = QHBoxLayout()
+        row.addStretch()
+        approve = QPushButton(t("Approve"))
+        request_changes = QPushButton(t("Request Changes"))
+        deny = QPushButton(t("Decline"))
+        for btn in (approve, request_changes, deny):
+            btn.setFixedHeight(28)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        approve.setStyleSheet(
+            f"QPushButton {{ background: {_ACCENT}; color: #1c1c24; border: none;"
+            " border-radius: 6px; padding: 4px 14px; font-weight: 700; }}"
+        )
+        secondary_style = (
+            f"QPushButton {{ background: {_WHITE_BG_12}; color: {_TEXT};"
+            f" border: 1px solid {_BORDER}; border-radius: 6px; padding: 4px 14px; }}"
+        )
+        request_changes.setStyleSheet(secondary_style)
+        deny.setStyleSheet(secondary_style)
+        row.addWidget(approve)
+        row.addWidget(request_changes)
+        row.addWidget(deny)
+        outer.addLayout(row)
+
+        state = {"done": False, "approved": False, "feedback": ""}
+        loop = QEventLoop()
+
+        def finish(value: bool, feedback: str = "", *, notify: bool = True) -> None:
+            if state["done"]:
+                return
+            state["done"] = True
+            state["approved"] = bool(value)
+            state["feedback"] = str(feedback or "").strip()
+            approve.setEnabled(False)
+            request_changes.setEnabled(False)
+            deny.setEnabled(False)
+            frame.hide()
+            frame.deleteLater()
+            if notify and callable(callback):
+                callback(
+                    {
+                        "approved": bool(state["approved"]),
+                        "feedback": str(state.get("feedback") or "").strip(),
+                        "shown": True,
+                    }
+                )
+            loop.quit()
+
+        def request_change_feedback() -> None:
+            if not feedback_box.isVisible():
+                feedback_box.setVisible(True)
+                request_changes.setText(t("Send Changes"))
+                feedback_box.setFocus()
+                self._scroll_bottom()
+                return
+            feedback = feedback_box.toPlainText().strip()
+            if not feedback:
+                feedback_box.setFocus()
+                return
+            finish(False, feedback)
+
+        def cancel_if_destroyed(*_args: object) -> None:
+            if state["done"]:
+                return
+            state["done"] = True
+            state["approved"] = False
+            loop.quit()
+
+        approve.clicked.connect(lambda: finish(True))
+        request_changes.clicked.connect(request_change_feedback)
+        deny.clicked.connect(lambda: finish(False))
+        frame.destroyed.connect(cancel_if_destroyed)
+        if callable(register_resolver):
+            register_resolver(lambda value=False, feedback="": finish(bool(value), str(feedback or ""), notify=False))
+        layout.insertWidget(layout.count() - 1, frame)
+        self._scroll_bottom()
+        if callable(callback):
+            return {"approved": False, "feedback": "", "shown": True}
+        loop.exec()
+        return {
+            "approved": bool(state["approved"]),
+            "feedback": str(state.get("feedback") or "").strip(),
+            "shown": True,
+        }
 
     def _on_finished(self):
         """Handle finished events."""

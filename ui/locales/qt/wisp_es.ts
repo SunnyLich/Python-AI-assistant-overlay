@@ -805,6 +805,10 @@ Tarjetas, bordes y botones se sombrean automáticamente a partir de estos cuatro
       <translation>Contexto:</translation>
     </message>
     <message>
+      <source>Keys:</source>
+      <translation>Teclas:</translation>
+    </message>
+    <message>
       <source>Intent context keys:</source>
       <translation>Teclas de contexto de intención:</translation>
     </message>
@@ -3041,6 +3045,54 @@ Continuar?</translation>
     <message>
       <source>working - see terminal for full pip log</source>
       <translation>trabajando - consulta la terminal para ver el registro completo de pip</translation>
+    </message>
+    <message>
+      <source>Wisp wants permission to modify a local file.</source>
+      <translation>Wisp quiere permiso para modificar un archivo local.</translation>
+    </message>
+    <message>
+      <source>Why: Files is set to ask before write, so Wisp needs approval before changing disk.</source>
+      <translation>Motivo: Archivos está configurado para pedir confirmación antes de escribir, así que Wisp necesita aprobación antes de cambiar el disco.</translation>
+    </message>
+    <message>
+      <source>Tool:</source>
+      <translation>Herramienta:</translation>
+    </message>
+    <message>
+      <source>Target:</source>
+      <translation>Destino:</translation>
+    </message>
+    <message>
+      <source>Change: replace {old} chars with {new} chars</source>
+      <translation>Cambio: reemplazar {old} caracteres por {new} caracteres</translation>
+    </message>
+    <message>
+      <source>Change: overwrite file with {chars} chars</source>
+      <translation>Cambio: sobrescribir archivo con {chars} caracteres</translation>
+    </message>
+    <message>
+      <source>Change: create file with {chars} chars</source>
+      <translation>Cambio: crear archivo con {chars} caracteres</translation>
+    </message>
+    <message>
+      <source>Diff: +{added} -{removed} lines</source>
+      <translation>Diferencia: +{added} -{removed} líneas</translation>
+    </message>
+    <message>
+      <source>Approve this file change?</source>
+      <translation>¿Aprobar este cambio de archivo?</translation>
+    </message>
+    <message>
+      <source>Request Changes</source>
+      <translation>Solicitar cambios</translation>
+    </message>
+    <message>
+      <source>Send Changes</source>
+      <translation>Enviar cambios</translation>
+    </message>
+    <message>
+      <source>Tell Wisp what to change before trying again.</source>
+      <translation>Dile a Wisp qué cambiar antes de intentarlo de nuevo.</translation>
     </message>
   </context>
   <context>

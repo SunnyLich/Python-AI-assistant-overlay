@@ -300,7 +300,7 @@ def test_intent_overlay_project_conversation_and_context_chip_workflow(qapp, mon
     from runtime.supervisor.flows import FlowController
     from ui.intent_overlay import IntentOverlay
 
-    monkeypatch.setattr(config, "INTENT_CONTEXT_TOGGLE_KEYS", "1234567", raising=False)
+    monkeypatch.setattr(config, "INTENT_CONTEXT_TOGGLE_KEYS", "12345678", raising=False)
     screenshot_tokens = FlowController._screen_token_label({"screen_size": {"width": 1440, "height": 900}})
     assert screenshot_tokens not in {"", "0 tok", "? tok"}
 
@@ -310,8 +310,9 @@ def test_intent_overlay_project_conversation_and_context_chip_workflow(qapp, mon
         {"id": "selection", "key": "3", "label": "Selection", "state": "on", "tokens": "~5 tok"},
         {"id": "clipboard", "key": "4", "label": "Clipboard", "state": "off", "tokens": "? tok"},
         {"id": "screenshot", "key": "5", "label": "Screenshot", "state": "auto", "tokens": screenshot_tokens},
-        {"id": "memory", "key": "6", "label": "Memory", "state": "auto", "tokens": "? tok"},
-        {"id": "files", "key": "7", "label": "Files", "state": "auto", "tokens": ""},
+        {"id": "github", "key": "6", "label": "Git/GitHub", "state": "auto", "tokens": "? tok"},
+        {"id": "memory", "key": "7", "label": "Memory", "state": "auto", "tokens": "? tok"},
+        {"id": "files", "key": "8", "label": "Files", "state": "auto", "tokens": ""},
     ]
     overlay = IntentOverlay(
         context_items=context_items,
@@ -331,7 +332,7 @@ def test_intent_overlay_project_conversation_and_context_chip_workflow(qapp, mon
         assert overlay.project_choice() == {"mode": "existing", "project_id": "p1"}
         assert overlay.conversation_choice() == {"mode": "continue", "index": 0}
         assert {item["id"] for item in overlay.context_choices()} == {
-            "ambient", "browser", "selection", "clipboard", "screenshot", "memory", "files"
+            "ambient", "browser", "selection", "clipboard", "screenshot", "github", "memory", "files"
         }
 
         assert overlay._cycle_context_key("3") is True
@@ -418,7 +419,7 @@ def test_chat_window_context_preview_send_and_history_workflow(qapp, isolated_ap
         preview_requests.clear()
 
         assert set(window._context_controls) == {
-            "ambient", "browser", "selection", "clipboard", "screenshot", "memory", "files"
+            "ambient", "browser", "selection", "clipboard", "screenshot", "github", "memory", "files"
         }
         window._set_context_policy_state("browser", "on")
         window._set_context_policy_state("selection", "on")
@@ -673,6 +674,16 @@ def test_tool_file_permission_and_approval_workflow(tmp_path: Path):
     assert "-old text" in approval_requests[0]["diff"]
     assert "+new text" in approval_requests[0]["diff"]
     assert (root / "public.txt").read_text(encoding="utf-8") == "old text"
+
+    tools = AgentToolbox(
+        ws,
+        AgentPermissions(allow_file_edit=True, allow_file_create=True),
+        approval_callback=lambda _request: {"approved": False, "feedback": "Keep the old phrasing."},
+        require_approval=True,
+        permission_modes={"file_edit": "ask permission"},
+    )
+    with pytest.raises(PermissionDenied, match="Keep the old phrasing"):
+        tools.write_file("public.txt", "new text")
 
     approvals: list[dict] = []
     tools = AgentToolbox(
@@ -1929,6 +1940,9 @@ def test_chat_context_chip_stylesheets_use_plain_rgb_colors_workflow(qapp):
 
 def test_agent_permission_notice_and_bubble_notice_workflow(qapp, tmp_path: Path):
     """Approval and notice plumbing makes tool/file permission states visible."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
     from core.agent.task_spec import agent_task_spec_from_dict
     from ui.agent.task_window import AgentRunWindow
     from ui.bubble import SpeechBubble
@@ -1963,8 +1977,12 @@ def test_agent_permission_notice_and_bubble_notice_workflow(qapp, tmp_path: Path
         )
         assert [label for label, _callback in bubble._notice_actions] == ["Approve", "Decline"]
         assert len(bubble._action_rects) == 2
-        bubble._notice_actions[0][1]()
+        QTest.mouseClick(bubble, Qt.MouseButton.LeftButton, pos=bubble._action_rects[0].center())
+        qapp.processEvents()
         assert actions == ["approve"]
+        assert bubble.isVisible()
+        assert bubble._thinking is True
+        assert bubble._notice_actions == []
 
         bubble.show_notice("Browser permission denied.", timeout_ms=20)
         assert "Browser permission denied." in bubble._full_text

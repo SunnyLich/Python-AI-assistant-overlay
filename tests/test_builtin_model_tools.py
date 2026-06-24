@@ -416,6 +416,7 @@ class BuiltinModelToolsTests(unittest.TestCase):
             config.TOOL_FILE_BLOCKED_GLOBS = old_blocked
             llm.set_file_edit_approval_callback(None)
 
+    @patch.dict("os.environ", {"WISP_UNIFIED_CHAT_TOOL_LOOP": "0"}, clear=False)
     def test_codex_responses_tool_loop_can_write_local_file(self):
         """Verify ChatGPT Responses function calls execute local file tools."""
         old_roots = getattr(config, "TOOL_FILE_ROOTS", [])
@@ -519,6 +520,7 @@ class BuiltinModelToolsTests(unittest.TestCase):
             config.TOOL_FILE_BLOCKED_GLOBS = old_blocked
             llm.set_live_file_access_mode(None)
 
+    @patch.dict("os.environ", {"WISP_UNIFIED_CHAT_TOOL_LOOP": "0"}, clear=False)
     def test_codex_tool_loop_continues_when_file_edit_stops_after_read(self):
         """Verify mutating file requests do not stop after only listing/reading."""
         old_roots = getattr(config, "TOOL_FILE_ROOTS", [])
@@ -690,6 +692,34 @@ class BuiltinModelToolsTests(unittest.TestCase):
         self.assertEqual(chunks, ["Thinking ", "through it.", "Done."])
         self.assertEqual([getattr(chunk, "kind", "answer") for chunk in chunks], ["thought", "thought", "answer"])
 
+    def test_responses_chat_requests_configured_reasoning_effort(self):
+        """Verify Responses calls request the configured chat reasoning effort."""
+        old_effort = getattr(config, "CHAT_REASONING_EFFORT", "")
+        try:
+            config.CHAT_REASONING_EFFORT = "high"
+
+            class FakeResponses:
+                def __init__(self):
+                    self.calls = []
+
+                def create(self, **kwargs):
+                    self.calls.append(kwargs)
+                    return SimpleNamespace(id="resp_1", output_text="Done.", output=[])
+
+            responses = FakeResponses()
+            response = llm._responses_create_with_retries(
+                SimpleNamespace(responses=responses),
+                {"model": "gpt-test", "input": "hi"},
+                provider="chatgpt",
+                model="gpt-test",
+            )
+
+            self.assertEqual(response.output_text, "Done.")
+            self.assertEqual(responses.calls[0]["reasoning"], {"effort": "high"})
+        finally:
+            config.CHAT_REASONING_EFFORT = old_effort
+
+    @patch.dict("os.environ", {"WISP_UNIFIED_CHAT_TOOL_LOOP": "0"}, clear=False)
     def test_codex_responses_tool_loop_falls_back_when_tool_output_loses_state(self):
         """Verify tool output fallback handles routes that do not retain prior calls."""
         old_roots = getattr(config, "TOOL_FILE_ROOTS", [])
@@ -759,6 +789,7 @@ class BuiltinModelToolsTests(unittest.TestCase):
             config.TOOL_FILE_BLOCKED_GLOBS = old_blocked
             llm.set_live_file_access_mode(None)
 
+    @patch.dict("os.environ", {"WISP_UNIFIED_CHAT_TOOL_LOOP": "0"}, clear=False)
     def test_codex_responses_tool_loop_handles_store_must_be_false_routes(self):
         """Verify store=false-only Responses routes still complete tool loops."""
         old_roots = getattr(config, "TOOL_FILE_ROOTS", [])
@@ -836,6 +867,7 @@ class BuiltinModelToolsTests(unittest.TestCase):
             config.TOOL_FILE_BLOCKED_GLOBS = old_blocked
             llm.set_live_file_access_mode(None)
 
+    @patch.dict("os.environ", {"WISP_UNIFIED_CHAT_TOOL_LOOP": "0"}, clear=False)
     def test_codex_stream_required_tool_loop_can_write_local_file(self):
         """Verify stream-required ChatGPT Responses models still execute tools."""
         old_roots = getattr(config, "TOOL_FILE_ROOTS", [])

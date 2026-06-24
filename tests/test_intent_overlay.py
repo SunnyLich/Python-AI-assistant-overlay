@@ -6,6 +6,18 @@ import sys
 import pytest
 
 
+@pytest.fixture
+def qapp():
+    """Return a QApplication for intent overlay widget tests."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6", reason="PySide6 not installed")
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    yield app
+    app.processEvents()
+
+
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
 def test_context_preview_entries_expand_item_sources(monkeypatch):
     """Verify one App chip can show multiple detected source previews."""
@@ -314,6 +326,43 @@ def test_intent_overlay_fallback_context_tokens_are_unknown():
 
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_intent_overlay_fits_files_context_chip(qapp):
+    """Verify all eight context chips fit and Files is hit-testable."""
+    from PySide6.QtCore import QPoint
+
+    from ui import intent_overlay
+    from ui.intent_overlay import IntentOverlay
+
+    overlay = IntentOverlay(context_items=None)
+    try:
+        choices = overlay.context_choices()
+        assert [item["id"] for item in choices] == [
+            "ambient",
+            "browser",
+            "selection",
+            "clipboard",
+            "screenshot",
+            "github",
+            "memory",
+            "files",
+        ]
+        assert overlay._context_chip_width() <= intent_overlay._CTX_CHIP_W
+        top = intent_overlay._PAD_V + (
+            intent_overlay._CONV_H if overlay._show_conversation_selector else 0
+        ) + intent_overlay._CTX_TOP
+        rects = overlay._context_chip_rects(top)
+        assert len(rects) == 8
+        assert rects[-1][0]["id"] == "files"
+        assert rects[-1][1].right() <= intent_overlay._W - intent_overlay._PAD_H
+
+        center = rects[-1][1].center()
+        assert overlay._context_item_at(QPoint(center.x(), center.y()))["id"] == "files"
+    finally:
+        overlay.close()
+        qapp.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
 def test_intent_overlay_bottom_context_previews_resize(qapp):
     """Verify enabled context previews appear below intent rows and resize."""
     from ui import intent_overlay
@@ -356,8 +405,9 @@ def test_intent_overlay_bottom_context_previews_resize(qapp):
         assert overlay._context_preview_entries() == [
             ("Selection", "Selection"),
             ("Clipboard", "Clipboard"),
+            ("Memory", "Memory"),
         ]
-        assert overlay.height() == expanded_h - intent_overlay._CTX_PREVIEW_LINE_H
+        assert overlay.height() == expanded_h
     finally:
         overlay.close()
         qapp.processEvents()
@@ -643,6 +693,7 @@ def test_apply_intent_context_choices_updates_caller_policy():
         "context_ambient": True,
         "context_documents_mode": "off",
         "context_browser_mode": "auto",
+        "context_github_mode": "off",
         "context_memory_mode": "on",
         "context_screenshot": "auto",
         "file_access": "ask",
@@ -653,6 +704,7 @@ def test_apply_intent_context_choices_updates_caller_policy():
         [
             {"id": "browser", "state": "off"},
             {"id": "selection", "state": "off"},
+            {"id": "github", "state": "auto"},
             {"id": "memory", "state": "auto"},
             {"id": "files", "state": "off"},
             {"id": "ambient", "state": "on", "default_state": "off", "touched": True},
@@ -661,6 +713,7 @@ def test_apply_intent_context_choices_updates_caller_policy():
 
     assert updated["context_documents_mode"] == "auto"
     assert updated["context_browser_mode"] == "off"
+    assert updated["context_github_mode"] == "model"
     assert updated["_context_selection_enabled"] is False
     assert updated["context_memory_mode"] == "model"
     assert updated["file_access"] == "off"

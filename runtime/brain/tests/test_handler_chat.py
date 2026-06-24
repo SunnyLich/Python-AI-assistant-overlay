@@ -252,11 +252,11 @@ def test_chat_precancelled_yields_empty(record_ctx):
 def test_live_file_approval_callback_emits_request_and_accepts_response(record_ctx):
     """Verify live file approval callback waits for the matching response."""
     events, ctx = record_ctx()
-    approved = {"value": False}
+    decision = {"value": {}}
 
     def wait_for_approval():
         """Run the blocking approval callback in a worker thread."""
-        approved["value"] = handlers._live_file_approval_callback(ctx)({
+        decision["value"] = handlers._live_file_approval_callback(ctx)({
             "action": "edit_file",
             "path": "note.txt",
         })
@@ -276,11 +276,12 @@ def test_live_file_approval_callback_emits_request_and_accepts_response(record_c
 
         result = handlers.HANDLERS["brain.live_file.approval.respond"](
             approval_id=request["approval_id"],
-            approved=True,
+            approved=False,
+            feedback="Use a smaller patch.",
         )
-        assert result == {"ok": True, "approved": True}
+        assert result == {"ok": True, "approved": False, "feedback": "Use a smaller patch."}
     finally:
         ctx.cancelled = True
         thread.join(timeout=2.0)
 
-    assert approved["value"] is True
+    assert decision["value"] == {"approved": False, "feedback": "Use a smaller patch."}

@@ -144,9 +144,9 @@ _PROFILE_DEFAULTS: list[dict] = [
             "file_access": "off",
         },
         "tool": {
-            "max_calls": 3,
-            "max_result_chars": 50000,
-            "max_total_chars": 90000,
+            "max_calls": 25,
+            "max_result_chars": 120000,
+            "max_total_chars": 300000,
         },
     },
     {
@@ -161,9 +161,9 @@ _PROFILE_DEFAULTS: list[dict] = [
             "file_access": "off",
         },
         "tool": {
-            "max_calls": 1,
-            "max_result_chars": 12000,
-            "max_total_chars": 16000,
+            "max_calls": 8,
+            "max_result_chars": 30000,
+            "max_total_chars": 90000,
         },
     },
     {
@@ -178,9 +178,9 @@ _PROFILE_DEFAULTS: list[dict] = [
             "file_access": "off",
         },
         "tool": {
-            "max_calls": 3,
-            "max_result_chars": 50000,
-            "max_total_chars": 90000,
+            "max_calls": 25,
+            "max_result_chars": 120000,
+            "max_total_chars": 300000,
         },
     },
     {
@@ -195,9 +195,9 @@ _PROFILE_DEFAULTS: list[dict] = [
             "file_access": "read",
         },
         "tool": {
-            "max_calls": 6,
-            "max_result_chars": 80000,
-            "max_total_chars": 180000,
+            "max_calls": 50,
+            "max_result_chars": 160000,
+            "max_total_chars": 600000,
         },
     },
     {
@@ -229,9 +229,9 @@ _PROFILE_DEFAULTS: list[dict] = [
             "file_access": "read",
         },
         "tool": {
-            "max_calls": 5,
-            "max_result_chars": 80000,
-            "max_total_chars": 160000,
+            "max_calls": 50,
+            "max_result_chars": 160000,
+            "max_total_chars": 600000,
         },
     },
 ]
@@ -657,9 +657,14 @@ def _intent_context_toggle_keys(raw: str | None) -> str:
         if ch.isspace() or ch in keys:
             continue
         keys.append(ch)
-        if len(keys) >= 7:
+        if len(keys) >= 8:
             break
-    return "".join(keys) or "1234567"
+    for ch in "12345678":
+        if ch not in keys:
+            keys.append(ch)
+        if len(keys) >= 8:
+            break
+    return "".join(keys) or "12345678"
 
 
 def _load_config() -> None:
@@ -670,7 +675,8 @@ def _load_config() -> None:
     global DEEPSEEK_API_KEY, OPENROUTER_API_KEY, MISTRAL_API_KEY
     global XAI_API_KEY, TOGETHER_API_KEY, CEREBRAS_API_KEY
     global LLM_PROVIDER, LLM_MODEL, LLM_FALLBACKS
-    global CHAT_LLM_PROVIDER, CHAT_LLM_MODEL, CHAT_LLM_FALLBACKS, TOOL_LLM_MODEL
+    global CHAT_LLM_PROVIDER, CHAT_LLM_MODEL, CHAT_LLM_FALLBACKS, TOOL_LLM_MODEL, UNIFIED_CHAT_TOOL_LOOP
+    global CHAT_REASONING_EFFORT, CHAT_TOOL_TRACE_UI
     global VISION_LLM_PROVIDER, VISION_LLM_MODEL, VISION_LLM_FALLBACKS
     global ACTIVE_PROFILE, PROFILES
     global TTS_PROVIDER, CARTESIA_VOICE_ID
@@ -742,6 +748,9 @@ def _load_config() -> None:
     # Empty = use the Main LLM model for tool calls. Set this only to force a
     # different model when tools are active (e.g. a more capable Anthropic model).
     TOOL_LLM_MODEL = os.getenv("TOOL_LLM_MODEL", "")
+    UNIFIED_CHAT_TOOL_LOOP = env_bool("WISP_UNIFIED_CHAT_TOOL_LOOP", True)
+    CHAT_REASONING_EFFORT = os.getenv("CHAT_REASONING_EFFORT", "high").strip().lower()
+    CHAT_TOOL_TRACE_UI = env_bool("CHAT_TOOL_TRACE_UI", False)
 
     # --- Vision LLM ---
     VISION_LLM_PROVIDER  = os.getenv("VISION_LLM_PROVIDER",  "")
@@ -828,7 +837,7 @@ def _load_config() -> None:
     DICTATE_MODE         = os.getenv("DICTATE_MODE",         "raw")
     VOICE_TRANSCRIPT_CONFIRM = env_bool("VOICE_TRANSCRIPT_CONFIRM", False)
     INTENT_CONTEXT_TOGGLE_KEYS = _intent_context_toggle_keys(
-        os.getenv("INTENT_CONTEXT_TOGGLE_KEYS", "1234567")
+        os.getenv("INTENT_CONTEXT_TOGGLE_KEYS", "12345678")
     )
     INTENT_OVERLAY_TIMEOUT_MS = max(
         0,
@@ -843,9 +852,9 @@ def _load_config() -> None:
     CONTEXT_BROWSER_MAX_CHARS          = env_int("CONTEXT_BROWSER_MAX_CHARS",          12000)
     CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS = env_int("CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS", 8000)
     CONTEXT_TOOL_DOCUMENT_MAX_CHARS    = env_int("CONTEXT_TOOL_DOCUMENT_MAX_CHARS",    50000)
-    TOOL_TURN_MAX_CALLS                = env_int("TOOL_TURN_MAX_CALLS",                3)
-    TOOL_TURN_MAX_RESULT_CHARS         = env_int("TOOL_TURN_MAX_RESULT_CHARS",         50000)
-    TOOL_TURN_MAX_TOTAL_CHARS          = env_int("TOOL_TURN_MAX_TOTAL_CHARS",          90000)
+    TOOL_TURN_MAX_CALLS                = env_int("TOOL_TURN_MAX_CALLS",                25)
+    TOOL_TURN_MAX_RESULT_CHARS         = env_int("TOOL_TURN_MAX_RESULT_CHARS",         120000)
+    TOOL_TURN_MAX_TOTAL_CHARS          = env_int("TOOL_TURN_MAX_TOTAL_CHARS",          300000)
 
     # --- STT ---
     STT_MODEL        = os.getenv("STT_MODEL",        "base")

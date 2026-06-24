@@ -224,6 +224,40 @@ def test_chat_add_conversation_persists_file_context() -> None:
     assert host._all_conversations[0]["file_context"] == file_context
 
 
+def test_chat_begin_conversation_persists_user_then_final_appends_assistant() -> None:
+    """Verify overlay prompts are recoverable before the assistant reply lands."""
+    from runtime.workers.ui_host import QtProtocolHost
+
+    host = QtProtocolHost.__new__(QtProtocolHost)
+    host._active_conversation_idx = None
+    host._active_project_id = "general"
+    host._all_conversations = []
+    host._chat = None
+    persisted = []
+    host._persist_conversations = lambda: persisted.append(True)  # type: ignore[attr-defined]
+
+    begin = host._chat_begin_conversation(user="edit notes", context="ctx", context_policy={"context_memory_mode": "on"})
+    idx = begin["conversation_index"]
+
+    assert begin["started"] is True
+    assert idx == 0
+    assert [message["role"] for message in host._all_conversations[0]["messages"]] == ["user"]
+    assert host._all_conversations[0]["messages"][0]["content"] == "edit notes"
+
+    host._chat_add_conversation(
+        user="edit notes",
+        assistant="done",
+        append_user=False,
+        conversation_index=idx,
+        tool_context={"allowed_tools": ["edit_file"], "pinned_tools": [], "file_access_mode": "ask"},
+    )
+
+    messages = host._all_conversations[0]["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert messages[1]["content"] == "done"
+    assert len(persisted) == 2
+
+
 def test_chat_request_reuses_active_conversation_tool_context() -> None:
     """Verify chat sends stored tool policy when continuing a conversation."""
     from runtime.workers.ui_host import QtProtocolHost
@@ -424,6 +458,219 @@ def test_chat_stream_preserves_structured_thought_chunks() -> None:
         {"type": "chunk", "text": "Thinking first.", "is_thought": True},
         "Answer.",
     ]
+
+
+def test_chat_stream_preserves_progress_without_flattening_into_answer() -> None:
+    """Verify chat progress chunks stay display-only and do not pollute answer text."""
+    from runtime.workers.ui_host import QtProtocolHost
+
+    host = QtProtocolHost.__new__(QtProtocolHost)
+    host._active_conversation_idx = None
+    host._all_conversations = []
+    host._chat_request_ids = iter([1])
+    host._chat_streams = {}
+    import threading
+
+    host._chat_streams_lock = threading.Lock()
+
+    def emit(_event, payload):
+        request_id = payload["request_id"]
+        host._chat_chunk(request_id=request_id, text="Tool loop: unified Responses.", is_progress=True)
+        host._chat_chunk(request_id=request_id, text="Answer.")
+        host._chat_done(request_id=request_id, text="Answer.")
+
+    host.emit = emit  # type: ignore[method-assign]
+
+    result = list(host._make_chat_send_fn()([{"role": "user", "content": "hi"}]))
+
+    assert result == [
+        {"type": "chunk", "text": "Tool loop: unified Responses.", "is_progress": True},
+        "Answer.",
+    ]
+
+
+def test_live_file_approval_shows_chat_and_bubble() -> None:
+    """Verify live file approvals render in chat and bubble together."""
+    from runtime.workers.ui_host import QtProtocolHost
+
+    class Chat:
+        def __init__(self) -> None:
+            self.requests: list[dict] = []
+
+        def isVisible(self) -> bool:
+            return True
+
+        def request_live_file_approval(self, request: dict) -> dict:
+            self.requests.append(request)
+            return {"shown": True}
+
+    class Overlay:
+        def __init__(self) -> None:
+            self.notices: list[str] = []
+
+        def notify_agent_approval(self, text: str, **kwargs) -> dict:
+            self.notices.append(text)
+            kwargs["on_approve"]()
+            return {"shown": True, "actionable": True}
+
+    chat = Chat()
+    overlay = Overlay()
+    host = QtProtocolHost.__new__(QtProtocolHost)
+    host._chat = chat
+    host._show_chat = lambda force_new=False: {"shown": True}  # type: ignore[method-assign]
+    host._ensure_overlay = lambda: overlay  # type: ignore[method-assign]
+
+    result = host._live_file_approval_request(
+        approval_id="file-1",
+        action="edit_file",
+        path="note.txt",
+        details={"old_chars": 4, "new_chars": 8, "diff": "--- a/note.txt\n+++ b/note.txt\n-old\n+new text"},
+    )
+
+    assert result == {"approved": True, "feedback": "", "surface": "bubble"}
+    assert len(chat.requests) == 1
+    assert chat.requests[0]["approval_id"] == "file-1"
+    assert overlay.notices
+    assert "Why:" in overlay.notices[0]
+    assert "Target:" in overlay.notices[0]
+    assert "Diff: +1 -1 lines" in overlay.notices[0]
+
+
+def test_live_file_approval_uses_bubble_when_chat_is_not_visible() -> None:
+    """Verify live file approvals fall back to actionable bubble buttons."""
+    from runtime.workers.ui_host import QtProtocolHost
+
+    class Chat:
+        def isVisible(self) -> bool:
+            return False
+
+    class Overlay:
+        def __init__(self) -> None:
+            self.notices: list[str] = []
+
+        def notify_agent_approval(self, text: str, **kwargs) -> dict:
+            self.notices.append(text)
+            kwargs["on_approve"]()
+            return {"shown": True, "actionable": True}
+
+    overlay = Overlay()
+    host = QtProtocolHost.__new__(QtProtocolHost)
+    host._chat = Chat()
+    host._show_chat = lambda force_new=False: {"shown": False}  # type: ignore[method-assign]
+    host._ensure_overlay = lambda: overlay  # type: ignore[method-assign]
+
+    result = host._live_file_approval_request(approval_id="file-1", action="edit_file", path="note.txt")
+
+    assert result == {"approved": True, "feedback": "", "surface": "bubble"}
+    assert overlay.notices
+    assert "edit_file" in overlay.notices[0]
+    assert "note.txt" in overlay.notices[0]
+
+
+def test_live_file_approval_can_be_resolved_from_chat_while_bubble_is_shown() -> None:
+    """Verify the chat approval panel can resolve a request also shown in the bubble."""
+    from runtime.workers.ui_host import QtProtocolHost
+
+    class Chat:
+        def __init__(self) -> None:
+            self.callback = None
+            self.resolver = None
+
+        def isVisible(self) -> bool:
+            return True
+
+        def request_live_file_approval(self, request: dict) -> dict:
+            self.callback = request.get("_on_decision")
+            register = request.get("_register_resolver")
+            if callable(register):
+                register(lambda *_args: None)
+            return {"shown": True}
+
+    class Overlay:
+        def __init__(self, chat: Chat) -> None:
+            self.chat = chat
+            self.notices: list[str] = []
+
+        def notify_agent_approval(self, text: str, **_kwargs) -> dict:
+            self.notices.append(text)
+            self.chat.callback({"approved": False, "feedback": "Use a smaller patch.", "shown": True})
+            return {"shown": True, "actionable": True}
+
+    chat = Chat()
+    overlay = Overlay(chat)
+    host = QtProtocolHost.__new__(QtProtocolHost)
+    host._chat = chat
+    host._ensure_overlay = lambda: overlay  # type: ignore[method-assign]
+    host._show_chat = lambda force_new=False: {"shown": True}  # type: ignore[method-assign]
+    host._ensure_bubble = lambda: type("Bubble", (), {"start_thinking": lambda self: None})()  # type: ignore[method-assign]
+
+    result = host._live_file_approval_request(approval_id="file-1", action="edit_file", path="note.txt")
+
+    assert result == {
+        "approved": False,
+        "feedback": "Use a smaller patch.",
+        "surface": "chat",
+    }
+    assert overlay.notices
+
+
+def test_agent_approval_bubble_notice_does_not_timeout() -> None:
+    """Verify unresolved approval bubble notices stay actionable indefinitely."""
+    import pytest
+
+    pytest.importorskip("PySide6")
+    from ui.overlay import IconOverlay
+
+    class Timer:
+        def __init__(self) -> None:
+            self.interval = None
+            self.starts = 0
+            self.stops = 0
+
+        def stop(self) -> None:
+            self.stops += 1
+
+        def setInterval(self, value: int) -> None:  # noqa: N802 - Qt-style fake
+            self.interval = value
+
+        def start(self) -> None:
+            self.starts += 1
+
+    class Icon:
+        def show(self) -> None:
+            pass
+
+        def raise_(self) -> None:
+            pass
+
+    class Bubble:
+        def __init__(self) -> None:
+            self.notice = None
+
+        def show_notice(self, text: str, *, timeout_ms: int, actions: list) -> None:
+            self.notice = {"text": text, "timeout_ms": timeout_ms, "actions": actions}
+
+    bubble = Bubble()
+    overlay = IconOverlay.__new__(IconOverlay)
+    overlay._bubble = bubble
+    timer = Timer()
+    overlay._icon_hide_timer = timer
+    overlay._icon_label = Icon()
+    overlay._set_icon_pixmap = lambda _name: None  # type: ignore[method-assign]
+    overlay._icon_backstop_ms = lambda: 4000  # type: ignore[method-assign]
+
+    result = overlay.notify_agent_approval(
+        "Permission needed.",
+        on_approve=lambda: None,
+        on_feedback=lambda: None,
+        on_decline=lambda: None,
+    )
+
+    assert result == {"shown": True, "actionable": True}
+    assert bubble.notice["timeout_ms"] == 0
+    assert [label for label, _callback in bubble.notice["actions"]] == ["Approve", "Request Changes", "Decline"]
+    assert timer.starts == 0
+    assert timer.stops >= 1
 
 
 def test_active_history_includes_context_and_attachment_refs() -> None:

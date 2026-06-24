@@ -289,7 +289,7 @@ class SpeechBubble(QWidget):
                 self._action_pressed = -1
                 if should_trigger and action_idx < len(self._notice_actions):
                     callback = self._notice_actions[action_idx][1]
-                    self.clear()
+                    self.start_thinking()
                     callback()
                 event.accept()
                 self.update()
@@ -384,6 +384,8 @@ class SpeechBubble(QWidget):
 
     def start_thinking(self):
         """Show animated dots while waiting for the first LLM token."""
+        self._clear_notice_actions()
+        self._restore_base_size()
         self._full_text = ""
         self._thought_text = ""
         self._highlight_generation += 1
@@ -503,6 +505,9 @@ class SpeechBubble(QWidget):
         """Buffer incoming LLM chunk. Starts WPM reveal on first token if not already active."""
         if not chunk:
             return
+        if self._notice_actions:
+            self._clear_notice_actions()
+            self._restore_base_size()
         if self._transcript_preview:
             self._transcript_preview = False
             self._pending_words = []

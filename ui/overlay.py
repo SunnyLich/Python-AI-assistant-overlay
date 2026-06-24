@@ -350,6 +350,7 @@ class IconOverlay(QMainWindow):
         *,
         resolved: bool = False,
         on_approve=None,
+        on_feedback=None,
         on_decline=None,
     ) -> dict:
         """Raise the icon and show an agent approval notice bubble."""
@@ -362,10 +363,13 @@ class IconOverlay(QMainWindow):
         shown = False
         actionable = bool(on_approve and on_decline and not resolved)
         if hasattr(self, "_bubble"):
-            timeout = 4500 if resolved else 15000
+            timeout = 4500 if resolved else (0 if actionable else 15000)
             actions = None
             if actionable:
-                actions = [(t("Approve"), on_approve), (t("Decline"), on_decline)]
+                actions = [(t("Approve"), on_approve)]
+                if on_feedback:
+                    actions.append((t("Request Changes"), on_feedback))
+                actions.append((t("Decline"), on_decline))
             self._bubble.show_notice(text, timeout_ms=timeout, actions=actions)
             shown = True
         if hasattr(self, "_tray") and not shown:
@@ -376,8 +380,11 @@ class IconOverlay(QMainWindow):
                 10000 if not resolved else 4000,
             )
         if hasattr(self, "_icon_hide_timer"):
-            self._icon_hide_timer.setInterval(15000 if not resolved else self._icon_backstop_ms())
-            self._icon_hide_timer.start()
+            if actionable:
+                self._icon_hide_timer.stop()
+            else:
+                self._icon_hide_timer.setInterval(15000 if not resolved else self._icon_backstop_ms())
+                self._icon_hide_timer.start()
         return {"shown": shown, "actionable": shown and actionable}
 
     def _open_settings(self):

@@ -20,6 +20,7 @@ from ui.i18n import t
 
 log = logging.getLogger("wisp.runtime.flows")
 _INTERACTIVE_LLM_TIMEOUT_SECONDS = 120.0
+_INTERACTIVE_LLM_TOOL_TIMEOUT_SECONDS = 300.0
 _TTS_SEGMENT_MIN_CHARS = 60
 _TTS_SEGMENT_MAX_CHARS = 520
 _BROWSER_APP_NAMES = {
@@ -1243,10 +1244,21 @@ class FlowController:
             log.exception("failed to fetch active project for chat")
 
         try:
+            if chat_params.get("use_tools"):
+                self._safe_call(
+                    self.ui,
+                    "ui.chat.chunk",
+                    {
+                        "request_id": request_id,
+                        "text": t("Using tools..."),
+                        "is_progress": True,
+                    },
+                    timeout=30.0,
+                )
             result = self._brain_call_with_events(
                 "brain.chat",
                 chat_params,
-                timeout=_INTERACTIVE_LLM_TIMEOUT_SECONDS,
+                timeout=self._interactive_llm_timeout_seconds(chat_params),
                 on_event=on_event,
             )
             if not done_seen:
@@ -1842,12 +1854,38 @@ class FlowController:
             log.exception("failed to fetch active conversation history")
 
         context_policy = params.pop("context_policy", {})
+        early_chat_index: int | None = None
+        try:
+            begin_result = self._safe_call(
+                self.ui,
+                "ui.chat.begin_conversation",
+                {
+                    "user": prompt,
+                    "context": chat_context,
+                    "image_base64": pending.screenshot_b64,
+                    "context_policy": context_policy,
+                },
+                timeout=30.0,
+            )
+            if isinstance(begin_result, dict) and begin_result.get("started"):
+                raw_idx = begin_result.get("conversation_index")
+                if isinstance(raw_idx, int):
+                    early_chat_index = raw_idx
+        except Exception:
+            log.exception("failed to begin chat conversation before query")
         try:
             log.info("query brain call started")
+            if params.get("use_tools"):
+                self._safe_call(
+                    self.ui,
+                    "ui.reply.chunk",
+                    {"text": t("Using tools..."), "is_progress": True},
+                    timeout=30.0,
+                )
             result = self._brain_call_with_events(
                 "brain.query",
                 params,
-                timeout=_INTERACTIVE_LLM_TIMEOUT_SECONDS,
+                timeout=self._interactive_llm_timeout_seconds(params),
                 on_event=on_event,
             )
         except Exception as exc:  # noqa: BLE001 - surface route/config failures in the UI
@@ -1903,6 +1941,8 @@ class FlowController:
                     "file_context": file_context,
                     "tool_context": tool_context,
                     "context_policy": context_policy,
+                    "append_user": early_chat_index is None,
+                    "conversation_index": early_chat_index,
                 },
                 timeout=30.0,
             )
@@ -1986,6 +2026,14 @@ class FlowController:
         text = str((result or {}).get("text") or "").strip()
         log.info("rewrite result: text_chars=%d", len(text))
         if text and self._is_current(gen):
+            chat_context = "\n\n".join(
+                part
+                for part in (
+                    f"[Selected text]\n{selected}",
+                    rewrite_context,
+                )
+                if str(part or "").strip()
+            )
             paste = self.native.call(
                 "native.paste_text",
                 {
@@ -2025,6 +2073,17 @@ class FlowController:
             else:
                 log.error("rewrite paste-back failed: %s", paste.get("error") or paste)
                 self._native_notify("Wisp â€” rewrite failed", "Couldn't paste the rewrite. See native.stderr.log.")
+            self._safe_call(
+                self.ui,
+                "ui.chat.add_conversation",
+                {
+                    "user": prompt,
+                    "assistant": text,
+                    "context": chat_context,
+                    "context_policy": query_params.get("context_policy") or {},
+                },
+                timeout=30.0,
+            )
         elif self._is_current(gen):
             log.warning("rewrite returned empty text; paste-back skipped")
             self._native_notify("Wisp rewrite returned nothing", "The model returned no replacement text.")
@@ -2297,11 +2356,11 @@ class FlowController:
             timeout=600.0,
         ) or {}
         approved = bool(result.get("approved")) if isinstance(result, dict) else False
-        self._safe_call(
+        feedback = str(result.get("feedback") or "").strip() if isinstance(result, dict) else ""
+        self._fire(
             self.brain,
             "brain.live_file.approval.respond",
-            {"approval_id": approval_id, "approved": approved},
-            timeout=30.0,
+            {"approval_id": approval_id, "approved": approved, "feedback": feedback},
         )
 
     def _stt_warming(self) -> bool:
@@ -2369,6 +2428,15 @@ class FlowController:
         import config
 
         return getattr(config, name, default)
+
+    @staticmethod
+    def _interactive_llm_timeout_seconds(params: dict[str, Any]) -> float:
+        """Return a longer timeout when the model has live tools available."""
+        return (
+            _INTERACTIVE_LLM_TOOL_TIMEOUT_SECONDS
+            if bool((params or {}).get("use_tools"))
+            else _INTERACTIVE_LLM_TIMEOUT_SECONDS
+        )
 
     def _log_caller_runtime(self, caller_idx: int, caller: dict[str, Any]) -> None:
         """Log caller runtime."""
@@ -3102,14 +3170,14 @@ class FlowController:
         return cls._image_size_token_label((width, height))
 
     def _intent_context_keys(self) -> str:
-        """Return seven unique overlay-local context toggle keys."""
-        raw = str(self._config_value("INTENT_CONTEXT_TOGGLE_KEYS", "1234567") or "1234567")
+        """Return eight unique overlay-local context toggle keys."""
+        raw = str(self._config_value("INTENT_CONTEXT_TOGGLE_KEYS", "12345678") or "12345678")
         keys: list[str] = []
-        for ch in raw + "1234567":
+        for ch in raw + "12345678":
             if ch.isspace() or ch in keys:
                 continue
             keys.append(ch)
-            if len(keys) >= 7:
+            if len(keys) >= 8:
                 break
         return "".join(keys)
 
@@ -3237,6 +3305,7 @@ class FlowController:
 
         selected_text = str(context.get("selected_text") or "")
         clipboard_text = str(context.get("clipboard_text") or "")
+        github_mode = self._context_mode(caller, "github")
         memory_mode = self._context_mode(caller, "memory")
         file_mode = tool_modes.local_file_access_mode(caller)
         screenshot_mode = str(caller.get("context_screenshot") or "off").strip().lower()
@@ -3348,8 +3417,16 @@ class FlowController:
                 "warning": "",
             },
             {
-                "id": "memory",
+                "id": "github",
                 "key": keys[5],
+                "label": "Git/GitHub",
+                "state": self._mode_to_context_state(github_mode),
+                "tokens": self._deferred_token_label() if github_mode != "off" else "0 tok",
+                "warning": self._context_warning(0, deferred=True) if github_mode != "off" else "",
+            },
+            {
+                "id": "memory",
+                "key": keys[6],
                 "label": "Memory",
                 "state": self._mode_to_context_state(memory_mode),
                 "tokens": self._deferred_token_label() if memory_mode != "off" else "0 tok",
@@ -3357,7 +3434,7 @@ class FlowController:
             },
             {
                 "id": "files",
-                "key": keys[6],
+                "key": keys[7],
                 "label": "Files",
                 "state": self._file_access_to_context_state(file_mode),
                 "tokens": "",
@@ -3392,6 +3469,8 @@ class FlowController:
             elif source == "screenshot":
                 updated["context_screenshot"] = "off" if state == "off" else ("model" if state == "auto" else "auto")
                 updated["_context_screenshot_enabled"] = state != "off"
+            elif source == "github":
+                updated["context_github_mode"] = "off" if state == "off" else ("model" if state == "auto" else "auto")
             elif source == "memory":
                 updated["context_memory_mode"] = "off" if state == "off" else ("model" if state == "auto" else "on")
             elif source == "files":

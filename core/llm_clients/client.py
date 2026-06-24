@@ -12,6 +12,7 @@ calls, eliminating handshake overhead from every request.
 from __future__ import annotations
 import gzip
 import json as _stdlib_json
+import os
 import ssl as _ssl
 import threading as _threading
 import urllib.error as _urllib_error
@@ -1961,6 +1962,34 @@ def _mark_unsupported_parameter(provider: str, model: str, name: str) -> None:
         cap.supports_json_mode = False
 
 
+_RESPONSES_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
+
+
+def _chat_reasoning_effort() -> str:
+    """Return configured Responses reasoning effort for chat-like OpenAI calls."""
+    raw = str(getattr(config, "CHAT_REASONING_EFFORT", "") or "").strip().lower()
+    if not raw:
+        return ""
+    return raw if raw in _RESPONSES_REASONING_EFFORTS else ""
+
+
+def _with_responses_reasoning(kwargs: dict, *, provider: str, model: str) -> dict:
+    """Attach reasoning effort to Responses routes when configured and supported."""
+    if provider not in {"openai", "chatgpt"}:
+        return dict(kwargs)
+    effort = _chat_reasoning_effort()
+    if not effort:
+        return dict(kwargs)
+    unsupported = _get_route_capabilities(provider, model).unsupported_parameters
+    if "reasoning" in unsupported or "reasoning.effort" in unsupported:
+        return dict(kwargs)
+    current = dict(kwargs)
+    reasoning = dict(current.get("reasoning") or {})
+    reasoning.setdefault("effort", effort)
+    current["reasoning"] = reasoning
+    return current
+
+
 def _recover_openai_compat_kwargs(
     provider: str, model: str, kwargs: dict, exc: Exception
 ) -> dict | None:
@@ -2198,6 +2227,20 @@ def _normalized_response_item(item) -> dict:
     """Convert a streamed Responses output item to the shape create() returns."""
     if isinstance(item, dict):
         return dict(item)
+    dump = getattr(item, "model_dump", None)
+    if callable(dump):
+        try:
+            value = dump(exclude_none=True)
+        except TypeError:
+            value = dump()
+        if isinstance(value, dict):
+            return dict(value)
+    if hasattr(item, "__dict__"):
+        return {
+            key: value
+            for key, value in vars(item).items()
+            if not key.startswith("_") and value is not None
+        }
     normalized: dict = {}
     for field_name in ("id", "type", "call_id", "name", "arguments", "content", "status", "role"):
         value = getattr(item, field_name, None)
@@ -2208,7 +2251,7 @@ def _normalized_response_item(item) -> dict:
 
 def _responses_stream_to_response(client, kwargs: dict, *, provider: str, model: str):
     """Stream a Responses request and reconstruct a minimal response object."""
-    current = dict(kwargs)
+    current = _with_responses_reasoning(kwargs, provider=provider, model=model)
     while True:
         response_id = ""
         output_text: list[str] = []
@@ -2301,7 +2344,7 @@ def _responses_stream_to_response(client, kwargs: dict, *, provider: str, model:
 
 def _responses_create_with_retries(client, kwargs: dict, *, provider: str, model: str):
     """Create a Responses API response, retrying unsupported parameters."""
-    current = dict(kwargs)
+    current = _with_responses_reasoning(kwargs, provider=provider, model=model)
     while True:
         try:
             return client.responses.create(**current)
@@ -2390,6 +2433,7 @@ def _run_responses_tool_loop(
     provider: str,
     model: str,
     allowed_tools: list[str] | None = None,
+    pinned_tools: list[str] | None = None,
     user_intent: str = "",
     max_rounds: int = 3,
 ) -> Generator[str, None, None]:
@@ -2501,6 +2545,89 @@ def _run_responses_tool_loop(
     text = _response_output_text(response)
     if text:
         yield text
+
+
+def _unified_chat_tool_loop_enabled() -> bool:
+    """Return whether the provider-neutral chat tool loop should handle chat tools."""
+    raw = os.getenv("WISP_UNIFIED_CHAT_TOOL_LOOP")
+    if raw is not None:
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(getattr(config, "UNIFIED_CHAT_TOOL_LOOP", False))
+
+
+def _chat_tool_trace_ui_enabled() -> bool:
+    """Return whether chat should stream visible tool-loop diagnostics."""
+    raw = os.getenv("CHAT_TOOL_TRACE_UI")
+    if raw is not None:
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(getattr(config, "CHAT_TOOL_TRACE_UI", False))
+
+
+def _run_unified_responses_tool_loop(
+    client,
+    kwargs: dict,
+    *,
+    provider: str,
+    model: str,
+    allowed_tools: list[str] | None = None,
+    pinned_tools: list[str] | None = None,
+    user_intent: str = "",
+    max_rounds: int = 7,
+    trace_ui: bool = False,
+) -> Generator[str, None, None]:
+    """Run Responses tools through the provider-neutral chat tool loop."""
+    from core.llm_clients.chat_tool_loop import ChatToolLoop, ChatToolLoopConfig, ChatToolRequest
+    from core.llm_clients.responses_chat_adapter import LiveModelToolExecutor, ResponsesChatLoopModel
+
+    if trace_ui:
+        yield _progress_chunk(f"Tool loop: unified Responses ({provider}/{model}).")
+    tool_budget = _tool_turn_budget()
+    max_tool_calls = max(0, int(tool_budget.max_calls or 0))
+    effective_max_rounds = max(1, max(int(max_rounds or 1), min(max_tool_calls + 2, 60)))
+    tools = list(kwargs.get("tools") or [])
+    instructions = str(kwargs.get("instructions") or "")
+    initial_input = list(kwargs.get("input") or [])
+    request = ChatToolRequest(
+        messages=[{"role": "user", "content": user_intent}],
+        system_prompt=instructions,
+        model_route={"provider": provider, "model": model},
+        tools=tools,
+        allowed_tools=allowed_tools,
+        pinned_tools=pinned_tools,
+        permissions={},
+        budgets={
+            "max_rounds": effective_max_rounds,
+            "max_tool_calls": max_tool_calls,
+            "max_result_chars": int(tool_budget.max_result_chars or 0),
+            "max_total_chars": int(tool_budget.max_total_chars or 0),
+        },
+    )
+    final = ChatToolLoop(
+        ChatToolLoopConfig(
+            max_rounds=effective_max_rounds,
+            max_tool_calls=max_tool_calls,
+        )
+    ).run(
+        request,
+        ResponsesChatLoopModel(
+            client,
+            model=model,
+            instructions=instructions,
+            tools=tools,
+            initial_input=initial_input,
+            provider=provider,
+        ),
+        LiveModelToolExecutor(allowed_tools=allowed_tools),
+    )
+    for progress in final.metadata.get("progress_chunks") or []:
+        if progress:
+            yield _progress_chunk(str(progress))
+    if trace_ui:
+        names = [call.name for call in final.tool_calls]
+        tool_list = ", ".join(names) if names else "none"
+        yield _progress_chunk(f"Tool calls: {tool_list}.")
+    if final.text:
+        yield final.text
 
 
 def _stream_mode_error(exc: Exception) -> bool:
@@ -2643,7 +2770,7 @@ def _unsupported_parameter_name(exc: Exception) -> str:
     ):
         rest = text[lowered.find("unsupported value"):]
         import re as _re
-        m = _re.search(r"['\"]([a-zA-Z0-9_]+)['\"]", rest)
+        m = _re.search(r"['\"]([a-zA-Z0-9_.]+)['\"]", rest)
         if m:
             return m.group(1)
     if "unsupported parameter" not in lowered and "unknown parameter" not in lowered:
@@ -2664,10 +2791,14 @@ def _unsupported_parameter_name(exc: Exception) -> str:
 def _without_unsupported_parameter(kwargs: dict, exc: Exception) -> dict | None:
     """Handle without unsupported parameter for LLM clients client."""
     name = _unsupported_parameter_name(exc)
-    if not name or name not in kwargs:
+    if not name:
+        return None
+    top_level_name = name.split(".", 1)[0]
+    if name not in kwargs and top_level_name not in kwargs:
         return None
     retry_kwargs = dict(kwargs)
     retry_kwargs.pop(name, None)
+    retry_kwargs.pop(top_level_name, None)
     return retry_kwargs
 
 
@@ -2679,11 +2810,12 @@ def _response_stream_text(
     model: str = "",
 ) -> Generator[str, None, None]:
     """Handle response stream text for LLM clients client."""
-    kwargs = dict(kwargs)
+    kwargs = _with_responses_reasoning(kwargs, provider=provider, model=model)
     cap = _get_route_capabilities(provider, model) if provider or model else None
     if cap is not None:
         for name in list(cap.unsupported_parameters):
             kwargs.pop(name, None)
+            kwargs.pop(name.split(".", 1)[0], None)
         if cap.requires_stream is False or cap.supports_stream is False:
             try:
                 response = client.responses.create(**kwargs)
@@ -4361,7 +4493,8 @@ def _stream_codex(
                 openai_format=True,
             )
             try:
-                yield from _run_responses_tool_loop(
+                runner = _run_unified_responses_tool_loop if _unified_chat_tool_loop_enabled() else _run_responses_tool_loop
+                yield from runner(
                     client,
                     {
                         "model": model,
@@ -4376,6 +4509,7 @@ def _stream_codex(
                     provider="chatgpt",
                     model=model,
                     allowed_tools=allowed_tools,
+                    pinned_tools=pinned_tools,
                     user_intent=text,
                 )
                 return
@@ -4554,6 +4688,73 @@ def _run_anthropic_tool_loop(
         messages.append({"role": "assistant", "content": response.content})
 
 
+def _run_unified_anthropic_tool_loop(
+    client,
+    *,
+    model: str,
+    system: str,
+    messages: list[dict],
+    tools: list[dict],
+    max_tokens: int,
+    allowed_tools: list[str] | None = None,
+    pinned_tools: list[str] | None = None,
+    user_intent: str = "",
+    max_rounds: int = 7,
+    trace_ui: bool = False,
+) -> Generator[str, None, None]:
+    """Run Claude tools through the provider-neutral chat tool loop."""
+    from core.llm_clients.anthropic_chat_adapter import AnthropicChatLoopModel
+    from core.llm_clients.chat_tool_loop import ChatToolLoop, ChatToolLoopConfig, ChatToolRequest
+    from core.llm_clients.responses_chat_adapter import LiveModelToolExecutor
+
+    if trace_ui:
+        yield _progress_chunk(f"Tool loop: unified Anthropic (anthropic/{model}).")
+    tool_budget = _tool_turn_budget()
+    max_tool_calls = max(0, int(tool_budget.max_calls or 0))
+    effective_max_rounds = max(1, max(int(max_rounds or 1), min(max_tool_calls + 2, 60)))
+    request = ChatToolRequest(
+        messages=[{"role": "user", "content": user_intent}],
+        system_prompt=system,
+        model_route={"provider": "anthropic", "model": model},
+        tools=tools,
+        allowed_tools=allowed_tools,
+        pinned_tools=pinned_tools,
+        permissions={},
+        budgets={
+            "max_rounds": effective_max_rounds,
+            "max_tool_calls": max_tool_calls,
+            "max_result_chars": int(tool_budget.max_result_chars or 0),
+            "max_total_chars": int(tool_budget.max_total_chars or 0),
+        },
+    )
+    final = ChatToolLoop(
+        ChatToolLoopConfig(
+            max_rounds=effective_max_rounds,
+            max_tool_calls=max_tool_calls,
+        )
+    ).run(
+        request,
+        AnthropicChatLoopModel(
+            client,
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+        ),
+        LiveModelToolExecutor(allowed_tools=allowed_tools),
+    )
+    for progress in final.metadata.get("progress_chunks") or []:
+        if progress:
+            yield _progress_chunk(str(progress))
+    if trace_ui:
+        names = [call.name for call in final.tool_calls]
+        tool_list = ", ".join(names) if names else "none"
+        yield _progress_chunk(f"Tool calls: {tool_list}.")
+    if final.text:
+        yield final.text
+
+
 def _stream_anthropic(
     user_message: str,
     image_base64: str | None,
@@ -4676,6 +4877,48 @@ def _stream_anthropic(
             system_prompt=system_prompt,
         )
         return
+
+    if _unified_chat_tool_loop_enabled():
+        try:
+            yield from _run_unified_anthropic_tool_loop(
+                client,
+                model=model,
+                system=system,
+                messages=messages,
+                tools=tool_schemas,
+                max_tokens=anthropic_tool_max_tokens,
+                allowed_tools=allowed_tools,
+                pinned_tools=pinned_tools,
+                user_intent=user_text,
+            )
+            return
+        except Exception as exc:
+            _record_route_error_capabilities("anthropic", model, exc)
+            if _tools_not_supported_error(exc):
+                print("[llm] Anthropic unified live tools rejected; retrying with front-loaded context", flush=True)
+                _update_route_capabilities("anthropic", model, supports_tools=False)
+                yield from _stream_anthropic(
+                    user_message,
+                    image_base64,
+                    model,
+                    client,
+                    _inject_frontloaded_tool_context(
+                        ambient_context,
+                        allowed_tools,
+                        query=user_message,
+                    ),
+                    memory_context,
+                    use_tools=False,
+                    allowed_tools=allowed_tools,
+                    allow_screenshot_tool=False,
+                    screenshot_tool_b64=screenshot_tool_b64,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    history=history,
+                    system_prompt=system_prompt,
+                )
+                return
+            raise
 
     request = {
         "model": model,
@@ -5189,7 +5432,8 @@ def _stream_single_history_route(
                     instructions = _with_local_file_tools_note(instructions, allowed_tools)
                     instructions = _with_memory_search_note(instructions, allowed_tools)
                     instructions = _with_memory_save_note(instructions, allowed_tools)
-                    yield from _run_responses_tool_loop(
+                    runner = _run_unified_responses_tool_loop if _unified_chat_tool_loop_enabled() else _run_responses_tool_loop
+                    yield from runner(
                         _get_chat_codex_client(),
                         {
                             "model": model,
@@ -5201,7 +5445,9 @@ def _stream_single_history_route(
                         provider="chatgpt",
                         model=model,
                         allowed_tools=allowed_tools,
+                        pinned_tools=pinned_tools,
                         user_intent=full_input,
+                        trace_ui=_chat_tool_trace_ui_enabled(),
                     )
                     return
                 except Exception as exc:

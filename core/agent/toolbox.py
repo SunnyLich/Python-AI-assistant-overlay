@@ -414,7 +414,15 @@ class AgentToolbox:
             request["path"] = details["path"]
         if "diff" in details:
             request["diff"] = details["diff"]
-        if not self._approval_callback(request):
+        decision = self._approval_callback(request)
+        approved = bool(decision)
+        feedback = ""
+        if isinstance(decision, dict):
+            approved = bool(decision.get("approved"))
+            feedback = str(decision.get("feedback") or "").strip()
+        if not approved:
+            if feedback:
+                raise PermissionDenied(f"User requested changes for {action}: {feedback}")
             raise PermissionDenied(f"User declined {action}.")
 
     @staticmethod

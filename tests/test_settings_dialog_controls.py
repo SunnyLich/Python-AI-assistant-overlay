@@ -810,6 +810,51 @@ def test_elaborate_prompt_field_follows_auto_elaborate_checkbox():
         app.processEvents()
 
 
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_llm_tab_hides_advanced_chat_harness_controls_until_expanded():
+    """Verify chat harness settings live in a closed LLM Advanced drawer."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    import config
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    old_language = getattr(config, "APP_LANGUAGE", "")
+    config.APP_LANGUAGE = ""
+    dialog = SettingsDialog()
+
+    try:
+        dialog.show()
+        dialog._tabs.setCurrentIndex(dialog._tab_base_names.index("LLM"))
+        app.processEvents()
+
+        for key in (
+            "WISP_UNIFIED_CHAT_TOOL_LOOP",
+            "CHAT_TOOL_TRACE_UI",
+            "CHAT_REASONING_EFFORT",
+            "CHAT_AUTO_ELABORATE",
+            "CHAT_ELABORATE_PROMPT",
+        ):
+            assert key in dialog._fields
+
+        buttons = [button for button in dialog.findChildren(QPushButton) if button.text() == "Advanced settings"]
+        assert buttons
+        advanced_button = buttons[0]
+        assert advanced_button.isCheckable()
+        assert not advanced_button.isChecked()
+        assert not dialog._fields["CHAT_REASONING_EFFORT"].isVisible()
+
+        advanced_button.setChecked(True)
+        app.processEvents()
+
+        assert dialog._fields["CHAT_REASONING_EFFORT"].isVisible()
+    finally:
+        config.APP_LANGUAGE = old_language
+        dialog.deleteLater()
+        app.processEvents()
+
+
 def test_settings_open_requests_are_coalesced(monkeypatch):
     """Verify settings open requests are coalesced behavior."""
     from ui.settings_panel import dialog as settings_dialog
@@ -1049,9 +1094,21 @@ def test_reset_page_key_mapping_is_scoped():
         "STT_MODEL": "small",
         "APP_LANGUAGE": "zh",
         "ASSISTANT_LANGUAGE": "Chinese",
+        "WISP_UNIFIED_CHAT_TOOL_LOOP": "True",
+        "CHAT_TOOL_TRACE_UI": "True",
+        "CHAT_REASONING_EFFORT": "high",
+        "CHAT_AUTO_ELABORATE": "True",
+        "CHAT_ELABORATE_PROMPT": "Please elaborate.",
     }
 
-    assert SettingsDialog._reset_env_keys_for_page("LLM", env) >= {"LLM_PROVIDER"}
+    assert SettingsDialog._reset_env_keys_for_page("LLM", env) >= {
+        "LLM_PROVIDER",
+        "WISP_UNIFIED_CHAT_TOOL_LOOP",
+        "CHAT_TOOL_TRACE_UI",
+        "CHAT_REASONING_EFFORT",
+        "CHAT_AUTO_ELABORATE",
+        "CHAT_ELABORATE_PROMPT",
+    }
     assert "GROQ_API_KEY" not in SettingsDialog._reset_env_keys_for_page("LLM", env)
     assert SettingsDialog._reset_env_keys_for_page("Keybinds", env) >= {
         "CALLER_COUNT",
@@ -1065,6 +1122,7 @@ def test_reset_page_key_mapping_is_scoped():
     assert "BUBBLE_SCROLL_SNAP_DELAY_MS" in SettingsDialog._reset_env_keys_for_page("Advanced", env)
     assert "APP_LANGUAGE" in SettingsDialog._reset_env_keys_for_page("App", env)
     assert "ASSISTANT_LANGUAGE" in SettingsDialog._reset_env_keys_for_page("App", env)
+    assert "CHAT_AUTO_ELABORATE" not in SettingsDialog._reset_env_keys_for_page("App", env)
     assert "MEMORY_TOP_K" in SettingsDialog._reset_env_keys_for_page("Advanced", env)
     assert "STT_MODEL" in SettingsDialog._reset_env_keys_for_page("TTS / Voice", env)
     assert SettingsDialog._reset_env_keys_for_page("Tools", env) == set()
@@ -1498,8 +1556,8 @@ def test_settings_dirty_marker_enables_apply_after_change():
         app.processEvents()
 
         assert apply_btn.isEnabled()
-        app_index = dialog._tab_base_names.index("App")
-        assert dialog._tabs.tabText(app_index).endswith("*")
+        llm_index = dialog._tab_base_names.index("LLM")
+        assert dialog._tabs.tabText(llm_index).endswith("*")
         assert dialog._fields["CHAT_ELABORATE_PROMPT"].property("dirty") is True
     finally:
         dialog.deleteLater()
@@ -1784,8 +1842,8 @@ def test_settings_advanced_tab_contains_tuning_and_memory_controls():
 
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
-def test_caller_memory_combo_uses_third_column_second_row():
-    """Verify caller memory combo uses third column second row behavior."""
+def test_caller_memory_context_block_uses_second_row():
+    """Verify caller memory context block stays in the second context row."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication, QGridLayout, QLabel, QVBoxLayout, QWidget
 
@@ -1804,20 +1862,21 @@ def test_caller_memory_combo_uses_third_column_second_row():
         frame = dialog._caller_blocks[0]["widget"]
         memory_pos = None
         for child in frame.findChildren(QWidget):
-            layout = child.layout()
-            if not isinstance(layout, QGridLayout):
+            labels = child.findChildren(QLabel)
+            if not any(label.text() == t("Memory") for label in labels):
                 continue
-            for idx in range(layout.count()):
-                item = layout.itemAt(idx)
-                widget = item.widget()
-                if isinstance(widget, QLabel) and widget.text() == t("Memory:"):
+            parent = child.parentWidget()
+            layout = parent.layout() if parent is not None else None
+            if isinstance(layout, QGridLayout):
+                idx = layout.indexOf(child)
+                if idx >= 0:
                     memory_pos = layout.getItemPosition(idx)
                     break
             if memory_pos is not None:
                 break
 
         assert memory_pos is not None
-        assert memory_pos[:2] == (1, 4)
+        assert memory_pos[:2] == (2, 1)
     finally:
         host.deleteLater()
         app.processEvents()

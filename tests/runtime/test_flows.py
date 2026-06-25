@@ -184,6 +184,18 @@ def query_stream(reply: str = "reply"):
     return handler
 
 
+def rewrite_stream(replacement: str = "replacement", visible: str = ""):
+    """Verify rewrite stream behavior."""
+    def handler(_params: dict[str, Any], on_event) -> dict[str, Any]:
+        """Verify handler behavior."""
+        if visible:
+            on_event("reply.chunk", {"text": visible}, 1)
+        on_event("reply.done", {"text": replacement, "visible_text": visible}, 1)
+        return {"text": replacement, "visible_text": visible}
+
+    return handler
+
+
 def test_caller_hotkey_collects_context_and_shows_intent():
     """Verify caller hotkey collects context and shows intent behavior."""
     rows = [
@@ -2194,7 +2206,7 @@ def test_rewrite_flow_pastes_back_to_original_pid():
             "native.paste_text": lambda _params: {"ok": True},
         }
     )
-    brain = FakeWorker(stream_handlers={"brain.rewrite": query_stream("good grammar")})
+    brain = FakeWorker(stream_handlers={"brain.rewrite": rewrite_stream("good grammar", "Fixed the grammar.")})
     with caller_config(rows):
         _flow, native, ui, brain, _audio = make_flow(native=native, brain=brain)
         native.emit("native.hotkey", {"kind": "caller", "index": 1})
@@ -2217,7 +2229,7 @@ def test_rewrite_flow_pastes_back_to_original_pid():
     assert not native.calls_for("native.notify"), "successful paste should not notify"
     chat_params = ui.last_call("ui.chat.add_conversation")["params"]
     assert chat_params["user"] == "Fix grammar"
-    assert chat_params["assistant"] == "good grammar"
+    assert chat_params["assistant"] == "Fixed the grammar."
     assert "[Selected text]\nbad grammar" in chat_params["context"]
 
 

@@ -13,13 +13,16 @@ def test_openai_compat_rewrite_forces_tool_call_and_extracts_replacement(monkeyp
         id="call_1",
         function=SimpleNamespace(
             name="rewrite_selection",
-            arguments='{"replacement_text": "Text 2 body"}',
+            arguments=(
+                '{"replacement_text": "Text 2 body", '
+                '"assistant_response": "I used the source text for the replacement."}'
+            ),
         ),
     )
     response = SimpleNamespace(
         choices=[
             SimpleNamespace(
-                message=SimpleNamespace(content="I found the source.", tool_calls=[tool_call])
+                message=SimpleNamespace(content="Text 2 body", tool_calls=[tool_call])
             )
         ]
     )
@@ -40,8 +43,9 @@ def test_openai_compat_rewrite_forces_tool_call_and_extracts_replacement(monkeyp
     assert calls
     assert calls[0]["tools"][0]["function"]["name"] == "rewrite_selection"
     assert calls[0]["tool_choice"]["function"]["name"] == "rewrite_selection"
+    assert "assistant_response" in calls[0]["tools"][0]["function"]["parameters"]["required"]
     assert [(getattr(chunk, "kind", ""), str(chunk)) for chunk in chunks] == [
-        ("progress", "I found the source."),
+        ("progress", "I used the source text for the replacement."),
         ("rewrite_result", "Text 2 body"),
     ]
 
@@ -59,7 +63,10 @@ def test_responses_rewrite_forces_tool_call_and_extracts_replacement(monkeypatch
                     "type": "function_call",
                     "name": "rewrite_selection",
                     "call_id": "call_1",
-                    "arguments": '{"replacement_text": "Text 2 body"}',
+                    "arguments": (
+                        '{"replacement_text": "Text 2 body", '
+                        '"assistant_response": "I used the source text for the replacement."}'
+                    ),
                 }
             ],
         }
@@ -72,7 +79,8 @@ def test_responses_rewrite_forces_tool_call_and_extracts_replacement(monkeypatch
     assert calls
     assert calls[0]["tools"][0]["name"] == "rewrite_selection"
     assert calls[0]["tool_choice"]["name"] == "rewrite_selection"
+    assert "assistant_response" in calls[0]["tools"][0]["parameters"]["required"]
     assert [(getattr(chunk, "kind", ""), str(chunk)) for chunk in chunks] == [
-        ("progress", "Ready."),
+        ("progress", "I used the source text for the replacement."),
         ("rewrite_result", "Text 2 body"),
     ]

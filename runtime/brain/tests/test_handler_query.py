@@ -516,9 +516,10 @@ def test_rewrite_streams_selected_text(record_ctx):
     assert result["text"].startswith("[fake-rewrite]")
     assert "Fix grammar" in result["text"]
     assert "this are rough" in result["text"]
+    assert result["visible_text"] == ""
     assert _chunks(events) == []
     done = [data for event, data in events if event == "reply.done"]
-    assert done == [{"text": result["text"]}]
+    assert done == [{"text": result["text"], "visible_text": ""}]
 
 
 def test_rewrite_forwards_source_context(record_ctx, monkeypatch):
@@ -549,6 +550,7 @@ def test_rewrite_forwards_source_context(record_ctx, monkeypatch):
         "rewrite_context": "--- BEGIN ACTIVE DOCUMENT: Code - demo.py ---\nVS Code paragraph",
     }
     assert result["text"] == "replacement"
+    assert result["visible_text"] == ""
     assert _chunks(events) == []
 
 
@@ -571,6 +573,7 @@ def test_rewrite_streams_commentary_but_returns_tool_result(record_ctx, monkeypa
     )
 
     assert result["text"] == "replacement from tool"
+    assert result["visible_text"] == "I found the source text."
     assert _chunks(events) == ["I found the source text."]
 
 

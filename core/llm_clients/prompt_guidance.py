@@ -56,9 +56,10 @@ REWRITE_SYSTEM_PROMPT = (
     "additional context captured at hotkey time. Use that context when it helps "
     "understand the requested replacement. "
     "When you know the exact text that should replace the target selection, "
-    "you must call the rewrite_selection tool with that exact replacement_text. "
+    "you must call the rewrite_selection tool with that exact replacement_text "
+    "and a short assistant_response explaining what you used or changed. "
     "Only the tool argument will be pasted into the user's app; normal assistant "
-    "text is visible status/commentary and is not pasted."
+    "text and assistant_response are visible status/commentary and are not pasted."
 )
 
 

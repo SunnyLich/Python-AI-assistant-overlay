@@ -1624,6 +1624,7 @@ def brain_rewrite(
         raise ValueError("selected_text is required")
 
     replacement_parts: list[str] = []
+    visible_parts: list[str] = []
     for chunk in _stream_rewrite_reply(selected_text, intent_prompt, rewrite_context):
         if ctx.cancelled:
             break
@@ -1632,11 +1633,13 @@ def brain_rewrite(
         if kind == "rewrite_result":
             replacement_parts.append(text)
             continue
+        visible_parts.append(text)
         ctx.emit("reply.chunk", {"text": text})
 
     full = "".join(replacement_parts)
-    ctx.emit("reply.done", {"text": full})
-    return {"text": full}
+    visible = "".join(visible_parts).strip()
+    ctx.emit("reply.done", {"text": full, "visible_text": visible})
+    return {"text": full, "visible_text": visible}
 
 
 def _stream_rewrite_reply(selected_text: str, intent_prompt: str, rewrite_context: str = "") -> Iterator[str]:

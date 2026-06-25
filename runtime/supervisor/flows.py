@@ -2061,7 +2061,10 @@ class FlowController:
             self._set_idle()
             return
         text = str((result or {}).get("text") or "").strip()
-        log.info("rewrite result: text_chars=%d", len(text))
+        visible_text = str((result or {}).get("visible_text") or "").strip()
+        if not visible_text and text:
+            visible_text = "Replacement pasted."
+        log.info("rewrite result: text_chars=%d visible_chars=%d", len(text), len(visible_text))
         if text and self._is_current(gen):
             chat_context = "\n\n".join(
                 part
@@ -2112,13 +2115,13 @@ class FlowController:
                 self._native_notify("Wisp â€” rewrite failed", "Couldn't paste the rewrite. See native.stderr.log.")
             self._safe_call(
                 self.ui,
-                "ui.chat.add_conversation",
-                {
-                    "user": prompt,
-                    "assistant": text,
-                    "context": chat_context,
-                    "context_policy": query_params.get("context_policy") or {},
-                },
+                    "ui.chat.add_conversation",
+                    {
+                        "user": prompt,
+                        "assistant": visible_text,
+                        "context": chat_context,
+                        "context_policy": query_params.get("context_policy") or {},
+                    },
                 timeout=30.0,
             )
         elif self._is_current(gen):

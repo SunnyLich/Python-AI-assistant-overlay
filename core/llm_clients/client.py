@@ -5328,7 +5328,7 @@ def _stream_anthropic(
 
 _REWRITE_TOOL_NAME = "rewrite_selection"
 _REWRITE_TOOL_DESCRIPTION = (
-    "Submit the exact text that should replace the target selection in the user's app."
+    "Submit the exact replacement text plus the short visible assistant response."
 )
 _REWRITE_TOOL_PARAMETERS = {
     "type": "object",
@@ -5340,8 +5340,16 @@ _REWRITE_TOOL_PARAMETERS = {
                 "Do not include commentary, markdown fences, or explanation."
             ),
         },
+        "assistant_response": {
+            "type": "string",
+            "description": (
+                "A short visible response for the user explaining what you did "
+                "or which source/context you used. Do not repeat the full "
+                "replacement text unless it is very short."
+            ),
+        },
     },
-    "required": ["replacement_text"],
+    "required": ["replacement_text", "assistant_response"],
     "additionalProperties": False,
 }
 
@@ -5377,8 +5385,8 @@ def _rewrite_tool_responses_schema() -> dict:
     }
 
 
-def _replacement_from_tool_arguments(arguments: str | dict) -> str:
-    """Extract replacement_text from a rewrite_selection tool-call payload."""
+def _rewrite_payload_from_tool_arguments(arguments: str | dict) -> tuple[str, str]:
+    """Extract ``(replacement_text, assistant_response)`` from tool arguments."""
     if isinstance(arguments, dict):
         data = arguments
     else:
@@ -5387,18 +5395,49 @@ def _replacement_from_tool_arguments(arguments: str | dict) -> str:
         except Exception:
             data = {}
     if not isinstance(data, dict):
-        return ""
-    return str(data.get("replacement_text") or "")
+        return "", ""
+    replacement = str(data.get("replacement_text") or "")
+    visible = str(
+        data.get("assistant_response")
+        or data.get("visible_response")
+        or data.get("commentary")
+        or ""
+    )
+    return replacement, visible
+
+
+def _replacement_from_tool_arguments(arguments: str | dict) -> str:
+    """Extract replacement_text from a rewrite_selection tool-call payload."""
+    replacement, _visible = _rewrite_payload_from_tool_arguments(arguments)
+    return replacement
+
+
+def _rewrite_payload_from_tool_calls(tool_calls: dict[int, dict]) -> tuple[str, str]:
+    """Extract the first rewrite_selection payload from OpenAI tool calls."""
+    for call in tool_calls.values():
+        if str(call.get("name") or "") != _REWRITE_TOOL_NAME:
+            continue
+        replacement, visible = _rewrite_payload_from_tool_arguments(call.get("arguments") or "{}")
+        if replacement:
+            return replacement, visible
+    return "", ""
 
 
 def _replacement_from_tool_calls(tool_calls: dict[int, dict]) -> str:
     """Extract the first rewrite_selection replacement from OpenAI tool calls."""
-    for call in tool_calls.values():
-        if str(call.get("name") or "") != _REWRITE_TOOL_NAME:
-            continue
-        replacement = _replacement_from_tool_arguments(call.get("arguments") or "{}")
-        if replacement:
-            return replacement
+    replacement, _visible = _rewrite_payload_from_tool_calls(tool_calls)
+    return replacement
+
+
+def _rewrite_visible_progress(visible: str, fallback: str, replacement: str) -> str:
+    """Choose visible rewrite commentary without echoing the full replacement."""
+    visible = str(visible or "").strip()
+    fallback = str(fallback or "").strip()
+    replacement = str(replacement or "").strip()
+    if visible and visible != replacement:
+        return visible
+    if fallback and fallback != replacement:
+        return fallback
     return ""
 
 
@@ -5554,12 +5593,12 @@ def _stream_openai_compat_rewrite_tool(
             else:
                 raise
 
-    progress = "".join(first_round_text).strip()
-    if progress:
-        yield _progress_chunk(progress)
-    replacement = _replacement_from_tool_calls(tool_calls_acc)
+    replacement, visible = _rewrite_payload_from_tool_calls(tool_calls_acc)
     if not replacement:
         raise ValueError("Rewrite model did not call rewrite_selection with replacement_text.")
+    progress = _rewrite_visible_progress(visible, "".join(first_round_text), replacement)
+    if progress:
+        yield _progress_chunk(progress)
     yield _rewrite_result_chunk(replacement)
 
 
@@ -5585,16 +5624,17 @@ def _stream_anthropic_rewrite_tool(
             first_round_text.append(text)
         final = stream.get_final_message()
 
-    progress = "".join(first_round_text).strip()
-    if progress:
-        yield _progress_chunk(progress)
+    fallback_progress = "".join(first_round_text)
     for block in getattr(final, "content", []) or []:
         if getattr(block, "type", "") != "tool_use":
             continue
         if getattr(block, "name", "") != _REWRITE_TOOL_NAME:
             continue
-        replacement = _replacement_from_tool_arguments(getattr(block, "input", {}) or {})
+        replacement, visible = _rewrite_payload_from_tool_arguments(getattr(block, "input", {}) or {})
         if replacement:
+            progress = _rewrite_visible_progress(visible, fallback_progress, replacement)
+            if progress:
+                yield _progress_chunk(progress)
             yield _rewrite_result_chunk(replacement)
             return
     raise ValueError("Rewrite model did not call rewrite_selection with replacement_text.")
@@ -5617,14 +5657,15 @@ def _stream_responses_rewrite_tool(
         },
         model=model,
     )
-    progress = _response_output_text(response).strip()
-    if progress:
-        yield _progress_chunk(progress)
+    fallback_progress = _response_output_text(response)
     for call in _response_function_calls(response):
         if call.get("name") != _REWRITE_TOOL_NAME:
             continue
-        replacement = _replacement_from_tool_arguments(call.get("arguments") or "{}")
+        replacement, visible = _rewrite_payload_from_tool_arguments(call.get("arguments") or "{}")
         if replacement:
+            progress = _rewrite_visible_progress(visible, fallback_progress, replacement)
+            if progress:
+                yield _progress_chunk(progress)
             yield _rewrite_result_chunk(replacement)
             return
     raise ValueError("Rewrite model did not call rewrite_selection with replacement_text.")

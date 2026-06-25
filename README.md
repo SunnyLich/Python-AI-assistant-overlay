@@ -13,7 +13,7 @@ Press a hotkey, choose an intent, and Wisp captures the right context, streams t
 [![Local first](https://img.shields.io/badge/local--first-context%20and%20memory-4B8F8C?style=flat-square)](#privacy-and-control)
 [![License](https://img.shields.io/badge/license-MIT-7C3AED?style=flat-square)](#license)
 
-[Quick start](#quick-start) | [What it does](#what-wisp-does) | [Configuration](#configuration) | [Privacy](#privacy-and-control)
+[Quick start](#quick-start) | [What it does](#what-wisp-does) | [Demos](#demos) | [Configuration](#configuration) | [Privacy](#privacy-and-control)
 
 ![Wisp Ctrl+Q demo](ReadMe%201st%20Demo.gif)
 </div>
@@ -40,14 +40,24 @@ Highlight text, press `Ctrl+Q`, hit one intent key, and Wisp asks your configure
 - **Privacy by default** - Wisp has no hosted storage layer; data stays on your machine unless you send it to your chosen model, and privacy mode can warn or redact before sensitive context leaves.
 - **Highly customizable** - every hotkey, intent key, prompt, context source, paste-back behavior, model route, voice setting, and bubble dimension can be changed.
 - **Approachable GUI** - Settings, setup checks, privacy reports, memory tools, and model warnings explain what is happening without requiring you to read the code.
-- **Context capture** - Wisp can read selected text, clipboard text, focused UI, open documents, browser content, recent files, and optional screenshots.
+- **Context capture** - Wisp can read selected text, clipboard text, focused UI, open documents, browser content, recent files, and optional screenshots, so it does not have to rely on screen grabs alone.
 - **Voice in and out** - local STT via faster-whisper, plus Cartesia, ElevenLabs, OpenAI, OpenAI-compatible, or disabled TTS.
 - **Vision snips** - draw a region with `Ctrl+Alt+Q` and send the screenshot to a vision model.
-- **Rewrite and paste** - use `Ctrl+Shift+Q` to rewrite selected text and paste the result back into the active field.
+- **Rewrite and paste** - use `Ctrl+Shift+Q` to rewrite selected text with captured context and paste the result back into the active field.
 - **Bring your own provider** - Groq, Anthropic, OpenAI, Google, DeepSeek, OpenRouter, Mistral, XAI, Together, Cerebras, custom OpenAI-compatible servers, GitHub Copilot, and more.
 - **Local memory** - optional short-term and long-term memory are stored locally, with a viewer for editing or deleting facts.
 - **Addons** - extend Wisp with hooks, tray actions, settings, model-callable tools, intents, and hotkeys.
 - **Agent tasks** - a sandboxed task framework exists for longer jobs that need decomposition, review, and artifacts.
+
+## Demos
+
+The snip flow is for cases where visual context matters. `Ctrl+Alt+Q` lets you draw a region, send just that crop to a vision model, and keep the answer in the overlay instead of switching apps.
+
+![Wisp Ctrl+Alt+Q screen snip demo](ReadMe%202nd%20Demo.gif)
+
+The rewrite flow shows the other side of Wisp's context system: it can gather useful app context without a screenshot, ask the model to rewrite selected text, and paste the result back where you were working.
+
+![Wisp context-aware rewrite demo](ReadMe%203rd%20Demo.gif)
 
 ## Workflow
 
@@ -72,8 +82,6 @@ Example flows:
 | A UI element or image is confusing | Press `Ctrl+Alt+Q`, draw a box, then choose an intent or custom prompt | Wisp sends the snip to a vision model |
 | You want to ask the model by voice | Hold `F9`, speak, then release | Wisp transcribes your voice and sends it as a model query |
 | You want to dictate into another app | Hold `F8`, speak, then release | Wisp transcribes your speech directly into the focused text field |
-
-![Wisp Ctrl+Alt+Q screen snip demo](ReadMe%202nd%20Demo.gif)
 
 ## Quick Start
 

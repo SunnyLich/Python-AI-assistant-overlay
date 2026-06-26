@@ -552,13 +552,69 @@ def _github_get_json(url: str) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False)[:12000]
 
 
+def _execute_web_search(inputs: dict) -> str:
+    """Execute Wisp's local web-search fallback for non-native tool routes."""
+    import json
+
+    query = str(
+        (inputs or {}).get("query")
+        or (inputs or {}).get("q")
+        or (inputs or {}).get("search_query")
+        or ""
+    ).strip()
+    if not query:
+        return "web_search requires a search query."
+    try:
+        max_results = int((inputs or {}).get("max_results") or 5)
+    except Exception:
+        max_results = 5
+    max_results = max(1, min(max_results, 10))
+
+    from core.context_fetcher import search_online_for_tool
+
+    results = search_online_for_tool(query, max_results=max_results)
+    if not results:
+        return (
+            "No web search results were returned. The search backend may be "
+            "offline, blocked, or missing credentials."
+        )
+    lines = [f"Search query: {query}", "Results:"]
+    for index, item in enumerate(results[:max_results], start=1):
+        title = str(item.get("title") or "Untitled").strip()
+        url = str(item.get("url") or "").strip()
+        snippet = str(item.get("snippet") or "").strip()
+        lines.append(f"{index}. {title}")
+        if url:
+            lines.append(f"   URL: {url}")
+        if snippet:
+            lines.append(f"   Snippet: {snippet}")
+    lines.append("")
+    lines.append("Raw JSON:")
+    lines.append(json.dumps(results[:max_results], ensure_ascii=False))
+    return "\n".join(lines)[:12000]
+
+
 def _register_builtin_tools() -> None:
     """Handle register builtin tools for LLM clients client."""
     _TOOL_REGISTRY.register_builtin(
         ToolSpec(
             name="web_search",
             description="Search the web for current information.",
-            input_schema={"type": "object", "properties": {}, "required": []},
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The web search query to run.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return, from 1 to 10.",
+                    },
+                },
+                "required": ["query"],
+            },
+            executor=_execute_web_search,
             server_schema={
                 "type": "web_search_20250305",
                 "name": "web_search",
@@ -1240,7 +1296,7 @@ def _append_pinned_tool_schemas(
         if spec is None or spec.opt_in:
             continue
         if openai_format:
-            if spec.server_schema:
+            if spec.server_schema and spec.executor is None:
                 continue
             schemas.append(spec.openai_schema())
         else:

@@ -48,7 +48,7 @@ from html import unescape as html_unescape
 from html.parser import HTMLParser
 from threading import Lock
 from typing import Any, Optional
-from urllib.parse import urljoin, urlparse, unquote
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse, unquote
 
 from core.system import macos_safety
 from core.system.native_locks import ssl_init_lock
@@ -844,6 +844,122 @@ def _search_online(query: str, max_results: int = 5) -> list[dict]:
     except Exception as exc:
         print(f"[context_fetcher] online search failed: {exc}")
         return []
+
+
+class _DuckDuckGoResultParser(HTMLParser):
+    """Extract result titles, URLs, and snippets from DuckDuckGo's HTML page."""
+
+    def __init__(self, max_results: int):
+        super().__init__(convert_charrefs=True)
+        self.max_results = max(1, max_results)
+        self.results: list[dict] = []
+        self._current: dict[str, str] | None = None
+        self._capture: str = ""
+        self._text_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr = {key: value or "" for key, value in attrs}
+        classes = set((attr.get("class") or "").split())
+        if tag == "a" and "result__a" in classes:
+            self._commit_current()
+            href = _normalize_search_result_url(attr.get("href") or "")
+            if not href:
+                return
+            self._current = {"title": "", "url": href, "snippet": ""}
+            self._capture = "title"
+            self._text_parts = []
+        elif self._current is not None and "result__snippet" in classes:
+            self._capture = "snippet"
+            self._text_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._capture and data:
+            self._text_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._current is None or not self._capture:
+            return
+        if self._capture == "title" and tag == "a":
+            self._current["title"] = _redact(_collapse_ws(" ".join(self._text_parts)))
+            self._capture = ""
+            self._text_parts = []
+        elif self._capture == "snippet" and tag in {"a", "div"}:
+            self._current["snippet"] = _redact(_collapse_ws(" ".join(self._text_parts)))
+            self._capture = ""
+            self._text_parts = []
+            self._commit_current()
+
+    def close(self) -> None:
+        super().close()
+        self._commit_current()
+
+    def _commit_current(self) -> None:
+        if (
+            self._current
+            and self._current.get("title")
+            and self._current.get("url")
+            and not any(item.get("url") == self._current["url"] for item in self.results)
+        ):
+            self.results.append(dict(self._current))
+            self._current = None
+
+
+def _collapse_ws(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def _normalize_search_result_url(href: str) -> str:
+    href = html_unescape(str(href or "").strip())
+    if not href:
+        return ""
+    parsed = urlparse(href)
+    if parsed.path.startswith("/l/"):
+        target = (parse_qs(parsed.query).get("uddg") or [""])[0]
+        if target:
+            href = unquote(target)
+            parsed = urlparse(href)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return href
+    return ""
+
+
+def _search_duckduckgo_html(query: str, max_results: int = 5) -> list[dict]:
+    """Search DuckDuckGo's no-script HTML endpoint using only stdlib HTTP."""
+    if not query or not query.strip():
+        return []
+    import urllib.request
+
+    url = "https://duckduckgo.com/html/?" + urlencode({"q": query.strip()})
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; Wisp/1.0; +https://github.com/SunnyLich/Python-AI-assistant-overlay)",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            html = resp.read(800_000).decode("utf-8", errors="replace")
+    except Exception as exc:
+        print(f"[context_fetcher] DuckDuckGo search failed: {exc}")
+        return []
+
+    parser = _DuckDuckGoResultParser(max_results)
+    parser.feed(html)
+    parser.close()
+    return parser.results[:max(1, max_results)]
+
+
+def search_online_for_tool(query: str, max_results: int = 5) -> list[dict]:
+    """Public model-tool search wrapper with provider search plus stdlib fallback."""
+    try:
+        limit = max(1, min(int(max_results or 5), 10))
+    except Exception:
+        limit = 5
+    results = _search_online(query, limit)
+    if results:
+        return results[:limit]
+    return _search_duckduckgo_html(query, limit)
 
 
 # ---------------------------------------------------------------------------

@@ -99,6 +99,29 @@ class ToolRegistryTests(unittest.TestCase):
 
             self.assertEqual(registry.schemas(include_server_tools=False), [])
 
+    def test_script_tool_manifest_accepts_cp1252_punctuation(self):
+        """Verify script tool manifest accepts cp1252 punctuation behavior."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tool_dir = root / "legacy"
+            tool_dir.mkdir()
+            (tool_dir / "tool.toml").write_bytes(
+                b'name = "legacy_tool"\ndescription = "old\x97new"\n'
+            )
+            (tool_dir / "tool.py").write_text(
+                'print("{\\"content\\": \\"ok\\"}")\n',
+                encoding="utf-8",
+            )
+
+            registry = ToolRegistry(plugin_dir=root)
+            schemas = registry.schemas(include_server_tools=False)
+
+            self.assertEqual(schemas[0]["name"], "legacy_tool")
+            desc = schemas[0]["description"]
+            self.assertTrue(desc.startswith("old"))
+            self.assertTrue(desc.endswith("new"))
+            self.assertEqual(ord(desc[3]), 0x2014)
+
 
 if __name__ == "__main__":
     unittest.main()

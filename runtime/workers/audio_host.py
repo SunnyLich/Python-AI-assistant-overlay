@@ -28,10 +28,29 @@ def _local_tts_provider(provider: str) -> bool:
     return provider == "kokoro"
 
 
+def _prewarm_tts_provider(provider: str) -> bool:
+    """Return whether provider has useful startup TTS work."""
+    return provider in ("cartesia", "kokoro")
+
+
+def _serialize_audio_warmup(provider: str) -> bool:
+    """Return whether local warmups should avoid concurrent native GPU init."""
+    if provider != "kokoro":
+        return False
+    try:
+        import config
+
+        kokoro_device = str(getattr(config, "KOKORO_DEVICE", "auto") or "auto").strip().lower()
+        stt_device = str(getattr(config, "STT_DEVICE", "auto") or "auto").strip().lower()
+    except Exception:
+        return True
+    return kokoro_device != "cpu" or stt_device != "cpu"
+
+
 def _warmup_items(provider: str) -> list[str]:
     """Return local audio components that should warm up in this process."""
     items = ["stt"]
-    if _local_tts_provider(provider):
+    if _prewarm_tts_provider(provider):
         items.append("tts")
     return items
 
@@ -52,30 +71,88 @@ def _local_tts_is_warming() -> bool:
         return _local_tts_warming and not _local_tts_ready
 
 
-def _warm_local_audio(provider: str) -> dict[str, Any]:
+def _warm_local_audio(
+    provider: str,
+    *,
+    on_progress: Callable[[str, str], None] | None = None,
+) -> dict[str, Any]:
     """Warm local STT and local TTS, returning per-component status."""
     result: dict[str, Any] = {"stt": "skipped", "tts": "skipped"}
-    try:
-        from core.macos_helper import handlers as stt_handlers
+    result_lock = threading.Lock()
 
-        stt_handlers.stt_prewarm(wait=True)
-        result["stt"] = "ok"
-    except Exception as exc:  # noqa: BLE001
-        result["stt"] = f"error: {type(exc).__name__}: {exc}"
-    if _local_tts_provider(provider):
-        _set_local_tts_warmup(warming=True, ready=False)
+    def _set_result(item: str, status: str) -> None:
+        with result_lock:
+            result[item] = status
+
+    def _warm_stt() -> None:
+        if on_progress is not None:
+            on_progress("stt", "started")
+        try:
+            from core.macos_helper import handlers as stt_handlers
+
+            stt_handlers.stt_prewarm(wait=True)
+            status = "ok"
+        except Exception as exc:  # noqa: BLE001
+            status = f"error: {type(exc).__name__}: {exc}"
+        _set_result("stt", status)
+        if on_progress is not None:
+            on_progress("stt", status)
+
+    def _warm_tts() -> None:
+        is_local_tts = _local_tts_provider(provider)
+        if is_local_tts:
+            _set_local_tts_warmup(warming=True, ready=False)
+        if on_progress is not None:
+            on_progress("tts", "started")
         try:
             from core import tts
+            import config
+
+            if provider == "kokoro":
+                message = (
+                    "[audio] Kokoro warmup starting "
+                    f"device={getattr(config, 'KOKORO_DEVICE', 'auto')!r} "
+                    f"voice={getattr(config, 'KOKORO_VOICE', '')!r} "
+                    f"lang={getattr(config, 'KOKORO_LANG_CODE', '')!r}"
+                )
+                print(message, flush=True)
+                try:
+                    from core import tts as _tts_diag
+
+                    _tts_diag._kokoro_diag(message.removeprefix("[audio] "))
+                except Exception:
+                    pass
 
             tts.prewarm()
-            result["tts"] = "ok"
-            _set_local_tts_warmup(warming=False, ready=True)
+            status = "ok"
+            if is_local_tts:
+                _set_local_tts_warmup(warming=False, ready=True)
         except Exception as exc:  # noqa: BLE001
-            message = f"error: {type(exc).__name__}: {exc}"
-            result["tts"] = message
-            _set_local_tts_warmup(warming=False, ready=False, error=message)
+            status = f"error: {type(exc).__name__}: {exc}"
+            if is_local_tts:
+                _set_local_tts_warmup(warming=False, ready=False, error=status)
+        _set_result("tts", status)
+        if on_progress is not None:
+            on_progress("tts", status)
+
+    workers = [threading.Thread(target=_warm_stt, name="audio-stt-prewarm")]
+    if _prewarm_tts_provider(provider):
+        workers.append(threading.Thread(target=_warm_tts, name="audio-tts-prewarm"))
     else:
         _set_local_tts_warmup(warming=False, ready=False)
+    if _serialize_audio_warmup(provider):
+        print("[audio] serializing STT/TTS warmup to avoid concurrent GPU initialization", flush=True)
+        ordered_workers = list(workers)
+        if provider == "kokoro":
+            ordered_workers.sort(key=lambda worker: 0 if worker.name == "audio-tts-prewarm" else 1)
+        for worker in ordered_workers:
+            worker.start()
+            worker.join()
+        return result
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
     return result
 
 
@@ -108,7 +185,13 @@ def _prewarm_after_config_reload(generation: int, provider: str) -> None:
     """Warm STT/TTS after config reload without blocking the IPC response."""
     items = _warmup_items(provider)
     _event("audio.warmup.started", {"items": items, "provider": provider, "reason": "config_reload"})
-    result = _warm_local_audio(provider)
+    result = _warm_local_audio(
+        provider,
+        on_progress=lambda item, status: _event(
+            "audio.warmup.progress",
+            {"item": item, "status": status, "items": items, "provider": provider, "reason": "config_reload"},
+        ),
+    )
     with _config_prewarm_lock:
         stale = generation != _config_prewarm_generation
     suffix = " stale" if stale else ""
@@ -162,7 +245,13 @@ def audio_prewarm() -> dict[str, Any]:
     provider = config.TTS_PROVIDER.lower()
     items = _warmup_items(provider)
     _event("audio.warmup.started", {"items": items, "provider": provider, "reason": "startup"})
-    result = _warm_local_audio(provider)
+    result = _warm_local_audio(
+        provider,
+        on_progress=lambda item, status: _event(
+            "audio.warmup.progress",
+            {"item": item, "status": status, "items": items, "provider": provider, "reason": "startup"},
+        ),
+    )
     ok = not any(str(value).startswith("error:") for value in result.values())
     _event(
         "audio.warmup.done",

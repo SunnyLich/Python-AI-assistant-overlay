@@ -1,0 +1,13 @@
+# Bridges Model Context Protocol (MCP) servers into Wisp as model-callable tools.
+[addon]
+id = "mcp-bridge"
+name = "MCP Bridge"
+version = "1.0.0"
+description = "Connects to MCP servers listed in servers.json and exposes their whole toolkit as Wisp tools."
+entry = "__init__.py"
+api_version = "1"
+priority = 60
+
+[permissions]
+tools = true
+ui = ["settings"]

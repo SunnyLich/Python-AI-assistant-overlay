@@ -3,6 +3,27 @@ from types import SimpleNamespace
 from core import context_fetcher, context_hotkey
 
 
+def test_duckduckgo_result_parser_extracts_titles_urls_and_snippets():
+    html = """
+    <div class="result">
+      <a class="result__a" href="/l/?uddg=https%3A%2F%2Fexample.test%2Fnews">Example News</a>
+      <a class="result__snippet">Fresh headline summary.</a>
+    </div>
+    """
+    parser = context_fetcher._DuckDuckGoResultParser(5)
+
+    parser.feed(html)
+    parser.close()
+
+    assert parser.results == [
+        {
+            "title": "Example News",
+            "url": "https://example.test/news",
+            "snippet": "Fresh headline summary.",
+        }
+    ]
+
+
 def test_extract_useful_page_context_orders_structured_html():
     html = """
     <html>

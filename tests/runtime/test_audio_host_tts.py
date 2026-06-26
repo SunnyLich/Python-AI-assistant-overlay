@@ -82,6 +82,104 @@ def test_audio_prewarm_reports_local_warmup_events(monkeypatch):
     assert events[-1][1]["ok"] is True
 
 
+def test_audio_prewarm_reports_component_progress(monkeypatch):
+    """Warmup progress should reveal whether STT or local TTS is still loading."""
+    import config
+    from core import tts
+    from core.macos_helper import handlers as stt_handlers
+
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(config, "TTS_PROVIDER", "kokoro", raising=False)
+    monkeypatch.setattr(stt_handlers, "stt_prewarm", lambda wait=False: None)
+    monkeypatch.setattr(tts, "prewarm", lambda: None)
+    audio_host.set_event_sink(lambda name, data, _req_id: events.append((name, data)))
+
+    audio_host.audio_prewarm()
+
+    progress = [(data["item"], data["status"]) for name, data in events if name == "audio.warmup.progress"]
+    assert sorted(progress) == sorted([
+        ("stt", "started"),
+        ("stt", "ok"),
+        ("tts", "started"),
+        ("tts", "ok"),
+    ])
+    assert progress.index(("stt", "started")) < progress.index(("stt", "ok"))
+    assert progress.index(("tts", "started")) < progress.index(("tts", "ok"))
+
+
+def test_audio_prewarm_warms_stt_and_tts_in_parallel(monkeypatch):
+    """Local voice should start warming before STT finishes."""
+    import config
+    from core import tts
+    from core.macos_helper import handlers as stt_handlers
+
+    calls: list[str] = []
+    tts_started = audio_host.threading.Event()
+    monkeypatch.setattr(config, "TTS_PROVIDER", "kokoro", raising=False)
+    monkeypatch.setattr(config, "KOKORO_DEVICE", "cpu", raising=False)
+    monkeypatch.setattr(config, "STT_DEVICE", "cpu", raising=False)
+
+    def stt_prewarm(wait=False):
+        calls.append(f"stt-start:{wait}")
+        assert tts_started.wait(1.0)
+        calls.append("stt-end")
+
+    def tts_prewarm():
+        calls.append("tts")
+        tts_started.set()
+
+    monkeypatch.setattr(stt_handlers, "stt_prewarm", stt_prewarm)
+    monkeypatch.setattr(tts, "prewarm", tts_prewarm)
+
+    result = audio_host.audio_prewarm()
+
+    assert result == {"stt": "ok", "tts": "ok"}
+    assert calls.index("tts") < calls.index("stt-end")
+
+
+def test_audio_prewarm_serializes_kokoro_cuda_warmup(monkeypatch):
+    """CUDA Kokoro warmup should not race STT GPU initialization."""
+    import config
+    from core import tts
+    from core.macos_helper import handlers as stt_handlers
+
+    calls: list[str] = []
+    monkeypatch.setattr(config, "TTS_PROVIDER", "kokoro", raising=False)
+    monkeypatch.setattr(config, "KOKORO_DEVICE", "cuda", raising=False)
+    monkeypatch.setattr(config, "STT_DEVICE", "auto", raising=False)
+    monkeypatch.setattr(stt_handlers, "stt_prewarm", lambda wait=False: calls.append(f"stt:{wait}"))
+    monkeypatch.setattr(tts, "prewarm", lambda: calls.append("tts"))
+
+    result = audio_host.audio_prewarm()
+
+    assert result == {"stt": "ok", "tts": "ok"}
+    assert calls == ["tts", "stt:True"]
+
+
+def test_audio_prewarm_warms_cartesia_tts(monkeypatch):
+    """Cartesia has a connection prewarm even though it is not a local model."""
+    import config
+    from core import tts
+    from core.macos_helper import handlers as stt_handlers
+
+    events: list[tuple[str, dict]] = []
+    calls: list[str] = []
+    monkeypatch.setattr(config, "TTS_PROVIDER", "cartesia", raising=False)
+    monkeypatch.setattr(stt_handlers, "stt_prewarm", lambda wait=False: calls.append(f"stt:{wait}"))
+    monkeypatch.setattr(tts, "prewarm", lambda: calls.append("tts"))
+    audio_host.set_event_sink(lambda name, data, _req_id: events.append((name, data)))
+
+    result = audio_host.audio_prewarm()
+
+    assert result == {"stt": "ok", "tts": "ok"}
+    assert sorted(calls) == ["stt:True", "tts"]
+    assert events[0] == (
+        "audio.warmup.started",
+        {"items": ["stt", "tts"], "provider": "cartesia", "reason": "startup"},
+    )
+    assert events[-1][1]["ok"] is True
+
+
 def test_tts_synthesize_raises_while_local_voice_is_warming(monkeypatch):
     """A user TTS request should not sit behind a stuck local warmup forever."""
     import config

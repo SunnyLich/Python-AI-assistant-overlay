@@ -226,12 +226,7 @@ class AgentTaskRunner(AgentResponseMixin, AgentRunArtifactsMixin):
             self._control.raise_if_cancelled()
             self._apply_permission_updates(spec, tools, log)
             self._apply_manual_nudges(messages, log)
-            if self._control.is_pause_requested():
-                log("agent run paused after turn; waiting for resume")
-                self._control.wait_if_paused()
-                log("agent run resumed")
-                self._apply_permission_updates(spec, tools, log)
-                self._apply_manual_nudges(messages, log)
+            self._pause_after_turn_if_requested(spec, tools, messages, log)
             agent = current_agent
             agent_name = agent["name"]
             if agent_name == consecutive_agent:
@@ -401,6 +396,29 @@ class AgentTaskRunner(AgentResponseMixin, AgentRunArtifactsMixin):
                     current_agent = authority
                     continue
                 log(f"{agent_name} returned final response")
+                if self._pause_after_turn_if_requested(spec, tools, messages, log):
+                    log(f"{agent_name} final response held; manual nudge queued before completion")
+                    self._append_agent_history(agent_states, agent_name, "Held final after pause: " + final)
+                    agent_states[agent_name]["tool_context"] = json.dumps(
+                        [{
+                            "tool": "pause_after_turn",
+                            "ok": True,
+                            "message": (
+                                "A manual nudge arrived while the run was paused before accepting "
+                                "the final response. Treat the prior final as stale and continue."
+                            ),
+                            "data": final,
+                        }],
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                    turn["routing"] = {
+                        "status": "paused_nudge",
+                        "next_agent": agent_name,
+                        "reason": "Manual nudge arrived before the final response was accepted.",
+                    }
+                    current_agent = agent
+                    continue
                 self._append_agent_history(agent_states, agent_name, "Final: " + final)
                 return final, turns, messages, agent_states
             if not isinstance(calls, list) or not calls:
@@ -698,17 +716,40 @@ class AgentTaskRunner(AgentResponseMixin, AgentRunArtifactsMixin):
             return None
         return next((agent for agent in agents if cls._is_role(agent, "reviewer")), None)
 
-    def _apply_manual_nudges(self, messages: list[dict], log: LogCallback) -> None:
+    def _pause_after_turn_if_requested(
+        self,
+        spec: AgentTaskLike,
+        tools: AgentToolbox,
+        messages: list[dict],
+        log: LogCallback,
+    ) -> bool:
+        """Wait for resume when pause-after-turn is requested.
+
+        Returns True when one or more manual nudges were applied while paused,
+        so callers can avoid accepting stale terminal decisions.
+        """
+        if not self._control.is_pause_requested():
+            return False
+        log("agent run paused after turn; waiting for resume")
+        self._control.wait_if_paused()
+        log("agent run resumed")
+        self._apply_permission_updates(spec, tools, log)
+        return self._apply_manual_nudges(messages, log)
+
+    def _apply_manual_nudges(self, messages: list[dict], log: LogCallback) -> bool:
         """Apply manual nudges."""
+        applied = False
         for nudge in self._control.drain_nudges():
             if self._message_already_present(messages, nudge):
                 continue
             messages.append(dict(nudge))
+            applied = True
             text = self._log_message_excerpt(str(nudge.get("message") or ""))
             source = str(nudge.get("from") or "User")
             target = str(nudge.get("to") or "ALL")
             log(f"message: {source} -> {target}: {text}")
             log(f"manual nudge queued for {target}")
+        return applied
 
     @staticmethod
     def _message_already_present(messages: list[dict], item: dict) -> bool:

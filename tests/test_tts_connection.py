@@ -161,3 +161,90 @@ class TtsConnectionTests(unittest.TestCase):
         self.assertEqual(calls[0]["text"], "ok")
         self.assertEqual(calls[0]["voice"], "af_heart")
         self.assertEqual(calls[0]["lang_code"], "a")
+
+    def test_kokoro_connection_passes_supported_device(self):
+        """Verify Kokoro receives the configured CUDA device when supported."""
+        calls = []
+
+        class FakeCuda:
+            @staticmethod
+            def is_available():
+                return True
+
+        fake_torch = types.SimpleNamespace(cuda=FakeCuda())
+
+        class FakeKPipeline:
+            """Fake Kokoro pipeline with device support."""
+            def __init__(self, lang_code, device="cpu"):
+                """Capture language code and device."""
+                self.lang_code = lang_code
+                self.device = device
+
+            def __call__(self, text, voice, speed, split_pattern):
+                """Capture synthesis args and return float audio."""
+                import numpy as np
+
+                calls.append({
+                    "lang_code": self.lang_code,
+                    "device": self.device,
+                    "text": text,
+                    "voice": voice,
+                })
+                yield text, "phonemes", np.array([0.0, 0.25, -0.25], dtype=np.float32)
+
+        fake_module = types.ModuleType("kokoro")
+        fake_module.KPipeline = FakeKPipeline
+
+        with patch.dict(sys.modules, {"kokoro": fake_module, "torch": fake_torch}):
+            ok, message = tts.test_connection(
+                "kokoro",
+                kokoro_voice="af_heart",
+                kokoro_lang_code="a",
+                kokoro_device="cuda",
+            )
+
+        self.assertTrue(ok)
+        self.assertIn("kokoro", message)
+        self.assertEqual(calls[0]["device"], "cuda")
+
+    def test_kokoro_connection_falls_back_to_cpu_when_cuda_build_fails(self):
+        """Verify a bad CUDA Kokoro init does not fail local TTS outright."""
+        calls = []
+
+        class FakeCuda:
+            @staticmethod
+            def is_available():
+                return True
+
+        fake_torch = types.SimpleNamespace(cuda=FakeCuda())
+
+        class FakeKPipeline:
+            """Fake Kokoro pipeline that fails on CUDA but works on CPU."""
+            def __init__(self, lang_code, device="cpu"):
+                """Capture language code and device."""
+                if device == "cuda":
+                    raise RuntimeError("CUDA failed")
+                self.lang_code = lang_code
+                self.device = device
+
+            def __call__(self, text, voice, speed, split_pattern):
+                """Capture synthesis args and return float audio."""
+                import numpy as np
+
+                calls.append({"lang_code": self.lang_code, "device": self.device, "text": text})
+                yield text, "phonemes", np.array([0.0, 0.25, -0.25], dtype=np.float32)
+
+        fake_module = types.ModuleType("kokoro")
+        fake_module.KPipeline = FakeKPipeline
+
+        with patch.dict(sys.modules, {"kokoro": fake_module, "torch": fake_torch}):
+            ok, message = tts.test_connection(
+                "kokoro",
+                kokoro_voice="af_heart",
+                kokoro_lang_code="a",
+                kokoro_device="cuda",
+            )
+
+        self.assertTrue(ok)
+        self.assertIn("kokoro", message)
+        self.assertEqual(calls[0]["device"], "cpu")

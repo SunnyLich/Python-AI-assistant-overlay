@@ -11,8 +11,8 @@
       <translation>搜索设置...</translation>
     </message>
     <message>
-      <source>Presets...</source>
-      <translation>预设...</translation>
+      <source>Profiles...</source>
+      <translation>配置档...</translation>
     </message>
     <message>
       <source>Run setup check</source>
@@ -115,8 +115,8 @@
       <translation>更多遮盖内容已从此简要报告中隐藏。</translation>
     </message>
     <message>
-      <source>Apply a starter configuration for common Wisp setups. Review changes before Apply.</source>
-      <translation>应用常见 Wisp 配置的起始设置。应用前请检查更改。</translation>
+      <source>Apply or create a profile for common Wisp setups. Review changes before Apply.</source>
+      <translation>为常见 Wisp 设置应用或创建配置档。应用前请检查更改。</translation>
     </message>
     <message>
       <source>Fast</source>
@@ -159,8 +159,40 @@
       <translation>使用更紧的上下文预算和更便宜/更快的默认值。</translation>
     </message>
     <message>
-      <source>{preset} preset selected. Edits saved with Apply will update this preset.</source>
-      <translation>已选择 {preset} 预设。使用“应用”保存的编辑会更新此预设。</translation>
+      <source>{profile} profile selected. Edits saved with Apply will update this profile.</source>
+      <translation>已选择 {profile} 配置档。使用“应用”保存的编辑会更新此配置档。</translation>
+    </message>
+    <message>
+      <source>Use saved profile: {profile}</source>
+      <translation>使用已保存的配置档：{profile}</translation>
+    </message>
+    <message>
+      <source>Load this custom profile into Settings.</source>
+      <translation>将此自定义配置档载入设置。</translation>
+    </message>
+    <message>
+      <source>Create custom profile...</source>
+      <translation>创建自定义配置档...</translation>
+    </message>
+    <message>
+      <source>Save the current model, context, and budget settings as a reusable profile.</source>
+      <translation>将当前模型、上下文和预算设置保存为可复用的配置档。</translation>
+    </message>
+    <message>
+      <source>Create custom profile</source>
+      <translation>创建自定义配置档</translation>
+    </message>
+    <message>
+      <source>Profile name</source>
+      <translation>配置档名称</translation>
+    </message>
+    <message>
+      <source>{profile} profile created. Review changes, then Apply to use it.</source>
+      <translation>已创建 {profile} 配置档。请检查更改，然后应用以使用它。</translation>
+    </message>
+    <message>
+      <source>{profile} profile selected. Review changes, then Apply.</source>
+      <translation>已选择 {profile} 配置档。请检查更改，然后应用。</translation>
     </message>
     <message>
       <source>Context limits</source>
@@ -1881,8 +1913,8 @@ Let model decide — expose an open-document tool during the answer.</source>
       <translation>用上次启动的任务预填所有字段。</translation>
     </message>
     <message>
-      <source>Presets ▾</source>
-      <translation>预设 ▾</translation>
+      <source>Endpoints ▾</source>
+      <translation>端点 ▾</translation>
     </message>
     <message>
       <source>Press a key combo...</source>

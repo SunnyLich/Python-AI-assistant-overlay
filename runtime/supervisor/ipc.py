@@ -159,6 +159,11 @@ class WorkerClient:
                     line.startswith("[plugin]")
                     or line.startswith("[plugin:")
                     or line.startswith("[kokoro install]")
+                    or line.startswith("[tts] Kokoro")
+                    or line.startswith("[tts] Building Kokoro")
+                    or line.startswith("[tts] Installed Kokoro")
+                    or line.startswith("[audio] Kokoro warmup")
+                    or ("warmup exceeded" in line and line.startswith("[audio]"))
                 ):
                     log.info("[%s] %s", self.spec.name, line)
                 else:

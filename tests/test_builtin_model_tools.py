@@ -242,19 +242,51 @@ class BuiltinModelToolsTests(unittest.TestCase):
         self.assertIn("web_search", names)
         self.assertIn("get_context", names)
 
-    def test_pinned_browser_mode_openai_offers_context_function(self):
+    def test_pinned_browser_mode_openai_offers_web_and_context_functions(self):
         """Verify pinned browser mode openai offers context function behavior."""
+        schemas = llm._get_openai_tool_schemas(
+            "hello",
+            allowed_tools=["web_search", "get_context.browser"],
+            pinned_tools=["web_search", "get_context"],
+        )
         names = {
             (schema.get("function") or {}).get("name")
-            for schema in llm._get_openai_tool_schemas(
-                "hello",
-                allowed_tools=["web_search", "get_context.browser"],
-                pinned_tools=["web_search", "get_context"],
-            )
+            for schema in schemas
         }
+        web_schema = next(
+            schema for schema in schemas
+            if (schema.get("function") or {}).get("name") == "web_search"
+        )
 
         self.assertIn("get_context", names)
-        self.assertNotIn("web_search", names)
+        self.assertIn("web_search", names)
+        self.assertIn(
+            "query",
+            ((web_schema.get("function") or {}).get("parameters") or {}).get("required", []),
+        )
+
+    def test_web_search_executes_local_fallback(self):
+        """Verify web_search returns source-bearing results on local fallback routes."""
+        with patch(
+            "core.context_fetcher.search_online_for_tool",
+            return_value=[
+                {
+                    "title": "Example News",
+                    "url": "https://example.test/news",
+                    "snippet": "Fresh headline summary.",
+                }
+            ],
+        ) as search:
+            result = llm._execute_model_tool(
+                "web_search",
+                {"query": "today's news", "max_results": 3},
+                allowed_tools=["web_search"],
+            )
+
+        search.assert_called_once_with("today's news", max_results=3)
+        self.assertIn("Example News", result)
+        self.assertIn("https://example.test/news", result)
+        self.assertIn("Fresh headline summary.", result)
 
     def test_pinned_opt_in_tools_are_not_added(self):
         # capture_screen is governed by the screenshot setting, never by the

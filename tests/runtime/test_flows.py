@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 import config
 from runtime.supervisor.flows import FlowController, PendingInvocation
+from runtime.supervisor import tool_modes
 
 
 class FakeWorker:
@@ -226,6 +227,8 @@ def test_audio_warmup_events_surface_user_notices():
     flow, _native, ui, _brain, audio = make_flow()
 
     audio.emit("audio.warmup.started", {"items": ["stt", "tts"], "provider": "kokoro"})
+    audio.emit("audio.warmup.progress", {"item": "stt", "status": "started", "items": ["stt", "tts"]})
+    audio.emit("audio.warmup.progress", {"item": "stt", "status": "ok", "items": ["stt", "tts"]})
     audio.emit(
         "audio.warmup.done",
         {"items": ["stt", "tts"], "provider": "kokoro", "ok": True, "result": {"stt": "ok", "tts": "ok"}},
@@ -233,6 +236,8 @@ def test_audio_warmup_events_surface_user_notices():
 
     notices = [call["params"]["text"] for call in ui.calls_for("ui.reply.notice")]
     assert "Warming up local voice and speech recognition..." in notices
+    assert "Warming up speech recognition..." in notices
+    assert "Speech recognition is ready. Warming up local voice..." in notices
     assert "Local voice and speech recognition are ready." in notices
 
 
@@ -647,6 +652,28 @@ def test_read_selection_aloud_speaks_selected_text_without_model(monkeypatch):
         call["params"].get("state") == "speaking"
         for call in ui.calls_for("ui.overlay.state")
     )
+    assert ui.calls_for("ui.reply.done")
+
+
+def test_read_selection_aloud_single_word_failure_finishes_reading_bubble(monkeypatch):
+    """A failed short read-aloud should not leave the static Reading bubble stuck."""
+    monkeypatch.setattr(config, "TTS_PROVIDER", "kokoro", raising=False)
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="word")})
+    audio = FakeWorker(
+        {
+            "audio.tts.synthesize": lambda _params: {"provider": "fake"},
+            "audio.stop": lambda _params: {"stopped": True},
+        }
+    )
+    flow, _native, ui, brain, audio = make_flow(native=native, audio=audio)
+
+    flow.read_selection_aloud()
+
+    assert not brain.calls_for("brain.query")
+    assert audio.last_call("audio.tts.synthesize")["params"]["text"] == "word"
+    assert not audio.calls_for("audio.play_file")
+    assert ui.calls_for("ui.reply.done")
+    assert ui.last_call("ui.reply.notice")["params"]["text"] == "Could not read selected text aloud."
 
 
 def test_read_selection_aloud_synthesizes_next_chunk_while_first_plays(monkeypatch):
@@ -763,6 +790,33 @@ def test_context_modes_map_to_auto_documents_and_allowed_tools():
     assert query["allowed_tools"] == ["get_context.documents", "git_status", "git_diff", "github_repo", "github_issue", "memory_save"]
     assert query["pinned_tools"] == ["get_context", "git_status", "git_diff", "github_repo", "github_issue"]
     assert query["frontload_tools"] == []
+
+
+def test_context_tool_overrides_do_not_fight_context_modes():
+    """Verify context controls own context-fetch tools."""
+    caller = {
+        "context_documents_mode": "model",
+        "context_browser_mode": "model",
+        "context_github_mode": "model",
+        "context_memory_mode": "model",
+        "context_screenshot": "model",
+        "tools": {
+            "get_context": "off",
+            "web_search": "off",
+            "git_status": "off",
+            "memory_search": "off",
+            "capture_screen": "off",
+            "my_tool": "on",
+        },
+    }
+
+    assert tool_modes.tool_overrides(caller) == {"my_tool": "on"}
+    allowed = tool_modes.allowed_model_tools(caller)
+    assert "get_context.documents" in allowed
+    assert "web_search" in allowed
+    assert "git_status" in allowed
+    assert "memory_search" in allowed
+    assert tool_modes.screenshot_tool_allowed(caller) is True
 
 
 def test_document_model_mode_preview_does_not_inject_active_document():
@@ -2838,6 +2892,41 @@ def test_voice_flow_uses_voice_caller_config():
     assert snapshot["include_browser_content"] is False
 
 
+def test_voice_flow_includes_enabled_addon_model_tools():
+    """Verify enabled addon model tools are included in voice allowed tools."""
+    voice_row = {
+        "label": "Voice",
+        "paste_back": False,
+        "context_ambient": True,
+        "context_clipboard": False,
+        "context_documents_mode": "off",
+        "context_browser_mode": "off",
+        "context_github_mode": "off",
+        "context_memory_mode": "off",
+        "context_screenshot": "off",
+        "tools": {"mcp_example_echo": "off"},
+    }
+    native = FakeWorker({"native.context.snapshot": context_handler(selected="")})
+    audio = FakeWorker({"audio.record.stop_transcribe": lambda _params: {"text": "voice prompt"}})
+    brain = FakeWorker(
+        {
+            "brain.addons.tools": lambda _params: {
+                "tools": ["mcp_example_echo", "mcp_example_add", "mcp_example_add"]
+            },
+        },
+        stream_handlers={"brain.query": query_stream("voice reply")},
+    )
+    with voice_config(voice_row):
+        _flow, native, _ui, brain, audio = make_flow(native=native, audio=audio, brain=brain)
+        native.emit("native.hotkey", {"kind": "voice_start"})
+        native.emit("native.hotkey", {"kind": "voice_stop"})
+
+    query = brain.last_call("brain.query")["params"]
+    assert query["use_tools"] is True
+    assert "mcp_example_add" in query["allowed_tools"]
+    assert "mcp_example_echo" not in query["allowed_tools"]
+
+
 def test_voice_screenshot_auto_captures_at_voice_start(tmp_path):
     """Verify voice screenshot auto captures at voice start behavior."""
     image_bytes = b"voice-shot"
@@ -3862,6 +3951,32 @@ def test_memory_events_route_to_brain_and_seed_ui_viewer():
     assert brain.last_call("brain.memory.delete")["params"]["fact_id"] == "1"
 
 
+def test_settings_open_includes_live_addon_tools():
+    """Verify settings open includes live addon tool payloads."""
+    brain = FakeWorker(
+        {
+            "brain.addons.tools": lambda _params: {
+                "tools": [
+                    {
+                        "name": "mcp_example_echo",
+                        "description": "[MCP:example] Echo back text.",
+                    }
+                ]
+            },
+        }
+    )
+    _flow, _native, ui, brain, _audio = make_flow(brain=brain)
+
+    ui.emit("ui.settings.open_requested", {})
+
+    assert ui.last_call("ui.show_settings")["params"]["extra_tools"] == [
+        {
+            "name": "mcp_example_echo",
+            "description": "[MCP:example] Echo back text.",
+        }
+    ]
+
+
 def test_addon_and_agent_tray_events_route_through_supervisor():
     """Verify addon and agent tray events route through supervisor behavior."""
     brain = FakeWorker(
@@ -4051,11 +4166,11 @@ def test_settings_reload_refreshes_supervisor_brain_audio_and_hotkeys(monkeypatc
     monkeypatch.setattr(config, "reload", lambda: reload_calls.append("supervisor"))
     _flow, native, ui, brain, audio = make_flow()
 
-    ui.emit("ui.settings.applied", {})
+    ui.emit("ui.settings.applied", {"changed_keys": ["KOKORO_DEVICE"]})
 
     assert reload_calls == ["supervisor"]
     assert brain.calls_for("brain.config.reload")
-    assert audio.calls_for("audio.prewarm")
+    assert audio.calls_for("audio.config.reload")
     # The native worker must reload its own config and replace registrations in
     # one operation, else a changed hotkey can keep the old listener alive until
     # a second Apply.
@@ -4063,6 +4178,20 @@ def test_settings_reload_refreshes_supervisor_brain_audio_and_hotkeys(monkeypatc
     assert not native.calls_for("native.config.reload")
     assert not native.calls_for("native.hotkeys.stop")
     assert not native.calls_for("native.hotkeys.start")
+
+
+def test_settings_reload_skips_audio_when_audio_settings_unchanged(monkeypatch):
+    """Unrelated Settings changes should not reset and rewarm STT/TTS."""
+    reload_calls: list[str] = []
+    monkeypatch.setattr(config, "reload", lambda: reload_calls.append("supervisor"))
+    _flow, native, ui, brain, audio = make_flow()
+
+    ui.emit("ui.settings.applied", {"changed_keys": ["THEME_MODE"]})
+
+    assert reload_calls == ["supervisor"]
+    assert brain.calls_for("brain.config.reload")
+    assert not audio.calls_for("audio.config.reload")
+    assert native.calls_for("native.hotkeys.reload")
 
 
 def test_start_hotkeys_surfaces_failed_registration_to_user():

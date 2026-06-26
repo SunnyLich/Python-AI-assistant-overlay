@@ -1897,7 +1897,7 @@ class QtProtocolHost:
         """Handle line."""
         req_id = None
         try:
-            msg = json.loads(raw.decode("utf-8"))
+            msg = json.loads(raw.decode("utf-8", errors="replace"))
             req_id = msg.get("id")
             method = msg.get("method")
             params = msg.get("params") or {}
@@ -2039,7 +2039,7 @@ class QtProtocolHost:
         if method == "ui.show_chat":
             return self._show_chat(force_new=bool(params.get("new", False)))
         if method == "ui.show_settings":
-            return self._show_settings()
+            return self._show_settings(**params)
         if method == "ui.show_memory":
             return self._show_memory(**params)
         if method == "ui.show_addons":
@@ -2112,6 +2112,9 @@ class QtProtocolHost:
             self._overlay_signals.show_memory_viewer.connect(
                 lambda: self.emit("ui.memory.open_requested", {})
             )
+            self._overlay_signals.show_settings.connect(
+                lambda: self.emit("ui.settings.open_requested", {})
+            )
             self._overlay_signals.show_addon_manager.connect(
                 lambda: self.emit("ui.addons.open_requested", {})
             )
@@ -2132,10 +2135,10 @@ class QtProtocolHost:
             self._overlay_signals.settings_applied.connect(self._settings_applied)
         return self._overlay
 
-    def _settings_applied(self) -> None:
+    def _settings_applied(self, payload: dict[str, Any] | None = None) -> None:
         """Handle settings applied for qt protocol host."""
         self._reload_config()
-        self.emit("ui.settings.applied", {})
+        self.emit("ui.settings.applied", payload or {})
 
     def _ensure_bubble(self):
         """Ensure bubble."""
@@ -2788,7 +2791,7 @@ class QtProtocolHost:
                     },
                 )
             )
-        elif self._chat is not None and conversation_index is not None:
+        elif self._chat_is_visible() and conversation_index is not None:
             self._chat.external_reply_chunk(
                 int(conversation_index),
                 {
@@ -2821,7 +2824,7 @@ class QtProtocolHost:
                     },
                 )
             )
-        elif self._chat is not None and conversation_index is not None:
+        elif self._chat_is_visible() and conversation_index is not None:
             self._chat.finish_external_reply_stream(int(conversation_index), text)
             return {"queued": True}
         return {"queued": stream is not None}
@@ -3082,7 +3085,7 @@ class QtProtocolHost:
             if normalized_policy:
                 conv["context_policy"] = normalized_policy
             self._persist_conversations()
-            if self._chat is not None:
+            if self._chat_is_visible():
                 self._chat.sync_conversation(idx)
             return {"count": len(self._all_conversations), "continued": True}
 
@@ -3102,7 +3105,7 @@ class QtProtocolHost:
         )
         self._active_conversation_idx = len(self._all_conversations) - 1
         self._persist_conversations()
-        if self._chat is not None:
+        if self._chat_is_visible():
             self._chat.ingest_new_conversations(select_new=True)
         return {"count": len(self._all_conversations), "continued": False}
 
@@ -3125,7 +3128,7 @@ class QtProtocolHost:
             append_user=True,
         )
         idx = self._active_conversation_idx
-        if self._chat is not None and idx is not None:
+        if self._chat_is_visible() and idx is not None:
             self._chat.begin_external_reply_stream(idx)
         return {
             "started": True,
@@ -3235,10 +3238,20 @@ class QtProtocolHost:
 
     def _chat_ingest(self) -> dict[str, Any]:
         """Handle chat ingest for qt protocol host."""
-        if self._chat is not None:
+        if self._chat_is_visible():
             self._chat.ingest_new_conversations()
             return {"ingested": True}
         return {"ingested": False}
+
+    def _chat_is_visible(self) -> bool:
+        """Return whether the chat surface is currently user-visible."""
+        chat = self._chat
+        if chat is None:
+            return False
+        try:
+            return bool(chat.isVisible())
+        except Exception:
+            return False
 
     def _show_chat(self, force_new: bool = False) -> dict[str, Any]:
         """Show chat."""
@@ -3247,6 +3260,7 @@ class QtProtocolHost:
         if self._chat is not None:
             if force_new:
                 self._chat.start_new_conversation()
+            self._chat.show()
             self._chat.raise_()
             self._chat.activateWindow()
             self._chat.request_context_preview()
@@ -3278,12 +3292,12 @@ class QtProtocolHost:
         context_items: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Refresh chat context chip token estimates."""
-        if self._chat is None:
+        if not self._chat_is_visible():
             return {"updated": False, "reason": "no_chat"}
         self._chat.update_context_preview(str(preview_id or ""), context_items or [])
         return {"updated": True}
 
-    def _show_settings(self) -> dict[str, Any]:
+    def _show_settings(self, extra_tools: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         """Show settings."""
         from PySide6.QtCore import QTimer
         from ui.settings_panel.dialog import open_settings
@@ -3295,6 +3309,7 @@ class QtProtocolHost:
                     parent=None,
                     on_apply=self._settings_applied,
                     on_setup_check=lambda: self.emit("ui.health.requested", {"source": "settings"}),
+                    extra_tools=extra_tools or [],
                 )
             except Exception:
                 traceback.print_exc()

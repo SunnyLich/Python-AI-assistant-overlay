@@ -709,7 +709,10 @@ class ConfigEnvTests(unittest.TestCase):
                 os.environ,
                 {
                     "CALLER_COUNT": "1",
-                    "CALLER_1_TOOLS": "my_tool:on, other:model, junk, off_tool:off",
+                    "CALLER_1_TOOLS": (
+                        "my_tool:on, other:model, junk, off_tool:off, "
+                        "web_search:on, get_context:off"
+                    ),
                 },
                 clear=False,
             ):

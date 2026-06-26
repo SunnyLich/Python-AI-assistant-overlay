@@ -66,10 +66,24 @@ def env_file_access_mode(name: str, default: str = "off") -> str:
 # Per-caller tool override modes:
 #   "on"    — tool is always offered to the model for this caller
 #   "model" — offered subject to the per-prompt keyword filter (Tools tab)
-#   "off"   — never offered, even when a context dropdown would expose it
-# Tools absent from the mapping follow their default (context dropdown for
-# context tools, off for installed/plugin tools).
+#   "off"   — never offered
+# Context-fetch tools are governed by context controls, not this mapping.
+# Tools absent from the mapping follow their default (off for installed/plugin
+# tools, Local files dropdown for file tools).
 TOOL_OVERRIDE_MODES = ("on", "model", "off")
+CONTEXT_GOVERNED_TOOL_NAMES = {
+    "web_search",
+    "get_context",
+    "get_context.browser",
+    "get_context.documents",
+    "retrieve_website",
+    "git_status",
+    "git_diff",
+    "github_repo",
+    "github_issue",
+    "memory_search",
+    "capture_screen",
+}
 
 
 def parse_tool_modes(value: str | None) -> dict[str, str]:
@@ -79,7 +93,7 @@ def parse_tool_modes(value: str | None) -> dict[str, str]:
         name, _, mode = entry.strip().partition(":")
         name = name.strip()
         mode = mode.strip().lower()
-        if name and mode in TOOL_OVERRIDE_MODES:
+        if name and name not in CONTEXT_GOVERNED_TOOL_NAMES and mode in TOOL_OVERRIDE_MODES:
             modes[name] = mode
     return modes
 
@@ -90,6 +104,7 @@ def format_tool_modes(modes: dict[str, str]) -> str:
         f"{name}:{str(mode).strip().lower()}"
         for name, mode in sorted(modes.items())
         if str(mode).strip().lower() in TOOL_OVERRIDE_MODES
+        and str(name).strip() not in CONTEXT_GOVERNED_TOOL_NAMES
     )
 
 

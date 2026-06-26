@@ -54,6 +54,47 @@ _LOCAL_FILE_PATH_RE = re.compile(
     r"(?:[A-Za-z]:[\\/][^\s]+|[^\s]+\.(?:cfg|css|csv|html|ini|js|json|log|md|py|toml|ts|txt|xml|yaml|yml))",
     re.IGNORECASE,
 )
+_AUDIO_CONFIG_KEYS = {
+    "TTS_PROVIDER",
+    "CARTESIA_VOICE_ID",
+    "ELEVENLABS_VOICE_ID",
+    "ELEVENLABS_MODEL",
+    "OPENAI_TTS_VOICE",
+    "OPENAI_TTS_MODEL",
+    "TTS_CUSTOM_BASE_URL",
+    "TTS_CUSTOM_VOICE",
+    "TTS_CUSTOM_MODEL",
+    "TTS_CUSTOM_SAMPLE_RATE",
+    "GPT_SOVITS_URL",
+    "GPT_SOVITS_REF_AUDIO_PATH",
+    "GPT_SOVITS_PROMPT_TEXT",
+    "GPT_SOVITS_PROMPT_LANG",
+    "GPT_SOVITS_TEXT_LANG",
+    "GPT_SOVITS_SAMPLE_RATE",
+    "GPT_SOVITS_TEXT_SPLIT_METHOD",
+    "GPT_SOVITS_BATCH_SIZE",
+    "GPT_SOVITS_SPEED_FACTOR",
+    "GPT_SOVITS_SEED",
+    "GPT_SOVITS_TIMEOUT_SECONDS",
+    "KOKORO_VOICE",
+    "KOKORO_LANG_CODE",
+    "KOKORO_DEVICE",
+    "KOKORO_SPEED",
+    "KOKORO_SAMPLE_RATE",
+    "KOKORO_SPLIT_PATTERN",
+    "TTS_VOLUME",
+    "TTS_READ_ALOUD_MIN_WORDS",
+    "TTS_READ_ALOUD_MAX_WORDS",
+    "STT_MODEL",
+    "STT_COMPUTE_TYPE",
+    "STT_LANGUAGE",
+    "STT_BEAM_SIZE",
+    "STT_DEVICE",
+    "STT_BACKGROUND_CHUNK_FIRST_TRIGGER_SECONDS",
+    "STT_BACKGROUND_CHUNK_STEP_SECONDS",
+    "STT_BACKGROUND_CHUNK_LIVE_DELAY_SECONDS",
+    "STT_BACKGROUND_CHUNK_OVERLAP_SECONDS",
+}
 
 
 def _file_context_text(items: list | None) -> str:
@@ -339,6 +380,7 @@ class FlowController:
         self.ui.on_event("ui.memory.add", self._on_memory_add)
         self.ui.on_event("ui.memory.update", self._on_memory_update)
         self.ui.on_event("ui.memory.delete", self._on_memory_delete)
+        self.ui.on_event("ui.settings.open_requested", self._on_settings_open_requested)
         self.ui.on_event("ui.addons.open_requested", self._on_addons_open_requested)
         self.ui.on_event("ui.addons.run_action", self._on_addons_run_action)
         self.ui.on_event("ui.addons.set_enabled", self._on_addons_set_enabled)
@@ -370,6 +412,7 @@ class FlowController:
         self.brain.on_event("agent.done", self._forward_agent_event("ui.agent.done"))
         self.brain.on_event("agent.approval.request", self._on_agent_approval_request)
         self.audio.on_event("audio.warmup.started", self._on_audio_warmup_started)
+        self.audio.on_event("audio.warmup.progress", self._on_audio_warmup_progress)
         self.audio.on_event("audio.warmup.done", self._on_audio_warmup_done)
         self.audio.on_event("audio.playback.started", self._on_audio_playback_started)
         self.audio.on_event("audio.playback.done", self._on_audio_playback_done)
@@ -506,6 +549,10 @@ class FlowController:
         """Handle memory delete events."""
         self._schedule(self.memory_delete, data or {})
 
+    def _on_settings_open_requested(self, _data: dict[str, Any], _req_id: Any = None) -> None:
+        """Handle settings open requested events."""
+        self._schedule(self.open_settings)
+
     def _on_addons_open_requested(self, _data: dict[str, Any], _req_id: Any = None) -> None:
         """Handle addons open requested events."""
         self._schedule(self.open_addons)
@@ -597,9 +644,12 @@ class FlowController:
         """Handle agent history continue events."""
         self._schedule(self.continue_agent_history, str((data or {}).get("run_dir") or ""))
 
-    def _on_settings_applied(self, _data: dict[str, Any], _req_id: Any = None) -> None:
+    def _on_settings_applied(self, data: dict[str, Any], _req_id: Any = None) -> None:
         """Handle settings applied events."""
-        self._schedule(self.reload_settings)
+        changed_keys = None
+        if isinstance(data, dict) and "changed_keys" in data:
+            changed_keys = [str(key) for key in (data.get("changed_keys") or [])]
+        self._schedule(self.reload_settings, changed_keys)
 
     def _on_audio_warmup_started(self, data: dict[str, Any], _req_id: Any = None) -> None:
         """Tell the user local speech models are warming."""
@@ -613,6 +663,30 @@ class FlowController:
         else:
             text = "Warming up local speech recognition..."
         self._safe_call(self.ui, "ui.reply.notice", {"text": text, "timeout_ms": 0}, timeout=30.0)
+
+    def _on_audio_warmup_progress(self, data: dict[str, Any], _req_id: Any = None) -> None:
+        """Show which speech component is currently warming or ready."""
+        item = str((data or {}).get("item") or "")
+        status = str((data or {}).get("status") or "")
+        items = set((data or {}).get("items") or [])
+        if item not in {"stt", "tts"} or not status:
+            return
+        label = "speech recognition" if item == "stt" else "local voice"
+        if status == "started":
+            text = f"Warming up {label}..."
+            self._safe_call(self.ui, "ui.reply.notice", {"text": text, "timeout_ms": 0}, timeout=30.0)
+            return
+        if status.startswith("error:"):
+            self._safe_call(
+                self.ui,
+                "ui.reply.notice",
+                {"text": f"Local speech warmup failed: {item}: {status}", "timeout_ms": 6000},
+                timeout=30.0,
+            )
+            return
+        if status == "ok" and item == "stt" and "tts" in items:
+            text = "Speech recognition is ready. Warming up local voice..."
+            self._safe_call(self.ui, "ui.reply.notice", {"text": text, "timeout_ms": 0}, timeout=30.0)
 
     def _on_audio_warmup_done(self, data: dict[str, Any], _req_id: Any = None) -> None:
         """Tell the user local speech warmup finished."""
@@ -639,7 +713,7 @@ class FlowController:
             text = "Local voice is ready."
         else:
             text = "Local speech recognition is ready."
-        self._safe_call(self.ui, "ui.reply.notice", {"text": text, "timeout_ms": 3000}, timeout=30.0)
+        self._safe_call(self.ui, "ui.reply.notice", {"text": text, "timeout_ms": 6000}, timeout=30.0)
 
     def _on_bubble_speed(self, data: dict[str, Any], _req_id: Any = None) -> None:
         """Handle bubble speed events."""
@@ -1194,7 +1268,7 @@ class FlowController:
             log.error("dictation paste failed: %s", paste.get("error") or paste)
             self._native_notify("Wisp â€” dictation failed", "Couldn't paste the text. See native.stderr.log.")
 
-    def reload_settings(self) -> None:
+    def reload_settings(self, changed_keys: list[str] | None = None) -> None:
         """Handle reload settings for flow controller."""
         import config
 
@@ -1205,7 +1279,11 @@ class FlowController:
         # The audio worker owns the live TTS path and is long-lived, so it must
         # reload config + drop cached TTS connections here â€” prewarm alone leaves
         # the old provider/voice in effect until restart.
-        self._safe_call(self.audio, "audio.config.reload", timeout=30.0)
+        audio_changed = changed_keys is None or any(key in _AUDIO_CONFIG_KEYS for key in changed_keys)
+        if audio_changed:
+            self._safe_call(self.audio, "audio.config.reload", timeout=30.0)
+        else:
+            log.info("audio config reload skipped; changed settings did not affect audio")
         # The native worker is a separate long-lived process and owns global
         # registrations. Replace hotkeys in one native call so Apply cannot
         # leave an old listener referenced between stop/start requests.
@@ -1465,6 +1543,15 @@ class FlowController:
                 "addons": result.get("addons") or [],
                 "addons_dir": str(result.get("addons_dir") or ""),
             },
+            timeout=30.0,
+        )
+
+    def open_settings(self) -> None:
+        """Open settings with live addon model tools from the brain process."""
+        self._safe_call(
+            self.ui,
+            "ui.show_settings",
+            {"extra_tools": self._addon_model_tool_payloads()},
             timeout=30.0,
         )
 
@@ -3167,7 +3254,14 @@ class FlowController:
 
     def _allowed_model_tools(self, caller: dict[str, Any]) -> list[str]:
         """Handle allowed model tools for flow controller."""
-        return tool_modes.allowed_model_tools(caller)
+        allowed = tool_modes.allowed_model_tools(caller)
+        overrides = tool_modes.tool_overrides(caller)
+        for name in self._addon_model_tools():
+            if overrides.get(name) == "off":
+                continue
+            if name not in allowed:
+                allowed.append(name)
+        return allowed
 
     def _pinned_model_tools(self, caller: dict[str, Any]) -> list[str]:
         """Tools always offered to the model, bypassing prompt keyword filters.
@@ -3178,6 +3272,29 @@ class FlowController:
         ``get_context``, so pin the schema name here.
         """
         return tool_modes.pinned_model_tools(caller)
+
+    def _addon_model_tools(self) -> list[str]:
+        """Return enabled addon tool names from the brain-owned addon registry."""
+        return [item["name"] for item in self._addon_model_tool_payloads()]
+
+    def _addon_model_tool_payloads(self) -> list[dict[str, str]]:
+        """Return enabled addon tool payloads from the brain-owned addon registry."""
+        try:
+            result = self._safe_call(self.brain, "brain.addons.tools", timeout=3.0) or {}
+        except Exception:
+            return []
+        tools = result.get("tools") if isinstance(result, dict) else []
+        payloads: list[dict[str, str]] = []
+        for item in tools or []:
+            if isinstance(item, dict):
+                name = str(item.get("name") or "").strip()
+                description = str(item.get("description") or name)
+            else:
+                name = str(item or "").strip()
+                description = name
+            if name and name not in {tool["name"] for tool in payloads}:
+                payloads.append({"name": name, "description": description})
+        return payloads
 
     def _chat_tool_policy(self, caller: dict[str, Any]) -> tuple[list[str], list[str], str]:
         """Return chat tool grants from the visible chat/caller policy."""
@@ -3944,6 +4061,38 @@ class FlowController:
         chunks = self._read_aloud_chunks(text)
         if not chunks or not self._is_current(generation) or self._reply_bubble_cancelled(generation):
             return False
+        if len(chunks) == 1:
+            played = False
+            reported_error = False
+            self._begin_manual_tts_sequence(generation)
+            try:
+                try:
+                    result = self.audio.call("audio.tts.synthesize", {"text": chunks[0]}, timeout=180.0)
+                except Exception as exc:  # noqa: BLE001 - keep read-aloud user-facing
+                    if "warming up" in str(exc).lower():
+                        self._notice("Local voice is still warming up. Try again when Wisp says local speech is ready.")
+                        reported_error = True
+                    else:
+                        log.exception("read selection aloud synthesis failed")
+                    return reported_error
+                path = result.get("path") if isinstance(result, dict) else ""
+                if not path:
+                    log.error("read selection aloud synthesis returned no path: %r", result)
+                    return False
+                if not self._is_current(generation) or self._reply_bubble_cancelled(generation):
+                    return False
+                self._safe_call(self.ui, "ui.overlay.state", {"state": "speaking"}, timeout=30.0)
+                play_result = self.audio.call("audio.play_file", {"path": path}, timeout=180.0)
+                played = not (isinstance(play_result, dict) and play_result.get("stopped"))
+                return played
+            except Exception:
+                log.exception("read selection aloud playback failed")
+                return played
+            finally:
+                self._end_manual_tts_sequence(generation)
+                if self._is_current(generation) and not self._reply_bubble_cancelled(generation):
+                    self._safe_call(self.ui, "ui.reply.done", timeout=30.0)
+                    self._set_idle()
 
         synth_queue: "queue.Queue[dict[str, Any] | None]" = queue.Queue(maxsize=1)
         stop_synth = threading.Event()

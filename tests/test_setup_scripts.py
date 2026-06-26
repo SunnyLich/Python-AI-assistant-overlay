@@ -93,6 +93,15 @@ class SetupScriptTests(unittest.TestCase):
         self.assertIn("$Name is required for developer setup.", powershell)
         self.assertLess(powershell.index("$RequiredDependencyFiles = @("), powershell.index("Move-Item -LiteralPath $VenvDir -Destination $VenvBackupDir"))
 
+    def test_macos_lock_ci_verification_matches_compile_script_inputs(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "macos.yml").read_text(encoding="utf-8")
+        compile_lock = (ROOT / "scripts" / "compile_macos_lock.sh").read_text(encoding="utf-8")
+
+        self.assertIn("Verify macOS lock is current", workflow)
+        self.assertIn("uv pip compile requirements.txt", workflow)
+        self.assertIn("uv pip compile requirements.txt", compile_lock)
+        self.assertNotIn("--constraints requirements-macos.lock", workflow)
+
     def test_dev_setup_keeps_stale_venv_until_replacement_is_known(self) -> None:
         setup_sh = (ROOT / "scripts" / "setup_dev.sh").read_text(encoding="utf-8")
 

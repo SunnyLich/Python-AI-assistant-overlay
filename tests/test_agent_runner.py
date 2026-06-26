@@ -6,6 +6,8 @@ import base64
 import json
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1532,6 +1534,97 @@ class AgentRunnerTests(unittest.TestCase):
         control.resume()
         control.wait_if_paused()
         self.assertFalse(control.is_pause_requested())
+
+    def test_pause_after_turn_waits_before_terminal_final(self):
+        """Verify pause-after-turn blocks completion before final artifacts are written."""
+        with tempfile.TemporaryDirectory() as tmp:
+            scope = Path(tmp) / "scope"
+            logs = Path(tmp) / "logs"
+            scope.mkdir()
+            control = AgentRunControl()
+            spec = DummySpec(scope_folder=str(scope), max_turns=1)
+            result: dict[str, Path] = {}
+
+            def fake_model(_prompt: str) -> str:
+                """Request pause while the terminal turn is in flight."""
+                control.pause_after_turn()
+                return json.dumps({"thought": "Done.", "tool_calls": [], "final": "Finished."})
+
+            thread = threading.Thread(
+                target=lambda: result.setdefault(
+                    "run_dir",
+                    AgentTaskRunner(log_root=logs, model_callback=fake_model, control=control).run(spec),
+                )
+            )
+            thread.start()
+            run_dir = self._wait_for_run_log(logs, "agent run paused after turn")
+
+            self.assertTrue(thread.is_alive())
+            self.assertFalse((run_dir / "final.md").exists())
+
+            control.resume()
+            thread.join(timeout=2)
+
+            self.assertFalse(thread.is_alive())
+            self.assertEqual((result["run_dir"] / "final.md").read_text(encoding="utf-8"), "Finished.")
+            self.assertIn("agent run finished", (result["run_dir"] / "run.log").read_text(encoding="utf-8"))
+
+    def test_nudge_during_terminal_pause_supersedes_stale_final(self):
+        """Verify a nudge while paused before completion causes another turn."""
+        with tempfile.TemporaryDirectory() as tmp:
+            scope = Path(tmp) / "scope"
+            logs = Path(tmp) / "logs"
+            scope.mkdir()
+            control = AgentRunControl()
+            spec = DummySpec(scope_folder=str(scope), max_turns=2)
+            prompts: list[str] = []
+            responses = [
+                {"thought": "Premature.", "tool_calls": [], "final": "Premature final."},
+                {"thought": "Handled nudge.", "tool_calls": [], "final": "Corrected final."},
+            ]
+            result: dict[str, Path] = {}
+
+            def fake_model(prompt: str) -> str:
+                """Pause before the first terminal response is accepted."""
+                prompts.append(prompt)
+                if len(prompts) == 1:
+                    control.pause_after_turn()
+                return json.dumps(responses.pop(0))
+
+            thread = threading.Thread(
+                target=lambda: result.setdefault(
+                    "run_dir",
+                    AgentTaskRunner(log_root=logs, model_callback=fake_model, control=control).run(spec),
+                )
+            )
+            thread.start()
+            self._wait_for_run_log(logs, "agent run paused after turn")
+
+            control.add_nudge("Solo", "Do not finish yet; revise the final.")
+            control.resume()
+            thread.join(timeout=2)
+
+            self.assertFalse(thread.is_alive())
+            self.assertEqual((result["run_dir"] / "final.md").read_text(encoding="utf-8"), "Corrected final.")
+            self.assertIn("Do not finish yet", prompts[1])
+            run_log = (result["run_dir"] / "run.log").read_text(encoding="utf-8")
+            self.assertIn("final response held; manual nudge queued", run_log)
+
+    @staticmethod
+    def _wait_for_run_log(logs: Path, text: str, *, timeout: float = 2.0) -> Path:
+        """Wait until a run.log containing text exists and return its run dir."""
+        deadline = time.time() + timeout
+        last_log = ""
+        while time.time() < deadline:
+            for run_dir in logs.glob("*"):
+                log_path = run_dir / "run.log"
+                if not log_path.exists():
+                    continue
+                last_log = log_path.read_text(encoding="utf-8", errors="replace")
+                if text in last_log:
+                    return run_dir
+            time.sleep(0.01)
+        raise AssertionError(f"Timed out waiting for {text!r} in run log. Last log:\n{last_log}")
 
     def test_control_permission_updates_apply_to_tools_and_prompt_spec(self):
         """Verify live permission updates affect tool permissions and prompt capability checks."""

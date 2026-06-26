@@ -125,6 +125,7 @@ class AddonHostProcess:
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
+            errors="replace",
         )
         if self._proc.stderr is not None:
             self._stderr_thread = threading.Thread(
@@ -533,6 +534,27 @@ class AddonManager:
         """Handle summaries for addon manager."""
         return [self.payload(addon) for addon in self._mods]
 
+    def model_tool_names(self) -> list[str]:
+        """Return enabled addon model-tool names without building UI payloads."""
+        return [item["name"] for item in self.model_tool_payloads()]
+
+    def model_tool_payloads(self) -> list[dict[str, str]]:
+        """Return enabled addon model-tool payloads without building UI payloads."""
+        names: list[str] = []
+        payloads: list[dict[str, str]] = []
+        for addon in self._enabled_addons():
+            for item in addon.tools:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                if name and name not in names:
+                    names.append(name)
+                    payloads.append({
+                        "name": name,
+                        "description": str(item.get("description") or name),
+                    })
+        return payloads
+
     def payload(self, addon: LoadedAddon) -> dict[str, Any]:
         """Handle payload for addon manager."""
         return {
@@ -873,7 +895,7 @@ def _first_existing(*paths: Path) -> Path | None:
 
 def _load_toml(path: Path) -> dict[str, Any]:
     """Load toml."""
-    text = path.read_text(encoding="utf-8")
+    text = _read_manifest_text(path)
     try:
         import tomllib
 
@@ -882,6 +904,15 @@ def _load_toml(path: Path) -> dict[str, Any]:
         from core.tool_registry import _load_simple_toml
 
         return _load_simple_toml(text)
+
+
+def _read_manifest_text(path: Path) -> str:
+    """Read addon manifests, accepting common Windows-encoded punctuation."""
+    raw = path.read_bytes()
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace")
 
 
 _manager: AddonManager | None = None

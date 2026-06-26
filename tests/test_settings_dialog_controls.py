@@ -93,7 +93,7 @@ def test_settings_exposes_setup_check_button():
 def test_tts_voice_tab_exposes_stt_settings():
     """Verify tts voice tab exposes stt settings behavior."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication, QLabel
+    from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
     from ui.i18n import t
     from ui.settings_panel.dialog import SettingsDialog
@@ -859,7 +859,8 @@ def test_llm_tab_hides_advanced_chat_harness_controls_until_expanded():
         ):
             assert key in dialog._fields
 
-        buttons = [button for button in dialog.findChildren(QPushButton) if button.text() == "Advanced settings"]
+        current_tab = dialog._tabs.currentWidget()
+        buttons = [button for button in current_tab.findChildren(QPushButton) if button.text() == "Advanced settings"]
         assert buttons
         advanced_button = buttons[0]
         assert advanced_button.isCheckable()
@@ -929,11 +930,12 @@ def test_hidden_settings_dialog_is_replaced_without_clearing_new_one(monkeypatch
         """Qt dialog for fake dialog."""
         created = []
 
-        def __init__(self, parent=None, on_apply=None, on_setup_check=None) -> None:
+        def __init__(self, parent=None, on_apply=None, on_setup_check=None, extra_tools=None) -> None:
             """Initialize the fake dialog instance."""
             self.parent = parent
             self._on_apply = on_apply
             self._on_setup_check = on_setup_check
+            self._extra_tools = extra_tools or []
             self._disposing = False
             self.visible = True
             self.deleted = False
@@ -976,9 +978,14 @@ def test_hidden_settings_dialog_is_replaced_without_clearing_new_one(monkeypatch
     old.visible = False
     new_dialogs = []
 
-    def make_dialog(parent=None, on_apply=None, on_setup_check=None):
+    def make_dialog(parent=None, on_apply=None, on_setup_check=None, extra_tools=None):
         """Verify make dialog behavior."""
-        dialog = FakeDialog(parent=parent, on_apply=on_apply, on_setup_check=on_setup_check)
+        dialog = FakeDialog(
+            parent=parent,
+            on_apply=on_apply,
+            on_setup_check=on_setup_check,
+            extra_tools=extra_tools,
+        )
         new_dialogs.append(dialog)
         return dialog
 
@@ -1909,6 +1916,44 @@ def test_settings_active_preset_persists_user_edits_as_preset_overrides():
 
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_settings_can_create_custom_profile(tmp_path, monkeypatch):
+    """Verify Settings can create a real PROFILE_N custom profile."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QInputDialog, QPushButton
+
+    import ui.settings_panel.dialog as settings_dialog
+    from ui.settings_panel import env as settings_env
+
+    env_path = tmp_path / ".env"
+    monkeypatch.setattr(settings_dialog, "ENV_PATH", env_path)
+    monkeypatch.setattr(settings_env, "ENV_PATH", env_path)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("Local Research", True))
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = settings_dialog.SettingsDialog()
+
+    try:
+        profile_btn = dialog.findChild(QPushButton, "settingsProfilesButton")
+        assert profile_btn is not None
+        assert profile_btn.text() == "Profiles..."
+
+        dialog._fields["CONTEXT_BROWSER_MAX_CHARS"].setText("12345")
+        dialog._create_custom_profile()
+
+        saved = settings_env.read_settings_env()
+        assert saved["PROFILE_COUNT"] == "1"
+        assert saved["PROFILE_1_ID"] == "local-research"
+        assert saved["PROFILE_1_LABEL"] == "Local Research"
+        assert saved["PROFILE_1_CONTEXT_BROWSER_MAX_CHARS"] == "12345"
+        assert "ACTIVE_PROFILE" not in saved
+        assert "SETTINGS_PROFILE" not in saved
+        assert dialog._pending_active_profile == "local-research"
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
 def test_settings_advanced_tab_contains_tuning_and_memory_controls():
     """Verify settings advanced tab contains tuning and memory controls."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -2172,6 +2217,49 @@ def test_settings_keybinds_has_voice_block_and_tools_buttons():
         app.processEvents()
 
 
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_settings_context_source_blocks_use_even_columns():
+    """Verify caller context source blocks keep consistent tile widths."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFrame, QVBoxLayout, QWidget
+
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog()
+    host = QWidget()
+
+    try:
+        row, _controls = dialog._build_context_controls()
+        layout = QVBoxLayout(host)
+        layout.addWidget(row)
+        host.resize(1800, 260)
+        host.show()
+        app.processEvents()
+
+        frames = [
+            frame
+            for frame in row.findChildren(QFrame)
+            if frame.objectName() == "contextSourceBlock"
+        ]
+        first_row_y = min(frame.y() for frame in frames)
+        first_row_widths = [
+            frame.width()
+            for frame in frames
+            if frame.y() == first_row_y
+        ]
+
+        assert len(first_row_widths) == 4
+        assert max(first_row_widths) - min(first_row_widths) <= 1
+        assert all(frame.minimumWidth() >= 160 for frame in frames)
+        assert all(not frame.findChildren(QCheckBox) for frame in frames)
+        assert all(len(frame.findChildren(QComboBox)) == 1 for frame in frames)
+    finally:
+        host.deleteLater()
+        dialog.deleteLater()
+        app.processEvents()
+
+
 def test_reset_keybinds_page_includes_voice_keys():
     """Verify reset keybinds page includes voice keys behavior."""
     from ui.settings_panel.dialog import SettingsDialog
@@ -2193,7 +2281,7 @@ def test_reset_keybinds_page_includes_voice_keys():
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
 def test_tool_access_dialog_round_trips_overrides():
-    """Verify tool access dialog round trips overrides behavior."""
+    """Verify tool access dialog only round trips non-context tool overrides."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
@@ -2202,7 +2290,7 @@ def test_tool_access_dialog_round_trips_overrides():
     app = QApplication.instance() or QApplication(sys.argv)
     dlg = ToolAccessDialog(
         method_label="Test",
-        overrides={"github_repo": "off"},
+        overrides={"github_repo": "off", "read_file": "model"},
         governed_modes={
             "Open docs": "auto",
             "Browser/Web": "off",
@@ -2211,37 +2299,37 @@ def test_tool_access_dialog_round_trips_overrides():
             "Screenshot": "off",
             "Files": "read",
         },
+        extra_tools=[
+            {
+                "name": "mcp_example_echo",
+                "description": "[MCP:example] Echo back text.",
+            }
+        ],
     )
 
     try:
         combos = dlg._combos
-        # Every context tool gets its own selector now.
+        assert {
+            "list_files", "read_file", "create_file", "edit_file", "write_file",
+            "mcp_example_echo",
+        } <= set(combos)
         assert {
             "web_search", "get_context", "retrieve_website", "git_status", "git_diff",
             "github_repo", "github_issue", "memory_search", "capture_screen",
-            "list_files", "read_file", "create_file", "edit_file", "write_file",
-        } <= set(combos)
-        # Defaults follow the dropdowns: Git/GitHub + Memory are "Let model
-        # decide"; a stored override (github_repo: off) wins over that.
-        assert combos["git_status"].currentData() == "model"
-        assert combos["memory_search"].currentData() == "model"
-        assert combos["github_repo"].currentData() == "off"
-        assert combos["web_search"].currentData() == "off"
-        assert combos["read_file"].currentData() == "on"
+        }.isdisjoint(combos)
+        assert combos["read_file"].currentData() == "model"
         assert combos["create_file"].currentData() == "off"
+        assert combos["mcp_example_echo"].currentData() == "off"
 
-        # A selector left matching its dropdown default stores nothing; the
-        # explicit deviations round-trip.
-        combos["web_search"].setCurrentIndex(combos["web_search"].findData("on"))
-        combos["read_file"].setCurrentIndex(combos["read_file"].findData("model"))
+        # Selectors left matching their defaults store nothing; explicit
+        # deviations round-trip. Hidden context-tool overrides are dropped.
         combos["edit_file"].setCurrentIndex(combos["edit_file"].findData("on"))
+        combos["mcp_example_echo"].setCurrentIndex(combos["mcp_example_echo"].findData("on"))
         result = dlg.selected_overrides()
-        assert result["web_search"] == "on"
         assert result["read_file"] == "model"
         assert result["edit_file"] == "on"
-        assert result["github_repo"] == "off"
-        assert "git_status" not in result
-        assert "memory_search" not in result
+        assert result["mcp_example_echo"] == "on"
+        assert "github_repo" not in result
     finally:
         dlg.deleteLater()
         app.processEvents()

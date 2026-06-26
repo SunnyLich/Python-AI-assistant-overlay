@@ -228,6 +228,28 @@ def test_addon_with_dependencies_waits_for_environment(tmp_path, monkeypatch):
     assert manager.before_query("hi", "") == ("hi", "")
 
 
+def test_addon_manifest_accepts_cp1252_punctuation(tmp_path, monkeypatch):
+    """Verify addon manifest accepts cp1252 punctuation behavior."""
+    addons_dir = tmp_path / "addons"
+    addon_dir = addons_dir / "legacy"
+    addon_dir.mkdir(parents=True)
+    (addon_dir / "addon.toml").write_bytes(
+        b'[addon]\nid = "legacy"\nname = "Legacy"\ndescription = "old\x97new"\n'
+    )
+    (addon_dir / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.setattr(addon_store, "_STORE_PATH", tmp_path / "addons.json")
+    monkeypatch.setattr(am.addon_store, "_STORE_PATH", tmp_path / "addons.json")
+
+    manager = am.AddonManager(addons_dir)
+    manager.load_all()
+
+    summary = manager.summaries()[0]
+    assert summary["status"] == "loaded"
+    assert summary["description"].startswith("old")
+    assert summary["description"].endswith("new")
+    assert ord(summary["description"][3]) == 0x2014
+
+
 def test_approved_addon_with_missing_environment_needs_install(tmp_path, monkeypatch):
     """Verify approved addon with missing environment needs install behavior."""
     monkeypatch.setattr(addon_runtime, "ADDON_ENVS_DIR", tmp_path / "addon_envs")

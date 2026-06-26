@@ -189,6 +189,7 @@ def test_chat_add_conversation_selects_new_chat_when_window_is_open() -> None:
     host._persist_conversations = lambda: None  # type: ignore[attr-defined]
     ingest_calls = []
     host._chat = SimpleNamespace(
+        isVisible=lambda: True,
         ingest_new_conversations=lambda **kwargs: ingest_calls.append(kwargs)
     )
 
@@ -196,6 +197,29 @@ def test_chat_add_conversation_selects_new_chat_when_window_is_open() -> None:
 
     assert result == {"count": 1, "continued": False}
     assert ingest_calls == [{"select_new": True}]
+
+
+def test_chat_add_conversation_does_not_touch_hidden_chat_window() -> None:
+    """Verify hotkey chats persist without surfacing a hidden chat widget."""
+    from types import SimpleNamespace
+
+    from runtime.workers.ui_host import QtProtocolHost
+
+    host = QtProtocolHost.__new__(QtProtocolHost)
+    host._active_conversation_idx = None
+    host._active_project_id = "general"
+    host._all_conversations = []
+    host._persist_conversations = lambda: None  # type: ignore[attr-defined]
+    ingest_calls = []
+    host._chat = SimpleNamespace(
+        isVisible=lambda: False,
+        ingest_new_conversations=lambda **kwargs: ingest_calls.append(kwargs),
+    )
+
+    result = host._chat_add_conversation(user="hi", assistant="hello")
+
+    assert result == {"count": 1, "continued": False}
+    assert ingest_calls == []
 
 
 def test_chat_add_conversation_persists_file_context() -> None:

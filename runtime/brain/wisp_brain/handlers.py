@@ -592,6 +592,15 @@ def brain_addons_list() -> dict[str, Any]:
     }
 
 
+@handler("brain.addons.tools")
+def brain_addons_tools() -> dict[str, Any]:
+    """Return enabled addon model tools for supervisor tool policy."""
+    from core.system.paths import ADDONS_DIR
+
+    manager = _loaded_addon_manager(Path(ADDONS_DIR))
+    return {"tools": manager.model_tool_payloads()}
+
+
 @handler("brain.addons.run_action")
 def brain_addons_run_action(addon_id: str = "", label: str = "") -> dict[str, Any]:
     """Run a loaded addon tray action by addon name/id and label."""
@@ -2374,6 +2383,10 @@ def _agent_run_status(final: str, error: str, run_log: str) -> str:
         return "failed"
     if "agent run cancelled" in run_log:
         return "cancelled"
+    last_pause = run_log.rfind("agent run paused")
+    last_resume = run_log.rfind("agent run resumed")
+    if not final.strip() and last_pause >= 0 and last_pause > last_resume:
+        return "paused"
     if final.strip() or "agent run finished" in run_log:
         return "complete"
     return "in progress"

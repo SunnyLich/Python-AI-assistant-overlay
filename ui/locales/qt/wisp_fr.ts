@@ -11,8 +11,8 @@
       <translation>Rechercher dans les réglages...</translation>
     </message>
     <message>
-      <source>Presets...</source>
-      <translation>Préréglages...</translation>
+      <source>Profiles...</source>
+      <translation>Profils...</translation>
     </message>
     <message>
       <source>Run setup check</source>
@@ -115,8 +115,8 @@
       <translation>Des masquages supplementaires sont caches dans ce rapport compact.</translation>
     </message>
     <message>
-      <source>Apply a starter configuration for common Wisp setups. Review changes before Apply.</source>
-      <translation>Applique une configuration de départ pour les usages courants de Wisp. Vérifiez les changements avant d’appliquer.</translation>
+      <source>Apply or create a profile for common Wisp setups. Review changes before Apply.</source>
+      <translation>Applique ou crée un profil pour les usages courants de Wisp. Vérifiez les changements avant d’appliquer.</translation>
     </message>
     <message>
       <source>Fast</source>
@@ -159,8 +159,40 @@
       <translation>Budgets de contexte plus stricts et valeurs par défaut moins coûteuses/plus rapides.</translation>
     </message>
     <message>
-      <source>{preset} preset selected. Edits saved with Apply will update this preset.</source>
-      <translation>Préréglage {preset} sélectionné. Les modifications enregistrées avec Appliquer mettront ce préréglage à jour.</translation>
+      <source>{profile} profile selected. Edits saved with Apply will update this profile.</source>
+      <translation>Profil {profile} sélectionné. Les modifications enregistrées avec Appliquer mettront ce profil à jour.</translation>
+    </message>
+    <message>
+      <source>Use saved profile: {profile}</source>
+      <translation>Utiliser le profil enregistré : {profile}</translation>
+    </message>
+    <message>
+      <source>Load this custom profile into Settings.</source>
+      <translation>Charger ce profil personnalisé dans les paramètres.</translation>
+    </message>
+    <message>
+      <source>Create custom profile...</source>
+      <translation>Créer un profil personnalisé...</translation>
+    </message>
+    <message>
+      <source>Save the current model, context, and budget settings as a reusable profile.</source>
+      <translation>Enregistrer le modèle, le contexte et les budgets actuels comme profil réutilisable.</translation>
+    </message>
+    <message>
+      <source>Create custom profile</source>
+      <translation>Créer un profil personnalisé</translation>
+    </message>
+    <message>
+      <source>Profile name</source>
+      <translation>Nom du profil</translation>
+    </message>
+    <message>
+      <source>{profile} profile created. Review changes, then Apply to use it.</source>
+      <translation>Profil {profile} créé. Vérifiez les changements, puis appliquez pour l’utiliser.</translation>
+    </message>
+    <message>
+      <source>{profile} profile selected. Review changes, then Apply.</source>
+      <translation>Profil {profile} sélectionné. Vérifiez les changements, puis appliquez.</translation>
     </message>
     <message>
       <source>Context limits</source>
@@ -1881,8 +1913,8 @@ Laisser le modèle décider — expose un outil de document ouvert pendant la r�
       <translation>Préremplir tous les champs depuis la dernière tâche démarrée.</translation>
     </message>
     <message>
-      <source>Presets ▾</source>
-      <translation>Préréglages ▾</translation>
+      <source>Endpoints ▾</source>
+      <translation>Points d’accès ▾</translation>
     </message>
     <message>
       <source>Press a key combo...</source>

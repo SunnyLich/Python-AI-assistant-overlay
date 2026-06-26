@@ -18,6 +18,14 @@ def qapp():
     app.processEvents()
 
 
+def _close_overlay_if_valid(overlay, app) -> None:
+    """Close a Qt overlay unless WA_DeleteOnClose already destroyed it."""
+    shiboken6 = pytest.importorskip("shiboken6", reason="shiboken6 not installed")
+    if shiboken6.isValid(overlay):
+        overlay.close()
+        app.processEvents()
+
+
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
 def test_context_preview_entries_expand_item_sources(monkeypatch):
     """Verify one App chip can show multiple detected source previews."""
@@ -231,19 +239,17 @@ def test_intent_overlay_close_emits_cancelled_once(qapp):
     try:
         overlay.show()
         overlay.close()
-        qapp.processEvents()
 
         assert cancelled == [True]
         assert overlay._handled is True
 
-        overlay.close()
+        assert overlay._cancel_if_unhandled() is False
         qapp.processEvents()
 
         assert cancelled == [True]
     finally:
         config.CALLER_ROWS[:] = old_rows
-        overlay.close()
-        qapp.processEvents()
+        _close_overlay_if_valid(overlay, qapp)
 
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
@@ -285,8 +291,7 @@ def test_intent_overlay_pending_selection_close_cancels_not_chosen(qapp, monkeyp
         assert chosen == []
     finally:
         config.CALLER_ROWS[:] = old_rows
-        overlay.close()
-        qapp.processEvents()
+        _close_overlay_if_valid(overlay, qapp)
 
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")

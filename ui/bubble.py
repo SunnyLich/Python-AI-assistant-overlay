@@ -314,9 +314,18 @@ class SpeechBubble(QWidget):
             )
             self._drag_offset = None
             self._press_pos = None
-            if was_click and self._click_callback:
+            if was_click and self._click_callback and self._can_open_chat_from_click():
                 self._click_callback()
         super().mouseReleaseEvent(event)
+
+    def _can_open_chat_from_click(self) -> bool:
+        """Only actual reply text should be a chat-open target."""
+        return (
+            self._reply_chunk_count > 0
+            and not self._thinking
+            and not self._transcript_preview
+            and bool((self._full_text or self._thought_text).strip())
+        )
 
     def leaveEvent(self, event):  # noqa: N802
         """Clear hover state when the pointer leaves the bubble."""
@@ -368,6 +377,7 @@ class SpeechBubble(QWidget):
         self._line_segments = [[(message, False, None, False, False)]]
         self._thinking = False
         self._transcript_preview = False
+        self._reply_chunk_count = 0
         self._pending_words = []
         self._revealed_count = 0
         self._manual_scroll_start = None
@@ -394,6 +404,7 @@ class SpeechBubble(QWidget):
         self._line_segments = []
         self._thinking = True
         self._transcript_preview = False
+        self._reply_chunk_count = 0
         self._dot_count = 1
         self._last_chunk_ended_with_space = True
         self._pending_words = []

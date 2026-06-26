@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.system.env_utils import normalize_file_access_mode
+from core.system.env_utils import CONTEXT_GOVERNED_TOOL_NAMES, normalize_file_access_mode
 from core.tools.local_files import file_tool_pins_for_access, file_tools_for_access
 
 
@@ -34,7 +34,11 @@ def context_mode(caller: dict[str, Any], name: str) -> str:
 
 
 def tool_overrides(caller: dict[str, Any]) -> dict[str, str]:
-    """Handle tool overrides for runtime supervisor tool modes."""
+    """Return non-context tool overrides for this caller.
+
+    Context-fetch tools are governed by the context dropdowns. Ignore legacy
+    entries here so hidden saved overrides cannot silently fight those controls.
+    """
     overrides = caller.get("tools")
     if not isinstance(overrides, dict):
         return {}
@@ -42,6 +46,7 @@ def tool_overrides(caller: dict[str, Any]) -> dict[str, str]:
         str(name): str(mode).strip().lower()
         for name, mode in overrides.items()
         if str(mode).strip().lower() in {"on", "model", "off"}
+        and str(name).strip() not in CONTEXT_GOVERNED_TOOL_NAMES
     }
 
 

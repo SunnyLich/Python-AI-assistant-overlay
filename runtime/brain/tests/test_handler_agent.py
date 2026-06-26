@@ -173,6 +173,21 @@ def test_agent_history_reads_run_artifacts(tmp_path):
     assert result["diff_patch"].startswith("diff --git")
 
 
+def test_agent_history_reports_active_pause(tmp_path):
+    """Verify paused runs are visible as paused until they resume or finish."""
+    run = tmp_path / "runs" / "20260101-010101-paused"
+    run.mkdir(parents=True)
+    (run / "task.json").write_text(json.dumps({"title": "Paused", "objective": "Inspect"}), encoding="utf-8")
+    (run / "run.log").write_text(
+        "[00:00:00] agent run paused after turn; waiting for resume\n",
+        encoding="utf-8",
+    )
+
+    result = handlers.HANDLERS["brain.agent.history.read"](run_dir=str(run))
+
+    assert result["status"] == "paused"
+
+
 def test_agent_history_retry_and_continue_specs(tmp_path):
     """Verify agent history retry and continue specs behavior."""
     run = tmp_path / "runs" / "20260101-010101-demo"

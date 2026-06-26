@@ -13,6 +13,8 @@ Wisp gives you hotkey-driven AI that can read your selection, clipboard, app, br
 [![Local first](https://img.shields.io/badge/local--first-context%20and%20memory-4B8F8C?style=flat-square)](#privacy-and-control)
 [![License](https://img.shields.io/badge/license-MIT-7C3AED?style=flat-square)](#license)
 
+**Languages:** English | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [Français](README.fr.md) | [Español](README.es.md)
+
 [Quick start](#quick-start) | [What it does](#what-wisp-does) | [Demos](#demos) | [Configuration](#configuration) | [Free APIs](#free-model-api-sources) | [Privacy](#privacy-and-control)
 
 ![Wisp Ctrl+Q demo](ReadMe%201st%20Demo.gif)
@@ -202,7 +204,17 @@ An addon can hook into Wisp at several points:
 - **UI** - contribute tray actions, settings fields, and notifications.
 - **LLM actions** - run its own capped model calls from a hook or hotkey.
 
-**What addons can do:** because an addon can inject context, expose tools, and react to responses, the surface is broad. An addon could pull your current git diff, calendar, or an open ticket into the prompt automatically; give the model a tool to search an internal wiki, query a database, hit a weather or stock API, or toggle a smart-home device; redact or tag sensitive context on its way out for compliance; append every answer to a daily journal or push it to Notion or Slack; or add a one-key "rewrite this in our house style" intent backed by its own prompt. If you can write it in Python and it fits one of the hook points above, you can wire it into the same hotkey-driven overlay you already use.
+**What addons can do:** because an addon can inject context, expose tools, and react to responses, the surface is broad. A few examples, and the hook each one uses:
+
+| You want to... | Hook | Manifest needs |
+| --- | --- | --- |
+| Pull your git diff, calendar, or an open ticket into the prompt automatically | Context (`before_query`) | `query = "modify"` |
+| Give the model a tool to search an internal wiki, query a database, hit a weather or stock API, or toggle a smart-home device | Tools (`get_tools`) | `tools = true` (plus `[dependencies]` for any packages) |
+| Redact or tag sensitive context on its way out for compliance | Context (`before_query`) | `query = "modify"` |
+| Append every answer to a daily journal, or push it to Notion or Slack | Responses (`after_response`) | `response = "read"` |
+| Add a one-key "rewrite this in our house style" intent backed by its own prompt | Intents and hotkeys | `[[intents]]` / `[[hotkeys]]`, `hotkeys = true` |
+
+If you can write it in Python and it fits one of the hook points above, you can wire it into the same hotkey-driven overlay you already use.
 
 The bundled `addons/healthcheck` addon is a working reference that exercises every hook. See the [Addon guide](addons/README.md) for the full manifest and hook contract, or the **Add-ons** page in the [Wisp documentation site](Wisp%20Website/Wisp%20Docs.html).
 
@@ -214,7 +226,8 @@ Wisp is designed as a local desktop assistant. Storage stays on your machine, an
 - Model requests go straight from your machine to the provider or local server you configured.
 - Your configured model provider receives only the prompt you send and the context sources selected or enabled for that caller.
 - Wisp may inspect available context locally to show token estimates, availability, and privacy redaction counts before you send. Previewing a source does not send it to the model provider or save it as chat/memory.
-- Context is controlled per hotkey profile: ambient app context, clipboard, documents, browser pages, GitHub context, memory, tools, and screenshots can each be enabled, disabled, or routed on demand.
+- Context is controlled per hotkey profile: ambient app context, clipboard, documents, browser pages, GitHub context, memory, and screenshots can each be disabled, attached up front, or exposed as model-fetchable context where supported.
+- Allowed tools are separate from context controls and cover the remaining model-callable capabilities, such as local file tools and add-on tools.
 - Privacy mode keeps privacy-first setup checks and warning behavior enabled, including redaction status before sensitive context is sent.
 - Optional voice, document reading, browser content, screenshots, GitHub Copilot, and addons stay inactive until configured.
 - Cloud TTS, model providers, compatible servers, or GitHub Copilot are contacted only when you configure and use those features.

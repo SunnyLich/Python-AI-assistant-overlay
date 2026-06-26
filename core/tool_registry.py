@@ -173,14 +173,14 @@ class ToolRegistry:
 
     def list_tools(self, include_server_tools: bool = True) -> list[ToolSpec]:
         # Opt-in tools are kept out of the default sets; callers add them back
-        # explicitly. Server tools are Anthropic-only, so the OpenAI/Groq path
-        # (include_server_tools=False) drops both.
+        # explicitly. Server-only tools are hidden from OpenAI/Groq paths, but a
+        # tool with a local executor can still be exposed as a function fallback.
         """List tools."""
         tools = []
         for spec in self._builtins.values():
             if spec.opt_in:
                 continue
-            if not include_server_tools and spec.server_schema:
+            if not include_server_tools and spec.server_schema and spec.executor is None:
                 continue
             tools.append(spec)
         tools.extend(self._load_script_tools().values())
@@ -273,7 +273,7 @@ def _first_existing(*paths: Path) -> Path | None:
 
 def _load_manifest(path: Path) -> dict:
     """Load manifest."""
-    text = path.read_text(encoding="utf-8")
+    text = _read_manifest_text(path)
     if path.suffix.lower() == ".json":
         return json.loads(text)
     try:
@@ -282,6 +282,15 @@ def _load_manifest(path: Path) -> dict:
         return tomllib.loads(text)
     except ModuleNotFoundError:
         return _load_simple_toml(text)
+
+
+def _read_manifest_text(path: Path) -> str:
+    """Read tool manifests, accepting common Windows-encoded punctuation."""
+    raw = path.read_bytes()
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace")
 
 
 def _load_simple_toml(text: str) -> dict:

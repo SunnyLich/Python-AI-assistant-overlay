@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QLineEdit, QTextEdit, QComboBox, QCheckBox,
     QPushButton, QTabWidget, QWidget, QFrame, QGroupBox, QMessageBox,
-    QScrollArea, QSizePolicy, QCompleter, QMenu, QSlider,
+    QScrollArea, QSizePolicy, QCompleter, QInputDialog, QMenu, QSlider,
 )
 from PySide6.QtCore import Qt, QTimer, QObject, Signal
 from PySide6.QtGui import QFont
@@ -146,6 +146,81 @@ _FILE_ACCESS_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Write automatically", "auto"),
 )
 
+
+class _BooleanContextCombo(_NoScrollCombo):
+    """Two-state context dropdown that preserves the old checkbox API."""
+
+    def __init__(self, checked: bool = False) -> None:
+        super().__init__()
+        self.addItem("Off", "false")
+        self.addItem("On", "true")
+        self.setChecked(checked)
+
+    def isChecked(self) -> bool:  # noqa: N802 - checkbox compatibility
+        return str(self.currentData()).lower() == "true"
+
+    def setChecked(self, checked: bool) -> None:  # noqa: N802 - checkbox compatibility
+        idx = self.findData("true" if checked else "false")
+        self.setCurrentIndex(idx if idx >= 0 else 0)
+
+
+class _AppContextCombo(_NoScrollCombo):
+    """Single App-context dropdown backed by ambient + open-docs settings."""
+
+    _AMBIENT_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+
+    def __init__(self, ambient: bool = True, documents_mode: str = "auto") -> None:
+        super().__init__()
+        self.addItem("Off", "off")
+        self.setItemData(0, False, self._AMBIENT_ROLE)
+        self.addItem("On", "off")
+        self.setItemData(1, True, self._AMBIENT_ROLE)
+        self.addItem("On + open docs", "auto")
+        self.setItemData(2, True, self._AMBIENT_ROLE)
+        self.addItem("Let model decide", "model")
+        self.setItemData(3, True, self._AMBIENT_ROLE)
+        self.set_state(ambient, documents_mode)
+
+    def isChecked(self) -> bool:  # noqa: N802 - checkbox compatibility
+        return bool(self.itemData(self.currentIndex(), self._AMBIENT_ROLE))
+
+    def setChecked(self, checked: bool) -> None:  # noqa: N802 - checkbox compatibility
+        self.set_state(checked, str(self.currentData() or "off"))
+
+    def set_state(self, ambient: bool, documents_mode: str) -> None:
+        """Select the combined item for ambient app context + documents mode."""
+        mode = (documents_mode or "off").strip().lower()
+        if mode == "on":
+            mode = "auto"
+        if not ambient:
+            target = 0
+        elif mode == "model":
+            target = 3
+        elif mode == "auto":
+            target = 2
+        else:
+            target = 1
+        self.setCurrentIndex(target)
+
+    def findData(  # noqa: N802 - Qt override shape
+        self,
+        data,
+        role: int = int(Qt.ItemDataRole.UserRole),
+        flags: Qt.MatchFlag = Qt.MatchFlag.MatchExactly,
+    ) -> int:
+        """Pick the docs-mode item while preserving current ambient state."""
+        if role == int(Qt.ItemDataRole.UserRole) and str(data).lower() == "off":
+            wants_ambient = self.isChecked()
+            for index in range(self.count()):
+                if (
+                    str(self.itemData(index, role)).lower() == "off"
+                    and bool(self.itemData(index, self._AMBIENT_ROLE)) == wants_ambient
+                ):
+                    return index
+            return 1 if wants_ambient else 0
+        return super().findData(data, role, flags)
+
+
 _SETTINGS_PRESET_KEY = "WISP_SETTINGS_PRESET"
 _PRESET_ENV_PREFIX = "WISP_PRESET_"
 
@@ -267,13 +342,32 @@ def _write_env(vals: dict[str, str], remove_keys: set[str] | None = None):
         settings_env.ENV_PATH = old_path
 
 
+def _normalize_extra_tool_payloads(raw_tools) -> list[dict[str, str]]:
+    """Normalize live addon/tool payloads for the settings tool picker."""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw_tools or []:
+        if isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            description = str(item.get("description") or name)
+        else:
+            name = str(item or "").strip()
+            description = name
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append({"name": name, "description": description})
+    return out
+
+
 class SettingsDialog(QDialog):
     """Qt dialog for settings dialog."""
-    def __init__(self, parent=None, on_apply=None, on_setup_check=None):
+    def __init__(self, parent=None, on_apply=None, on_setup_check=None, extra_tools=None):
         """Initialize the settings dialog instance."""
         super().__init__(parent)
         self._on_apply = on_apply  # callable() fired after a successful apply
         self._on_setup_check = on_setup_check
+        self._extra_tools = _normalize_extra_tool_payloads(extra_tools)
         self._disposing = False
         self.setWindowTitle("Settings")
         self.setMinimumWidth(480)
@@ -305,6 +399,7 @@ class SettingsDialog(QDialog):
         self._tab_dirty_names: set[str] = set()
         self._tab_search_text: dict[str, str] = {}
         self._active_preset_slug = self._env.get(_SETTINGS_PRESET_KEY, "")
+        self._pending_active_profile = ""
         self._pending_test_results: list[tuple[str, int, bool, str]] = []
         self._pending_test_results_lock = threading.Lock()
         self._pending_test_progress: list[tuple[str, int, str]] = []
@@ -594,11 +689,12 @@ class SettingsDialog(QDialog):
         self._settings_search.textChanged.connect(self._apply_settings_search)
         top_row.addWidget(self._settings_search, 1)
 
-        preset_btn = QPushButton(t("Presets..."))
-        preset_btn.setObjectName("settingsPresetsButton")
-        preset_btn.setToolTip(t("Apply a starter configuration for common Wisp setups. Review changes before Apply."))
-        preset_btn.setMenu(self._build_presets_menu(preset_btn))
-        top_row.addWidget(preset_btn)
+        profile_btn = QPushButton(t("Profiles..."))
+        self._profiles_btn = profile_btn
+        profile_btn.setObjectName("settingsProfilesButton")
+        profile_btn.setToolTip(t("Apply or create a profile for common Wisp setups. Review changes before Apply."))
+        profile_btn.setMenu(self._build_profiles_menu(profile_btn))
+        top_row.addWidget(profile_btn)
         setup_btn = QPushButton(t("Run setup check"))
         setup_btn.setObjectName("settingsSetupCheckButton")
         setup_btn.setToolTip(t("Check provider, speech, hotkey, and privacy readiness."))
@@ -666,14 +762,208 @@ class SettingsDialog(QDialog):
         btn_row.addWidget(confirm_btn)
         root.addLayout(btn_row)
 
-    def _build_presets_menu(self, parent: QWidget) -> QMenu:
-        """Build presets menu."""
+    def _build_profiles_menu(self, parent: QWidget) -> QMenu:
+        """Build profiles menu."""
         menu = QMenu(parent)
         for slug, name in _PRESET_LABELS.items():
             action = menu.addAction(t(name))
             action.setToolTip(t(_PRESET_DESCRIPTIONS[slug]))
             action.triggered.connect(lambda _checked=False, preset=slug: self._apply_preset(preset))
+        saved_profiles = self._saved_custom_profile_entries()
+        if saved_profiles:
+            menu.addSeparator()
+            for index, profile_id, label in saved_profiles:
+                action = menu.addAction(t("Use saved profile: {profile}").format(profile=label))
+                action.setToolTip(t("Load this custom profile into Settings."))
+                action.triggered.connect(
+                    lambda _checked=False, slot=index: self._apply_saved_profile(slot)
+                )
+        menu.addSeparator()
+        create_action = menu.addAction(t("Create custom profile..."))
+        create_action.setToolTip(t("Save the current model, context, and budget settings as a reusable profile."))
+        create_action.triggered.connect(self._create_custom_profile)
         return menu
+
+    def _refresh_profiles_menu(self) -> None:
+        """Refresh the Profiles menu after custom profile changes."""
+        btn = getattr(self, "_profiles_btn", None)
+        if isinstance(btn, QPushButton):
+            old_menu = btn.menu()
+            btn.setMenu(self._build_profiles_menu(btn))
+            if old_menu is not None:
+                old_menu.deleteLater()
+
+    def _saved_custom_profile_entries(self) -> list[tuple[int, str, str]]:
+        """Return custom PROFILE_N entries saved in the env file."""
+        entries: list[tuple[int, str, str]] = []
+        try:
+            count = int(str(self._env.get("PROFILE_COUNT", "0") or "0"))
+        except ValueError:
+            count = 0
+        for index in range(1, count + 1):
+            profile_id = str(self._env.get(f"PROFILE_{index}_ID", "") or "").strip()
+            if not profile_id:
+                continue
+            label = str(self._env.get(f"PROFILE_{index}_LABEL", "") or profile_id).strip()
+            entries.append((index, profile_id, label))
+        return entries
+
+    @staticmethod
+    def _profile_id(raw: str, default: str = "custom") -> str:
+        """Normalize user-entered profile names to config profile ids."""
+        text = str(raw or default or "custom").strip().lower()
+        text = re.sub(r"[^a-z0-9_-]+", "-", text).strip("-")
+        return text or default
+
+    def _unique_custom_profile_id(self, label: str) -> str:
+        """Return a profile id that does not shadow an existing built-in/custom profile."""
+        base = self._profile_id(label)
+        existing = {
+            "default", "fast", "balanced", "deep", "private", "coding",
+            *(profile_id for _idx, profile_id, _label in self._saved_custom_profile_entries()),
+        }
+        if base not in existing:
+            return base
+        suffix = 2
+        while f"{base}-{suffix}" in existing:
+            suffix += 1
+        return f"{base}-{suffix}"
+
+    def _model_section_values(self, sk: str) -> tuple[str, str, str]:
+        """Return provider, primary model, and fallback rows for a model section."""
+        rows = self._model_section_rows.get(sk, [])
+        if not rows:
+            return "", "", ""
+        primary = rows[0]
+        provider = str(primary["api_key_combo"].currentData() or "")
+        model = self._model_value(primary)
+        fallbacks = "\n".join(
+            f"{r['api_key_combo'].currentData() or ''}:{self._model_value(r)}"
+            for r in rows[1:]
+            if (r["api_key_combo"].currentData() or "") and self._model_value(r)
+        )
+        return provider, model, fallbacks
+
+    def _current_profile_values(self, label: str, profile_id: str) -> dict[str, str]:
+        """Snapshot current settings into config.py's PROFILE_N_* contract."""
+        import config as cfg
+
+        llm_p, llm_m, llm_f = self._model_section_values("LLM")
+        vis_p, vis_m, vis_f = self._model_section_values("VISION_LLM")
+        mem_p, mem_m, mem_f = self._model_section_values("MEMORY_LLM")
+        vb = getattr(self, "_voice_block", {})
+        values = {
+            "ID": profile_id,
+            "LABEL": label,
+            "LLM_PROVIDER": llm_p,
+            "LLM_MODEL": llm_m,
+            "LLM_FALLBACKS": llm_f,
+            "VISION_LLM_PROVIDER": vis_p,
+            "VISION_LLM_MODEL": vis_m,
+            "VISION_LLM_FALLBACKS": vis_f,
+            "MEMORY_LLM_PROVIDER": mem_p,
+            "MEMORY_LLM_MODEL": mem_m,
+            "MEMORY_LLM_FALLBACKS": mem_f,
+            "CONTEXT_BROWSER_MAX_CHARS": _get(self._fields["CONTEXT_BROWSER_MAX_CHARS"]),
+            "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS": _get(self._fields["CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS"]),
+            "CONTEXT_TOOL_DOCUMENT_MAX_CHARS": _get(self._fields["CONTEXT_TOOL_DOCUMENT_MAX_CHARS"]),
+            "TOOL_TURN_MAX_CALLS": str(getattr(cfg, "TOOL_TURN_MAX_CALLS", 25)),
+            "TOOL_TURN_MAX_RESULT_CHARS": str(getattr(cfg, "TOOL_TURN_MAX_RESULT_CHARS", 120000)),
+            "TOOL_TURN_MAX_TOTAL_CHARS": str(getattr(cfg, "TOOL_TURN_MAX_TOTAL_CHARS", 300000)),
+        }
+        if vb:
+            values.update(
+                {
+                    "CONTEXT_DOCUMENTS_MODE": str(vb["context_documents_mode"].currentData()),
+                    "CONTEXT_BROWSER_MODE": str(vb["context_browser_mode"].currentData()),
+                    "CONTEXT_GITHUB_MODE": str(vb["context_github_mode"].currentData()),
+                    "CONTEXT_MEMORY_MODE": str(vb["context_memory_mode"].currentData()),
+                    "CONTEXT_SCREENSHOT": str(vb["context_screenshot"].currentData()),
+                    "FILE_ACCESS": str(vb["file_access"].currentData()),
+                }
+            )
+        return values
+
+    def _create_custom_profile(self) -> None:
+        """Create a reusable custom profile from the current settings."""
+        label, accepted = QInputDialog.getText(
+            self,
+            t("Create custom profile"),
+            t("Profile name"),
+        )
+        label = str(label or "").strip()
+        if not accepted or not label:
+            return
+        profile_id = self._unique_custom_profile_id(label)
+        current_count = len(self._saved_custom_profile_entries())
+        try:
+            env_count = int(str(self._env.get("PROFILE_COUNT", "0") or "0"))
+        except ValueError:
+            env_count = current_count
+        slot = max(env_count, current_count) + 1
+        profile_values = self._current_profile_values(label, profile_id)
+        vals = {
+            "PROFILE_COUNT": str(slot),
+        }
+        vals.update({f"PROFILE_{slot}_{key}": value for key, value in profile_values.items()})
+        _write_env(vals)
+        self._env.update(vals)
+        self._active_preset_slug = ""
+        self._pending_active_profile = profile_id
+        self._refresh_profiles_menu()
+        self._schedule_dirty_refresh()
+        self._status_lbl.setText(
+            t("{profile} profile created. Review changes, then Apply to use it.").format(profile=label)
+        )
+
+    def _profile_values_from_env_slot(self, slot: int) -> dict[str, str]:
+        """Return UI-applicable values from a PROFILE_N env slot."""
+        prefix = f"PROFILE_{slot}_"
+        profile_values = {
+            key[len(prefix):]: value
+            for key, value in self._env.items()
+            if key.startswith(prefix)
+        }
+        mapping = {
+            "LLM_PROVIDER": "LLM_PROVIDER",
+            "LLM_MODEL": "LLM_MODEL",
+            "LLM_FALLBACKS": "LLM_FALLBACKS",
+            "VISION_LLM_PROVIDER": "VISION_LLM_PROVIDER",
+            "VISION_LLM_MODEL": "VISION_LLM_MODEL",
+            "VISION_LLM_FALLBACKS": "VISION_LLM_FALLBACKS",
+            "MEMORY_LLM_PROVIDER": "MEMORY_LLM_PROVIDER",
+            "MEMORY_LLM_MODEL": "MEMORY_LLM_MODEL",
+            "MEMORY_LLM_FALLBACKS": "MEMORY_LLM_FALLBACKS",
+            "CONTEXT_BROWSER_MAX_CHARS": "CONTEXT_BROWSER_MAX_CHARS",
+            "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS": "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS",
+            "CONTEXT_TOOL_DOCUMENT_MAX_CHARS": "CONTEXT_TOOL_DOCUMENT_MAX_CHARS",
+        }
+        return {env_key: profile_values[source_key] for source_key, env_key in mapping.items() if source_key in profile_values}
+
+    def _apply_saved_profile(self, slot: int) -> None:
+        """Load a custom profile into the settings UI for review."""
+        values = self._profile_values_from_env_slot(slot)
+        if not values:
+            return
+        profile_id = str(self._env.get(f"PROFILE_{slot}_ID", "") or "").strip()
+        label = str(self._env.get(f"PROFILE_{slot}_LABEL", "") or profile_id).strip()
+        self._active_preset_slug = ""
+        self._apply_env_values_to_ui(values)
+        self._set_context_modes(
+            documents=self._env.get(f"PROFILE_{slot}_CONTEXT_DOCUMENTS_MODE"),
+            browser=self._env.get(f"PROFILE_{slot}_CONTEXT_BROWSER_MODE"),
+            github=self._env.get(f"PROFILE_{slot}_CONTEXT_GITHUB_MODE"),
+            memory=self._env.get(f"PROFILE_{slot}_CONTEXT_MEMORY_MODE"),
+            screenshot=self._env.get(f"PROFILE_{slot}_CONTEXT_SCREENSHOT"),
+            file_access=self._env.get(f"PROFILE_{slot}_FILE_ACCESS"),
+        )
+        self._pending_active_profile = profile_id
+        self._refresh_stt_active_backend()
+        self._schedule_warning_marker_refresh()
+        self._schedule_dirty_refresh()
+        self._status_lbl.setText(
+            t("{profile} profile selected. Review changes, then Apply.").format(profile=label)
+        )
 
     def _run_setup_check(self) -> None:
         """Run lightweight setup checks and show a reusable report."""
@@ -796,6 +1086,8 @@ class SettingsDialog(QDialog):
             return "LLM"
         if key.startswith("LLM_") or key.startswith("VISION_LLM_") or key.startswith("MEMORY_LLM_"):
             return "LLM"
+        if key in {"ACTIVE_PROFILE", "SETTINGS_PROFILE"}:
+            return "App"
         if key.startswith("THEME_") or key.startswith("BUBBLE_") or key.startswith("TTS_PLAYBACK"):
             return self._field_page_map().get(key, "App")
         return self._field_page_map().get(key, "")
@@ -803,6 +1095,10 @@ class SettingsDialog(QDialog):
     def _snapshot_settings(self) -> dict[str, str]:
         """Handle snapshot settings for settings dialog."""
         snapshot: dict[str, str] = {}
+        snapshot["ACTIVE_PROFILE"] = (
+            str(getattr(self, "_pending_active_profile", "") or "").strip()
+            or str(self._env.get("ACTIVE_PROFILE", "") or "").strip()
+        )
 
         for key, widget in self._fields.items():
             if key.endswith("_API_KEY"):
@@ -1032,6 +1328,9 @@ class SettingsDialog(QDialog):
         if key == "VOICE_CONTEXT_AMBIENT" and hasattr(self, "_voice_block"):
             self._voice_block["context_ambient"].setChecked(str(value).strip().lower() == "true")
             return True
+        if key == "VOICE_CONTEXT_CLIPBOARD" and hasattr(self, "_voice_block"):
+            self._voice_block["context_clipboard"].setChecked(str(value).strip().lower() == "true")
+            return True
         voice_mode_keys = {
             "VOICE_CONTEXT_DOCUMENTS_MODE": "context_documents_mode",
             "VOICE_CONTEXT_BROWSER_MODE": "context_browser_mode",
@@ -1071,6 +1370,9 @@ class SettingsDialog(QDialog):
             return True
         if caller_key == "CONTEXT_AMBIENT":
             blk["context_ambient"].setChecked(str(value).strip().lower() == "true")
+            return True
+        if caller_key == "CONTEXT_CLIPBOARD":
+            blk["context_clipboard"].setChecked(str(value).strip().lower() == "true")
             return True
         mode_keys = {
             "CONTEXT_DOCUMENTS_MODE": "context_documents_mode",
@@ -1134,7 +1436,8 @@ class SettingsDialog(QDialog):
 
     def _set_context_modes(self, *, documents: str | None = None, browser: str | None = None,
                            github: str | None = None, memory: str | None = None,
-                           screenshot: str | None = None, clear_tools: bool = False) -> None:
+                           screenshot: str | None = None, file_access: str | None = None,
+                           clear_tools: bool = False) -> None:
         """Set context modes."""
         blocks = list(getattr(self, "_caller_blocks", []))
         if hasattr(self, "_voice_block"):
@@ -1146,6 +1449,7 @@ class SettingsDialog(QDialog):
                 "context_github_mode": github,
                 "context_memory_mode": memory,
                 "context_screenshot": screenshot,
+                "file_access": file_access,
             }
             for key, value in updates.items():
                 if value is not None:
@@ -1159,6 +1463,7 @@ class SettingsDialog(QDialog):
         if not preset_key:
             return
         self._active_preset_slug = preset_key
+        self._pending_active_profile = ""
         values = self._preset_effective_values(preset_key)
         self._apply_env_values_to_ui(values)
         self._rebuild_stt_languages()
@@ -1181,8 +1486,8 @@ class SettingsDialog(QDialog):
         self._schedule_warning_marker_refresh()
         self._schedule_dirty_refresh()
         self._status_lbl.setText(
-            t("{preset} preset selected. Edits saved with Apply will update this preset.").format(
-                preset=t(_PRESET_LABELS[preset_key])
+            t("{profile} profile selected. Edits saved with Apply will update this profile.").format(
+                profile=t(_PRESET_LABELS[preset_key])
             )
         )
 
@@ -1309,14 +1614,14 @@ class SettingsDialog(QDialog):
         custom_note.setWordWrap(True)
         custom_cv.addWidget(custom_note)
 
-        presets_btn = QPushButton(t("Presets ▾"))
-        presets_btn.clicked.connect(self._show_custom_presets_menu)
+        endpoints_btn = QPushButton(t("Endpoints ▾"))
+        endpoints_btn.clicked.connect(self._show_custom_endpoints_menu)
         base_url_row = QWidget()
         bur_h = QHBoxLayout(base_url_row)
         bur_h.setContentsMargins(0, 0, 0, 0)
         bur_h.setSpacing(6)
         bur_h.addWidget(self._fields["CUSTOM_BASE_URL"])
-        bur_h.addWidget(presets_btn)
+        bur_h.addWidget(endpoints_btn)
 
         custom_f_w = QWidget()
         custom_f = _expanding_form_layout(custom_f_w)
@@ -1846,7 +2151,7 @@ class SettingsDialog(QDialog):
 
     # ---- Custom provider helpers ----
 
-    _CUSTOM_PRESETS: list[tuple[str, str, str, str]] = [
+    _CUSTOM_ENDPOINTS: list[tuple[str, str, str, str]] = [
         ("DeepSeek",     "https://api.deepseek.com/v1",          "deepseek-chat", ""),
         ("OpenRouter",   "https://openrouter.ai/api/v1",         "openai/gpt-4o", ""),
         ("Mistral",      "https://api.mistral.ai/v1",            "mistral-large-latest", ""),
@@ -1857,13 +2162,13 @@ class SettingsDialog(QDialog):
         ("LM Studio (local)", "http://localhost:1234/v1",        "local-model", ""),
     ]
 
-    def _show_custom_presets_menu(self) -> None:
-        """Show custom presets menu."""
+    def _show_custom_endpoints_menu(self) -> None:
+        """Show custom provider endpoint shortcuts."""
         from PySide6.QtWidgets import QMenu
         from PySide6.QtGui import QAction
 
         menu = QMenu(self)
-        for name, url, model_hint, api_key_hint in self._CUSTOM_PRESETS:
+        for name, url, model_hint, api_key_hint in self._CUSTOM_ENDPOINTS:
             action = QAction(name, self)
             action.setToolTip(url)
             action.triggered.connect(
@@ -2354,6 +2659,13 @@ class SettingsDialog(QDialog):
         self._fields["KOKORO_LANG_CODE"] = QLineEdit()
         self._fields["KOKORO_LANG_CODE"].setPlaceholderText("a")
         kokoro_lang_tip = "Kokoro language code. Use a for American English, b for British English, e for Spanish, f for French."
+        kokoro_device = _NoScrollCombo()
+        for label, value in _STT_DEVICE_OPTIONS:
+            kokoro_device.addItem(label, value)
+        kokoro_device_tip = (
+            "Where local Kokoro TTS runs. Auto uses CUDA when Torch can see an NVIDIA GPU and falls back to CPU."
+        )
+        self._fields["KOKORO_DEVICE"] = kokoro_device
         self._fields["KOKORO_SPEED"] = QLineEdit()
         self._fields["KOKORO_SPEED"].setPlaceholderText("1.0")
         kokoro_speed_tip = "Speech speed multiplier. 1.0 is normal."
@@ -2477,6 +2789,7 @@ class SettingsDialog(QDialog):
         kf.addRow(self._kokoro_install_btn, self._kokoro_install_status_lbl)
         kf.addRow(_tooltip_label("Voice", kokoro_voice_tip), self._fields["KOKORO_VOICE"])
         kf.addRow(_tooltip_label("Language code", kokoro_lang_tip), self._fields["KOKORO_LANG_CODE"])
+        kf.addRow(_tooltip_label("Device", kokoro_device_tip), self._fields["KOKORO_DEVICE"])
         kf.addRow(_tooltip_label("Speed", kokoro_speed_tip), self._fields["KOKORO_SPEED"])
         kf.addRow(_tooltip_label("Sample rate (Hz)", kokoro_rate_tip), self._fields["KOKORO_SAMPLE_RATE"])
 
@@ -2611,6 +2924,7 @@ class SettingsDialog(QDialog):
             return
         voice = _get(self._fields["KOKORO_VOICE"]).strip() or "af_heart"
         lang_code = _get(self._fields["KOKORO_LANG_CODE"]).strip() or "a"
+        device = _get(self._fields["KOKORO_DEVICE"]).strip() or "auto"
         speed = _get(self._fields["KOKORO_SPEED"]).strip() or "1.0"
         sample_rate = _get(self._fields["KOKORO_SAMPLE_RATE"]).strip() or "24000"
         volume = _get(self._fields["TTS_VOLUME"]).strip() or "1.0"
@@ -2622,6 +2936,7 @@ class SettingsDialog(QDialog):
             "Current Kokoro settings:\n"
             "Voice: {voice}\n"
             "Language code: {lang_code}\n"
+            "Device: {device}\n"
             "Speed: {speed}\n"
             "Sample rate: {sample_rate} Hz\n"
             "Volume: {volume}\n\n"
@@ -2630,6 +2945,7 @@ class SettingsDialog(QDialog):
         ).format(
             voice=voice,
             lang_code=lang_code,
+            device=device,
             speed=speed,
             sample_rate=sample_rate,
             volume=volume,
@@ -2956,25 +3272,38 @@ class SettingsDialog(QDialog):
     def _context_source_block(self, label: str, key_index: int, *controls: QWidget) -> QFrame:
         """Create a compact context source block with the overlay key embedded."""
         frame = QFrame()
+        frame.setObjectName("contextSourceBlock")
         frame.setFrameShape(QFrame.Shape.StyledPanel)
-        frame.setStyleSheet("QFrame { border: 1px solid palette(mid); border-radius: 4px; }")
-        frame.setMinimumWidth(104)
-        frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        frame.setStyleSheet(
+            """
+            QFrame#contextSourceBlock {
+                border: 1px solid palette(mid);
+                border-radius: 4px;
+            }
+            QFrame#contextSourceBlock QLabel {
+                border: none;
+                background: transparent;
+            }
+            """
+        )
+        frame.setMinimumSize(160, 112)
+        frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         box = QVBoxLayout(frame)
         box.setContentsMargins(8, 6, 8, 6)
         box.setSpacing(3)
         title = QLabel(t(label))
-        title.setStyleSheet("font-weight: 600; border: none;")
+        title.setStyleSheet("font-weight: 600;")
         box.addWidget(title)
         if key_index >= 0:
             keys = self._intent_context_keys()
             key_text = keys[key_index] if key_index < len(keys) else ""
             key_label = QLabel(f"{t('Keys:')} {key_text}")
-            key_label.setStyleSheet("color: palette(placeholder-text); border: none;")
+            key_label.setStyleSheet("color: palette(placeholder-text);")
             box.addWidget(key_label)
         for control in controls:
-            control.setStyleSheet(f"{control.styleSheet()} border: none;")
+            control.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             box.addWidget(control)
+        box.addStretch()
         return frame
 
     def _build_context_controls(
@@ -2999,12 +3328,17 @@ class SettingsDialog(QDialog):
         context_h.setContentsMargins(0, 0, 0, 0)
         context_h.setHorizontalSpacing(8)
         context_h.setVerticalSpacing(6)
-        ambient_tip = "Include nearby app/window context that Wisp can capture automatically."
-        docs_tip = (
-            "Open documents:\n"
-            "Off — do not include document text.\n"
-            "On — read supported open documents before sending the prompt.\n"
-            "Let model decide — expose an open-document tool during the answer."
+        app_tip = (
+            "App context:\n"
+            "Off - do not include nearby app/window context or open documents.\n"
+            "On - include nearby app/window context only.\n"
+            "On + open docs - include nearby app/window context and read supported open documents.\n"
+            "Let model decide - include nearby app/window context and expose an open-document tool."
+        )
+        clipboard_tip = (
+            "Clipboard:\n"
+            "Off - do not include clipboard text.\n"
+            "On - include clipboard text with this query."
         )
         browser_tip = (
             "Browser/Web:\n"
@@ -3037,12 +3371,10 @@ class SettingsDialog(QDialog):
             "Ask before writing - show a diff before edits or creates.\n"
             "Write automatically - apply edits without asking."
         )
-        ambient_cb = QCheckBox("On")
-        ambient_cb.setChecked(context_ambient)
-        ambient_cb.setToolTip(ambient_tip)
-        clipboard_cb = QCheckBox("On")
-        clipboard_cb.setChecked(context_clipboard)
-        docs_combo = _context_mode_combo(context_documents_mode, allow_auto=True)
+        app_combo = _AppContextCombo(context_ambient, context_documents_mode)
+        app_combo.setToolTip(app_tip)
+        clipboard_combo = _BooleanContextCombo(context_clipboard)
+        clipboard_combo.setToolTip(clipboard_tip)
         browser_combo = _context_mode_combo(context_browser_mode, allow_auto=True)
         github_combo = _context_mode_combo(context_github_mode, allow_auto=True)
         memory_combo = _context_mode_combo(context_memory_mode, allow_auto=True, on_value="on")
@@ -3055,24 +3387,24 @@ class SettingsDialog(QDialog):
         title = QLabel(t("Context"))
         title.setStyleSheet("font-weight: 600; color: palette(placeholder-text);")
         context_h.addWidget(title, 0, 0, 1, 4)
-        context_h.addWidget(self._context_source_block("App", 0, ambient_cb, docs_combo), 1, 0)
+        context_h.addWidget(self._context_source_block("App", 0, app_combo), 1, 0)
         context_h.addWidget(self._context_source_block("Browser/Web", 1, browser_combo), 1, 1)
-        context_h.addWidget(self._context_source_block("Clipboard", 3, clipboard_cb), 1, 2)
+        context_h.addWidget(self._context_source_block("Clipboard", 3, clipboard_combo), 1, 2)
         context_h.addWidget(self._context_source_block("Screenshot", 4, screenshot_combo), 1, 3)
         context_h.addWidget(self._context_source_block("Git/GitHub", 5, github_combo), 2, 0)
         context_h.addWidget(self._context_source_block("Memory", 6, memory_combo), 2, 1)
         context_h.addWidget(self._context_source_block("Local files", 7, file_combo), 2, 2)
-        context_h.setColumnStretch(3, 1)
-        docs_combo.setToolTip(docs_tip)
+        for column in range(4):
+            context_h.setColumnStretch(column, 1)
         browser_combo.setToolTip(browser_tip)
         github_combo.setToolTip(github_tip)
         memory_combo.setToolTip(memory_tip)
         screenshot_combo.setToolTip(screenshot_tip)
         file_combo.setToolTip(file_tip)
         controls = {
-            "context_ambient": ambient_cb,
-            "context_clipboard": clipboard_cb,
-            "context_documents_mode": docs_combo,
+            "context_ambient": app_combo,
+            "context_clipboard": clipboard_combo,
+            "context_documents_mode": app_combo,
             "context_browser_mode": browser_combo,
             "context_github_mode": github_combo,
             "context_memory_mode": memory_combo,
@@ -3080,7 +3412,8 @@ class SettingsDialog(QDialog):
             "file_access": file_combo,
         }
         for combo in (
-            docs_combo,
+            app_combo,
+            clipboard_combo,
             browser_combo,
             github_combo,
             memory_combo,
@@ -3111,6 +3444,7 @@ class SettingsDialog(QDialog):
             method_label=method_label or "this hotkey",
             overrides=dict(blk.get("tool_overrides") or {}),
             governed_modes=governed_modes,
+            extra_tools=self._extra_tools,
         )
         if dlg.exec():
             blk["tool_overrides"] = dlg.selected_overrides()
@@ -3140,8 +3474,11 @@ class SettingsDialog(QDialog):
         """Add a caller block (framed panel with header + intent rows) to the UI."""
         from PySide6.QtWidgets import QSizePolicy
         frame = QFrame()
+        frame.setObjectName("callerHotkeyBlock")
         frame.setFrameShape(QFrame.Shape.StyledPanel)
-        frame.setStyleSheet("QFrame { border: 1px solid palette(mid); border-radius: 4px; }")
+        frame.setStyleSheet(
+            "QFrame#callerHotkeyBlock { border: 1px solid palette(mid); border-radius: 4px; }"
+        )
         outer = QVBoxLayout(frame)
         outer.setSpacing(4)
         outer.setContentsMargins(8, 6, 8, 6)
@@ -4453,6 +4790,7 @@ class SettingsDialog(QDialog):
         import config as cfg
         self._loading_values = True
         self._active_preset_slug = self._env.get(_SETTINGS_PRESET_KEY, "")
+        self._pending_active_profile = ""
 
         # ── API key rows ──────────────────────────────────────────────────
         for row in list(self._api_key_rows):
@@ -4563,6 +4901,7 @@ class SettingsDialog(QDialog):
         _set(self._fields["GPT_SOVITS_SAMPLE_RATE"], self._env.get("GPT_SOVITS_SAMPLE_RATE", str(cfg.GPT_SOVITS_SAMPLE_RATE)))
         _set(self._fields["KOKORO_VOICE"], self._env.get("KOKORO_VOICE", cfg.KOKORO_VOICE))
         _set(self._fields["KOKORO_LANG_CODE"], self._env.get("KOKORO_LANG_CODE", cfg.KOKORO_LANG_CODE))
+        _set(self._fields["KOKORO_DEVICE"], self._env.get("KOKORO_DEVICE", getattr(cfg, "KOKORO_DEVICE", "auto")))
         _set(self._fields["KOKORO_SPEED"], self._env.get("KOKORO_SPEED", str(cfg.KOKORO_SPEED)))
         _set(self._fields["KOKORO_SAMPLE_RATE"], self._env.get("KOKORO_SAMPLE_RATE", str(cfg.KOKORO_SAMPLE_RATE)))
         _set(self._fields["TTS_VOLUME"], self._env.get("TTS_VOLUME", str(getattr(cfg, "TTS_VOLUME", 1.0))))
@@ -5206,6 +5545,7 @@ class SettingsDialog(QDialog):
         gpt_sovits_text_lang = _get(self._fields["GPT_SOVITS_TEXT_LANG"]).strip()
         kokoro_voice = _get(self._fields["KOKORO_VOICE"]).strip()
         kokoro_lang_code = _get(self._fields["KOKORO_LANG_CODE"]).strip()
+        kokoro_device = _get(self._fields["KOKORO_DEVICE"]).strip()
         self._start_async_test(
             "tts_test",
             self._tts_test_status_lbl,
@@ -5228,6 +5568,7 @@ class SettingsDialog(QDialog):
                 gpt_sovits_text_lang=gpt_sovits_text_lang,
                 kokoro_voice=kokoro_voice,
                 kokoro_lang_code=kokoro_lang_code,
+                kokoro_device=kokoro_device,
             ),
         )
 
@@ -5462,8 +5803,20 @@ class SettingsDialog(QDialog):
                 except Exception:
                     pass
                 if self._on_apply:
-                    self._on_apply()
-                self._env = _read_env()
+                    new_env = _read_env()
+                    changed_keys = sorted(
+                        key
+                        for key in set(old_env) | set(new_env)
+                        if old_env.get(key) != new_env.get(key)
+                    )
+                    apply_payload = {"changed_keys": changed_keys}
+                    try:
+                        self._on_apply(apply_payload)
+                    except TypeError:
+                        self._on_apply()
+                    self._env = new_env
+                else:
+                    self._env = _read_env()
                 self._active_preset_slug = self._env.get(_SETTINGS_PRESET_KEY, "")
                 self._refresh_capability_warning_markers()
                 self._refresh_search_index()
@@ -5532,7 +5885,7 @@ class SettingsDialog(QDialog):
                 "TTS_CUSTOM_BASE_URL", "TTS_CUSTOM_VOICE", "TTS_CUSTOM_MODEL", "TTS_CUSTOM_SAMPLE_RATE",
                 "GPT_SOVITS_URL", "GPT_SOVITS_REF_AUDIO_PATH", "GPT_SOVITS_PROMPT_TEXT",
                 "GPT_SOVITS_PROMPT_LANG", "GPT_SOVITS_TEXT_LANG", "GPT_SOVITS_SAMPLE_RATE",
-                "KOKORO_VOICE", "KOKORO_LANG_CODE", "KOKORO_SPEED", "KOKORO_SAMPLE_RATE",
+                "KOKORO_VOICE", "KOKORO_LANG_CODE", "KOKORO_DEVICE", "KOKORO_SPEED", "KOKORO_SAMPLE_RATE",
                 "TTS_VOLUME", "TTS_READ_ALOUD_MIN_WORDS", "TTS_READ_ALOUD_MAX_WORDS",
                 "STT_MODEL", "STT_COMPUTE_TYPE", "STT_LANGUAGE", "STT_BEAM_SIZE", "STT_DEVICE",
                 "STT_BACKGROUND_CHUNK_FIRST_TRIGGER_SECONDS", "STT_BACKGROUND_CHUNK_STEP_SECONDS",
@@ -5899,6 +6252,7 @@ class SettingsDialog(QDialog):
             "GPT_SOVITS_SAMPLE_RATE": _get(self._fields["GPT_SOVITS_SAMPLE_RATE"]),
             "KOKORO_VOICE": _get(self._fields["KOKORO_VOICE"]),
             "KOKORO_LANG_CODE": _get(self._fields["KOKORO_LANG_CODE"]),
+            "KOKORO_DEVICE": _get(self._fields["KOKORO_DEVICE"]),
             "KOKORO_SPEED": _get(self._fields["KOKORO_SPEED"]),
             "KOKORO_SAMPLE_RATE": _get(self._fields["KOKORO_SAMPLE_RATE"]),
             "TTS_VOLUME": _get(self._fields["TTS_VOLUME"]),
@@ -5972,6 +6326,10 @@ class SettingsDialog(QDialog):
             "SYSTEM_PROMPT_UTILITY": self._fields["SYSTEM_PROMPT_UTILITY"].toPlainText(),  # type: ignore
         }
         vals.update(theme_vals)
+        pending_active_profile = str(getattr(self, "_pending_active_profile", "") or "").strip()
+        if pending_active_profile:
+            vals["ACTIVE_PROFILE"] = pending_active_profile
+            vals["SETTINGS_PROFILE"] = pending_active_profile
         vb = self._voice_block
         vals.update({
             "HOTKEY_VOICE": _get(self._fields["HOTKEY_VOICE"]),
@@ -6446,7 +6804,7 @@ def _clear_settings_dialog(_obj=None) -> None:
         _settings_dialog = None
 
 
-def _open_settings_now(parent=None, on_apply=None, on_setup_check=None):
+def _open_settings_now(parent=None, on_apply=None, on_setup_check=None, extra_tools=None):
     """Open settings now."""
     global _settings_dialog, _settings_open_pending
     _settings_open_pending = False
@@ -6468,11 +6826,13 @@ def _open_settings_now(parent=None, on_apply=None, on_setup_check=None):
             dialog_parent,
             on_apply=on_apply,
             on_setup_check=on_setup_check,
+            extra_tools=extra_tools,
         )
         _settings_dialog.destroyed.connect(_clear_settings_dialog)
     else:
         _settings_dialog._on_apply = on_apply
         _settings_dialog._on_setup_check = on_setup_check
+        _settings_dialog._extra_tools = _normalize_extra_tool_payloads(extra_tools)
 
     if _settings_dialog.isMinimized():
         _settings_dialog.showNormal()
@@ -6481,7 +6841,7 @@ def _open_settings_now(parent=None, on_apply=None, on_setup_check=None):
     _settings_dialog.activateWindow()
 
 
-def open_settings(parent=None, on_apply=None, on_setup_check=None):
+def open_settings(parent=None, on_apply=None, on_setup_check=None, extra_tools=None):
     """Open settings."""
     global _settings_open_pending
     if _settings_open_pending:
@@ -6493,5 +6853,6 @@ def open_settings(parent=None, on_apply=None, on_setup_check=None):
             parent=parent,
             on_apply=on_apply,
             on_setup_check=on_setup_check,
+            extra_tools=extra_tools,
         ),
     )

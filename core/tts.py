@@ -22,9 +22,13 @@ full LLM response is available — this is the lowest-latency path.
 """
 from __future__ import annotations
 import config
+import inspect
 import io
+import os
 import threading
+import time
 import wave
+from pathlib import Path
 from typing import Generator, Iterable
 
 from core.system import macos_safety
@@ -84,8 +88,23 @@ _cartesia_ws = None           # the entered connection object (has .context())
 _cartesia_ws_lock = threading.Lock()
 _kokoro_pipeline = None
 _kokoro_pipeline_lang = ""
+_kokoro_pipeline_device = ""
 _kokoro_lock = threading.RLock()
 _KOKORO_LOCK_TIMEOUT_SECONDS = 15.0
+
+
+def _kokoro_diag(message: str) -> None:
+    """Log Kokoro diagnostics to stderr and a repo/run-local breadcrumb file."""
+    line = f"[tts] {message}"
+    print(line, flush=True)
+    try:
+        root = os.environ.get("WISP_RUN_LOG_DIR")
+        path = Path(root) / "kokoro-debug.log" if root else Path(config.BASE_DIR) / "build_logs" / "kokoro-debug.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}\n")
+    except Exception:
+        pass
 
 
 def _get_cartesia_ws():
@@ -287,32 +306,120 @@ def _stream_elevenlabs(text: str) -> Generator[bytes, None, None]:
 
 def _reset_kokoro_pipeline() -> None:
     """Discard the cached Kokoro pipeline so language changes apply."""
-    global _kokoro_pipeline, _kokoro_pipeline_lang
+    global _kokoro_pipeline, _kokoro_pipeline_lang, _kokoro_pipeline_device
     if not _kokoro_lock.acquire(timeout=1.0):
         return
     try:
         _kokoro_pipeline = None
         _kokoro_pipeline_lang = ""
+        _kokoro_pipeline_device = ""
     finally:
         _kokoro_lock.release()
 
 
+def _resolve_kokoro_device(requested: str | None = None) -> str:
+    """Resolve Kokoro's requested backend to a concrete device string."""
+    requested = (requested or getattr(config, "KOKORO_DEVICE", "auto") or "auto").strip().lower()
+    _kokoro_diag(f"Kokoro device resolve starting requested={requested!r}")
+    if requested == "cpu":
+        _kokoro_diag("Kokoro device requested='cpu'; resolved='cpu'")
+        return "cpu"
+    torch_version = "not installed"
+    torch_cuda = ""
+    cuda_name = ""
+    try:
+        import torch  # type: ignore
+
+        torch_version = str(getattr(torch, "__version__", "unknown"))
+        torch_cuda = str(getattr(getattr(torch, "version", None), "cuda", "") or "")
+        has_cuda = bool(torch.cuda.is_available())
+        if has_cuda:
+            try:
+                cuda_name = str(torch.cuda.get_device_name(0))
+            except Exception:
+                cuda_name = "unknown"
+    except Exception as exc:
+        torch_version = f"unavailable ({type(exc).__name__}: {exc})"
+        has_cuda = False
+    if has_cuda:
+        _kokoro_diag(
+            "Kokoro device "
+            f"requested={requested!r}; torch={torch_version}; torch_cuda={torch_cuda or 'unknown'}; "
+            f"cuda_available=True; cuda_device={cuda_name or 'unknown'}; resolved='cuda'"
+        )
+        return "cuda"
+    if requested == "cuda":
+        _kokoro_diag(
+            "Kokoro device requested='cuda' but Torch CUDA is unavailable; "
+            f"torch={torch_version}; torch_cuda={torch_cuda or 'none'}; resolved='cpu'"
+        )
+    else:
+        _kokoro_diag(
+            "Kokoro device "
+            f"requested={requested!r}; torch={torch_version}; torch_cuda={torch_cuda or 'none'}; "
+            "cuda_available=False; resolved='cpu'"
+        )
+    return "cpu"
+
+
+def _build_kokoro_pipeline(KPipeline, *, lang_code: str, device: str):
+    """Construct KPipeline, returning the pipeline and effective device."""
+    kwargs = {"lang_code": lang_code}
+    try:
+        accepts_device = "device" in inspect.signature(KPipeline).parameters
+    except (TypeError, ValueError):
+        accepts_device = False
+    if accepts_device:
+        kwargs["device"] = device
+    _kokoro_diag(
+        f"Building Kokoro pipeline lang={lang_code!r} requested_device={device!r} "
+        f"passes_device={accepts_device}"
+    )
+    try:
+        pipeline = KPipeline(**kwargs)
+    except TypeError:
+        if "device" not in kwargs:
+            raise
+        kwargs.pop("device")
+        pipeline = KPipeline(**kwargs)
+        _kokoro_diag("Installed Kokoro does not accept device=; using its default backend.")
+        return pipeline, "default"
+    except RuntimeError as exc:
+        if kwargs.get("device") not in ("cuda", "mps"):
+            raise
+        fallback = dict(kwargs)
+        fallback["device"] = "cpu"
+        _kokoro_diag(f"Kokoro failed on {kwargs['device']}: {exc}; falling back to CPU.")
+        return KPipeline(**fallback), "cpu"
+    effective_device = kwargs.get("device", "default")
+    _kokoro_diag(f"Kokoro pipeline ready on device={effective_device!r}")
+    return pipeline, effective_device
+
+
 def _get_kokoro_pipeline():
     """Return a cached Kokoro pipeline for the configured language code."""
-    global _kokoro_pipeline, _kokoro_pipeline_lang
+    global _kokoro_pipeline, _kokoro_pipeline_lang, _kokoro_pipeline_device
     lang_code = (getattr(config, "KOKORO_LANG_CODE", "a") or "a").strip()
+    device = _resolve_kokoro_device()
     if not _kokoro_lock.acquire(timeout=_KOKORO_LOCK_TIMEOUT_SECONDS):
         raise RuntimeError("Kokoro is still warming up. Try again when local speech is ready.")
     try:
-        if _kokoro_pipeline is None or _kokoro_pipeline_lang != lang_code:
+        if (
+            _kokoro_pipeline is None
+            or _kokoro_pipeline_lang != lang_code
+            or _kokoro_pipeline_device != device
+        ):
             try:
+                _kokoro_diag("Importing kokoro.KPipeline")
                 from kokoro import KPipeline  # type: ignore
+                _kokoro_diag("Imported kokoro.KPipeline")
             except ImportError as exc:
                 raise RuntimeError(
                     "Kokoro support is not installed. Run: python -m pip install kokoro>=0.9.4 soundfile"
                 ) from exc
-            _kokoro_pipeline = KPipeline(lang_code=lang_code)
+            _kokoro_pipeline, device = _build_kokoro_pipeline(KPipeline, lang_code=lang_code, device=device)
             _kokoro_pipeline_lang = lang_code
+            _kokoro_pipeline_device = device
         return _kokoro_pipeline
     finally:
         _kokoro_lock.release()
@@ -353,8 +460,13 @@ def _stream_kokoro(text: str) -> Generator[bytes, None, None]:
         speed = float(getattr(config, "KOKORO_SPEED", 1.0) or 1.0)
         split_pattern = getattr(config, "KOKORO_SPLIT_PATTERN", r"\n+")
         target_rate = int(getattr(config, "KOKORO_SAMPLE_RATE", _KOKORO_SAMPLE_RATE) or _KOKORO_SAMPLE_RATE)
+        _kokoro_diag(f"Kokoro synthesis starting text_chars={len(text)} voice={voice!r} speed={speed}")
         generator = pipeline(text, voice=voice, speed=speed, split_pattern=split_pattern)
+        saw_audio = False
         for _graphemes, _phonemes, audio in generator:
+            if not saw_audio:
+                _kokoro_diag("Kokoro synthesis yielded first audio chunk")
+                saw_audio = True
             chunk = _float_audio_to_pcm16(audio, source_rate=_KOKORO_SAMPLE_RATE, target_rate=target_rate)
             if chunk:
                 yield chunk
@@ -500,6 +612,7 @@ def test_connection(
     gpt_sovits_text_lang: str | None = None,
     kokoro_voice: str | None = None,
     kokoro_lang_code: str | None = None,
+    kokoro_device: str | None = None,
 ) -> tuple[bool, str]:
     """Verify connection behavior."""
     provider = (provider or config.TTS_PROVIDER).lower().strip()
@@ -532,6 +645,7 @@ def test_connection(
     )
     kokoro_voice = config.KOKORO_VOICE if kokoro_voice is None else kokoro_voice
     kokoro_lang_code = config.KOKORO_LANG_CODE if kokoro_lang_code is None else kokoro_lang_code
+    kokoro_device = config.KOKORO_DEVICE if kokoro_device is None else kokoro_device
     try:
         if provider == "none":
             return True, "TTS is disabled (provider=none)."
@@ -648,16 +762,18 @@ def test_connection(
             old_values = (
                 getattr(config, "KOKORO_VOICE", "af_heart"),
                 getattr(config, "KOKORO_LANG_CODE", "a"),
+                getattr(config, "KOKORO_DEVICE", "auto"),
             )
             try:
                 config.KOKORO_VOICE = kokoro_voice
                 config.KOKORO_LANG_CODE = kokoro_lang_code
+                config.KOKORO_DEVICE = kokoro_device or "auto"
                 for chunk in _stream_kokoro("ok"):
                     if chunk:
                         return True, "TTS route OK: kokoro"
                 raise RuntimeError("Kokoro connected but returned no audio.")
             finally:
-                config.KOKORO_VOICE, config.KOKORO_LANG_CODE = old_values
+                config.KOKORO_VOICE, config.KOKORO_LANG_CODE, config.KOKORO_DEVICE = old_values
                 _reset_kokoro_pipeline()
         raise ValueError(f"Unknown TTS provider: {provider}")
     except Exception as exc:

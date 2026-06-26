@@ -312,3 +312,38 @@ def test_manual_scroll_snaps_back_to_highlight_while_speaking():
         config.BUBBLE_SCROLL_SNAP_ENABLED = old_snap
         bubble.deleteLater()
         app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_transient_bubble_clicks_do_not_open_chat():
+    """Verify recording/thinking bubbles are not chat-open click targets."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    from ui.bubble import SpeechBubble
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    bubble = SpeechBubble()
+    opened: list[bool] = []
+    bubble.set_click_callback(lambda: opened.append(True))
+
+    try:
+        bubble.show_listening("Recording - release to send")
+        app.processEvents()
+        QTest.mouseClick(bubble, Qt.MouseButton.LeftButton, pos=bubble.rect().center())
+        assert opened == []
+
+        bubble.start_thinking()
+        app.processEvents()
+        QTest.mouseClick(bubble, Qt.MouseButton.LeftButton, pos=bubble.rect().center())
+        assert opened == []
+
+        bubble.append_chunk("Done.")
+        app.processEvents()
+        QTest.mouseClick(bubble, Qt.MouseButton.LeftButton, pos=bubble.rect().center())
+        assert opened == [True]
+    finally:
+        bubble.deleteLater()
+        app.processEvents()

@@ -44,6 +44,7 @@ class OverlaySignals(QObject):
     hide_icon          = Signal()      # hide icon after short delay
     raise_overlay      = Signal()      # bring overlay to foreground (Linux)
     settings_applied   = Signal()      # settings were applied; re-register hotkeys etc.
+    show_settings      = Signal()      # tray "Settings" clicked
     show_new_chat          = Signal()        # tray "New chat" clicked
     show_last_chat         = Signal()        # tray "Last chat" clicked
     chat_new_conversation  = Signal()        # a voice query created a new conversation
@@ -250,7 +251,10 @@ class IconOverlay(QMainWindow):
         memory_action = QAction(t("Memory"), self)
         memory_action.triggered.connect(self.signals.show_memory_viewer.emit)
         settings_action = QAction(t("Settings"), self)
-        settings_action.triggered.connect(self._open_settings)
+        if os.environ.get("WISP_MACOS_PY_UI_HOST") == "1":
+            settings_action.triggered.connect(self.signals.show_settings.emit)
+        else:
+            settings_action.triggered.connect(self._open_settings)
         quit_action = QAction(t("Quit"), self)
         quit_action.triggered.connect(QApplication.quit)
         menu.addAction(last_chat_action)

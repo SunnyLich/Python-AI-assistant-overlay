@@ -1,0 +1,10 @@
+{
+  "servers": [
+    {
+      "name": "example",
+      "command": "python",
+      "args": ["example_server.py"],
+      "enabled": true
+    }
+  ]
+}

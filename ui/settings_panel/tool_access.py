@@ -1,7 +1,8 @@
 """Per-caller "Allowed tools" dialog.
 
 Each prompt method (caller hotkey, voice) chooses which model-callable tools
-it exposes. Every tool gets an Off / On / Let-model-decide selector:
+it exposes beyond the context controls. Every listed tool gets an Off / On /
+Let-model-decide selector:
 
   Off              — never offered to the model for this caller
   On               — always offered
@@ -9,11 +10,9 @@ it exposes. Every tool gets an Off / On / Let-model-decide selector:
                      (Settings → Tools); tools without keywords are always
                      offered, same as On
 
-Context tools (web search, document/page fetch, git/GitHub, memory search,
-screenshot) default to following the caller's context dropdowns; changing one
-here stores a per-tool override that wins over the dropdown for that tool
-only. Automatic context gathering ("On" dropdowns: page/document/git text
-injected up front) stays governed by the dropdowns.
+Context-fetch tools (web search, document/page fetch, git/GitHub, memory
+search, screenshot) are intentionally not listed here. They are controlled by
+the context dropdowns: Off, attach now, or let the model fetch if needed.
 """
 from __future__ import annotations
 
@@ -22,23 +21,9 @@ from PySide6.QtWidgets import (
     QScrollArea, QWidget, QComboBox,
 )
 
-from core.system.env_utils import TOOL_OVERRIDE_MODES
+from core.system.env_utils import CONTEXT_GOVERNED_TOOL_NAMES, TOOL_OVERRIDE_MODES
 from ui.i18n import t
 from ui.shared.window_utils import enable_standard_window_controls
-
-# Tool name → the context dropdown label(s) that govern it ("a / b" when two).
-# Their selectors default to the dropdown-derived state instead of Off.
-CONTEXT_GOVERNED_TOOLS: dict[str, str] = {
-    "web_search":     "Browser/Web",
-    "get_context":    "Open docs / Browser/Web",
-    "retrieve_website": "Browser/Web",
-    "git_status":     "Git/GitHub",
-    "git_diff":       "Git/GitHub",
-    "github_repo":    "Git/GitHub",
-    "github_issue":   "Git/GitHub",
-    "memory_search":  "Memory",
-    "capture_screen": "Screenshot",
-}
 
 LOCAL_FILE_TOOL_ROWS: tuple[tuple[str, str], ...] = (
     ("list_files", "List configured file roots."),
@@ -50,7 +35,6 @@ LOCAL_FILE_TOOL_ROWS: tuple[tuple[str, str], ...] = (
 LOCAL_FILE_TOOL_NAMES = {name for name, _note in LOCAL_FILE_TOOL_ROWS}
 
 _MODE_LABELS = [("Off", "off"), ("On", "on"), ("Let model decide", "model")]
-_MODE_DISPLAY = {"off": "Off", "auto": "On", "on": "On", "model": "Let model decide"}
 
 
 def _mode_tooltip() -> str:
@@ -63,15 +47,40 @@ def _mode_tooltip() -> str:
         + t("offered when the prompt matches the tool's keywords (Settings > Tools).")
     )
 
-_MODE_TOOLTIP = (
-    "Off — never offered to the model for this hotkey.\n"
-    "On — always offered.\n"
-    "Let model decide — offered when the prompt matches the tool's keywords "
-    "(Settings → Tools)."
-)
+
+def _tool_name(spec) -> str:
+    """Return a tool name from a ToolSpec-like object or payload dict."""
+    if isinstance(spec, dict):
+        return str(spec.get("name") or "").strip()
+    return str(getattr(spec, "name", "") or "").strip()
 
 
-def list_extra_tools() -> list:
+def _tool_description(spec) -> str:
+    """Return a tool description from a ToolSpec-like object or payload dict."""
+    if isinstance(spec, dict):
+        return str(spec.get("description") or "")
+    return str(getattr(spec, "description", "") or "")
+
+
+def _normalize_extra_tool_payloads(raw_tools) -> list[dict[str, str]]:
+    """Normalize externally discovered tool payloads."""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw_tools or []:
+        if isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            description = str(item.get("description") or name)
+        else:
+            name = str(item or "").strip()
+            description = name
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append({"name": name, "description": description})
+    return out
+
+
+def list_extra_tools(extra_tools: list[dict[str, str]] | None = None) -> list:
     """Discovered tools that are NOT governed by a context dropdown.
 
     Refreshes the registry first so script tools installed since launch appear.
@@ -83,22 +92,18 @@ def list_extra_tools() -> list:
         registry.refresh()
     except Exception:
         pass
-    return sorted(
-        (
-            s for s in registry.list_tools()
-            if s.name not in CONTEXT_GOVERNED_TOOLS and s.name not in LOCAL_FILE_TOOL_NAMES
-        ),
-        key=lambda s: s.name,
-    )
-
-
-def _governed_default(governs: str, governed_modes: dict[str, str]) -> str:
-    """Tool exposure implied by the governing dropdown(s): model when any of
-    them is "Let model decide", otherwise off (auto = frontload, not a tool)."""
-    for part in governs.split(" / "):
-        if str(governed_modes.get(part, "")).strip().lower() == "model":
-            return "model"
-    return "off"
+    found = [
+        s for s in registry.list_tools()
+        if s.name not in CONTEXT_GOVERNED_TOOL_NAMES and s.name not in LOCAL_FILE_TOOL_NAMES
+    ]
+    present = {s.name for s in found}
+    for spec in _normalize_extra_tool_payloads(extra_tools):
+        name = spec["name"]
+        if name in present or name in CONTEXT_GOVERNED_TOOL_NAMES or name in LOCAL_FILE_TOOL_NAMES:
+            continue
+        found.append(spec)
+        present.add(name)
+    return sorted(found, key=_tool_name)
 
 
 def _file_tool_default(name: str, file_mode: str) -> str:
@@ -121,6 +126,7 @@ class ToolAccessDialog(QDialog):
         method_label: str = "this hotkey",
         overrides: dict[str, str] | None = None,
         governed_modes: dict[str, str] | None = None,
+        extra_tools: list[dict[str, str]] | None = None,
     ):
         """Initialize the tool access dialog instance."""
         super().__init__(parent)
@@ -137,8 +143,7 @@ class ToolAccessDialog(QDialog):
         )
         self._combos: dict[str, QComboBox] = {}
         # Per-tool default: what the selector means when the user has not
-        # overridden it. selected_overrides() only stores deviations, so an
-        # untouched context tool keeps following its dropdown.
+        # overridden it. selected_overrides() only stores deviations.
         self._defaults: dict[str, str] = {}
         overrides = overrides or {}
         governed_modes = governed_modes or {}
@@ -153,27 +158,6 @@ class ToolAccessDialog(QDialog):
         layout = QVBoxLayout(body)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(8)
-
-        # ── Context tools (default: follow the dropdowns) ─────────────────
-        ctx_hdr = QLabel(t("CONTEXT TOOLS"))
-        ctx_hdr.setObjectName("sectionHeader")
-        layout.addWidget(ctx_hdr)
-        ctx_note = QLabel(
-            f"<small>{t('These default to the context dropdowns on the hotkey - changing one here overrides the dropdown for that tool only. Automatic context (dropdowns set to On) is unaffected.')}</small>"
-        )
-        ctx_note.setWordWrap(True)
-        layout.addWidget(ctx_note)
-        for name, governs in CONTEXT_GOVERNED_TOOLS.items():
-            default = _governed_default(governs, governed_modes)
-            states = [
-                f"{t(part)}: {t(_MODE_DISPLAY.get(str(governed_modes[part]).strip().lower(), governed_modes[part]))}"
-                for part in governs.split(" / ")
-                if part in governed_modes
-            ]
-            note = " · ".join(states) if states else t(governs)
-            self._add_tool_row(layout, name, note, overrides.get(name, default), default)
-
-        layout.addWidget(_separator())
 
         # ── Local file tools (default: follow Local files dropdown) ───────
         file_hdr = QLabel(t("LOCAL FILE TOOLS"))
@@ -192,11 +176,11 @@ class ToolAccessDialog(QDialog):
         layout.addWidget(_separator())
 
         # ── Installed + addon tools (default: off) ───────────────────────
-        extra_hdr = QLabel(t("INSTALLED + PLUGIN TOOLS"))
+        extra_hdr = QLabel(t("OTHER INSTALLED + ADD-ON TOOLS"))
         extra_hdr.setObjectName("sectionHeader")
         layout.addWidget(extra_hdr)
 
-        extra = list_extra_tools()
+        extra = list_extra_tools(extra_tools)
         if not extra:
             empty = QLabel(
                 f"<small>{t('No extra tools found. Enable addons that add model tools.')}</small>"
@@ -204,8 +188,9 @@ class ToolAccessDialog(QDialog):
             empty.setWordWrap(True)
             layout.addWidget(empty)
         for spec in extra:
-            desc = (spec.description or "").strip()[:160]
-            self._add_tool_row(layout, spec.name, desc, overrides.get(spec.name, "off"), "off")
+            name = _tool_name(spec)
+            desc = _tool_description(spec).strip()[:160]
+            self._add_tool_row(layout, name, desc, overrides.get(name, "off"), "off")
 
         layout.addStretch()
         scroll.setWidget(body)
@@ -262,9 +247,9 @@ class ToolAccessDialog(QDialog):
     def selected_overrides(self) -> dict[str, str]:
         """Per-tool modes that deviate from each tool's default.
 
-        Context tools left matching their dropdown-derived state store nothing
-        (they keep following the dropdown); installed/addon tools left Off
-        store nothing. Everything else round-trips via format_tool_modes().
+        Tools left matching their default store nothing. Context-fetch tools
+        are absent from this dialog and remain governed by the context controls.
+        Everything else round-trips via format_tool_modes().
         """
         result: dict[str, str] = {}
         for name, combo in self._combos.items():

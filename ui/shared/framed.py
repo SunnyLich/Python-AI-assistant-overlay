@@ -234,7 +234,8 @@ class _WindowChrome(QObject):
 
     def eventFilter(self, obj, event):  # noqa: N802
         """Handle event filter for window chrome."""
-        if obj is self._window:
+        window = getattr(self, "_window", None)
+        if window is not None and obj is window:
             et = event.type()
             if not self._installed and et in (
                 QEvent.Type.Polish, QEvent.Type.Show
@@ -317,5 +318,7 @@ def install_window_chrome(window: QWidget) -> None:
     Safe to call once per top-level window, in its ``__init__`` (before it is
     shown). The chrome attaches itself to the window's lifetime.
     """
+    if getattr(window, "_wisp_window_chrome", None) is not None:
+        return
     window.setWindowFlag(Qt.WindowType.Window, True)
-    _WindowChrome(window)
+    window._wisp_window_chrome = _WindowChrome(window)  # type: ignore[attr-defined]

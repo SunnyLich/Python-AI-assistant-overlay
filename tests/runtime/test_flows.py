@@ -829,8 +829,8 @@ def test_context_modes_map_to_auto_documents_and_allowed_tools():
     query = brain.last_call("brain.query")["params"]
     assert query["include_active_document"] is False
     assert query["use_tools"] is True
-    # memory defaults to "on", which also offers the memory_save write tool.
-    assert query["allowed_tools"] == ["get_context.documents", "git_status", "git_diff", "github_repo", "github_issue", "memory_save"]
+    # memory defaults to "off", so memory_save is not offered.
+    assert query["allowed_tools"] == ["get_context.documents", "git_status", "git_diff", "github_repo", "github_issue"]
     assert query["pinned_tools"] == ["get_context", "git_status", "git_diff", "github_repo", "github_issue"]
     assert query["frontload_tools"] == []
 
@@ -927,10 +927,10 @@ def test_context_modes_map_on_browser_and_git_to_frontloaded_context():
         _ui.emit("ui.intent.chosen", {"custom": "Use context"})
 
     query = brain.last_call("brain.query")["params"]
-    # memory defaults to "on" -> memory_save offered, so tools are active even
-    # though browser/git context is frontloaded rather than offered as tools.
-    assert query["use_tools"] is True
-    assert query["allowed_tools"] == ["memory_save"]
+    # memory defaults to "off" and browser/git context is frontloaded rather than
+    # offered as tools, so no model tools are offered here.
+    assert query["use_tools"] is False
+    assert query["allowed_tools"] == []
     assert query["frontload_tools"] == ["git_status", "git_diff"]
     assert "[Browser/Web]" in query["ambient_text"]
     assert "https://example.test/page" in query["ambient_text"]
@@ -2963,7 +2963,11 @@ def test_voice_stop_leaves_recording_bubble_before_transcribing():
     native.emit("native.hotkey", {"kind": "voice_stop"})
 
     assert audio.calls_for("audio.record.stop_transcribe")
-    assert ui.calls_for("ui.reply.reset")
+    # An empty transcript now surfaces a "didn't catch that" notice instead of a
+    # silent reset, so a too-short F8 tap gives the user feedback.
+    notices = ui.calls_for("ui.reply.notice")
+    assert notices
+    assert "Didn't catch any speech" in notices[-1]["params"]["text"]
     assert ui.last_call("ui.overlay.state")["params"]["state"] == "idle"
 
 

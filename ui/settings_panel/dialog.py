@@ -67,6 +67,8 @@ _TTS_TIMING_NOTICE = (
 # Sentinel data value for the "Custom / enter manually…" model combo entry.
 _CUSTOM_MODEL_SENTINEL = "__custom__"
 _CUSTOM_MODEL_LABEL = "Custom / enter manually…"
+# Fixed width of the leading "Priority" column shown beside each model row.
+_MODEL_PRIORITY_COL_W = 46
 
 _ASSISTANT_LANGUAGE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("System default", ""),
@@ -145,11 +147,7 @@ _SETTINGS_PRESET_KEY = "WISP_SETTINGS_PRESET"
 _PRESET_ENV_PREFIX = "WISP_PRESET_"
 
 _PRESET_LABELS: dict[str, str] = {
-    "fast": "Fast",
-    "best_quality": "Best quality",
-    "private_local": "Private/local",
-    "coding_assistant": "Coding assistant",
-    "low_cost": "Low cost",
+    "low_setup": "Low setup",
 }
 
 _PRESET_SLUGS: dict[str, str] = {
@@ -157,40 +155,20 @@ _PRESET_SLUGS: dict[str, str] = {
 }
 
 _PRESET_DESCRIPTIONS: dict[str, str] = {
-    "fast": "Smaller speech model, leaner context, and fast transcription.",
-    "best_quality": "Larger speech model, richer memory/context, and more accurate transcription.",
-    "private_local": "Keep local documents and memory, but turn off web, GitHub, screenshots, and live tools.",
-    "coding_assistant": "Lean into docs, git, browser fetches, memory, and screenshots for coding work.",
-    "low_cost": "Tighter context budgets and cheaper/faster defaults.",
+    "low_setup": "Use ChatGPT OAuth for every model route, with minimal context and no API keys.",
 }
 
 _PRESET_DEFAULTS: dict[str, dict[str, str]] = {
-    "fast": {
-        "STT_MODEL": "base",
-        "STT_BEAM_SIZE": "1",
-        "MEMORY_TOP_K": "3",
-        "CONTEXT_BROWSER_MAX_CHARS": "4000",
-        "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS": "6000",
-        "CONTEXT_TOOL_DOCUMENT_MAX_CHARS": "6000",
-    },
-    "best_quality": {
-        "STT_MODEL": "large-v3",
-        "STT_BEAM_SIZE": "8",
-        "MEMORY_TOP_K": "8",
-        "CONTEXT_BROWSER_MAX_CHARS": "14000",
-        "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS": "18000",
-        "CONTEXT_TOOL_DOCUMENT_MAX_CHARS": "18000",
-    },
-    "private_local": {
-        "MEMORY_TOP_K": "5",
-    },
-    "coding_assistant": {
-        "MEMORY_TOP_K": "6",
-        "CONTEXT_BROWSER_MAX_CHARS": "10000",
-        "CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS": "14000",
-        "CONTEXT_TOOL_DOCUMENT_MAX_CHARS": "14000",
-    },
-    "low_cost": {
+    "low_setup": {
+        "LLM_PROVIDER": "chatgpt",
+        "LLM_MODEL": "gpt-5.5",
+        "LLM_FALLBACKS": "",
+        "VISION_LLM_PROVIDER": "chatgpt",
+        "VISION_LLM_MODEL": "gpt-5.5",
+        "VISION_LLM_FALLBACKS": "",
+        "MEMORY_LLM_PROVIDER": "chatgpt",
+        "MEMORY_LLM_MODEL": "gpt-5.5",
+        "MEMORY_LLM_FALLBACKS": "",
         "STT_MODEL": "base",
         "STT_BEAM_SIZE": "1",
         "MEMORY_TOP_K": "2",
@@ -201,23 +179,7 @@ _PRESET_DEFAULTS: dict[str, dict[str, str]] = {
 }
 
 _PRESET_CONTEXT_DEFAULTS: dict[str, dict[str, str]] = {
-    "fast": {
-        "documents": "auto", "browser": "off", "github": "off",
-        "memory": "on", "screenshot": "off",
-    },
-    "best_quality": {
-        "documents": "auto", "browser": "model", "github": "model",
-        "memory": "on", "screenshot": "auto",
-    },
-    "private_local": {
-        "documents": "auto", "browser": "off", "github": "off",
-        "memory": "on", "screenshot": "off", "clear_tools": "true",
-    },
-    "coding_assistant": {
-        "documents": "auto", "browser": "model", "github": "auto",
-        "memory": "on", "screenshot": "model",
-    },
-    "low_cost": {
+    "low_setup": {
         "documents": "off", "browser": "off", "github": "off",
         "memory": "on", "screenshot": "off", "clear_tools": "true",
     },
@@ -228,6 +190,14 @@ class _ModelFetchSignals(QObject):
     """Marshals a background model-list fetch result back to the Qt main thread.
 
     done(models: list, error: str) — error is "" on success.
+    """
+    done = Signal(object, str)
+
+
+class _SttPreloadSignals(QObject):
+    """Marshals a background STT model preload result back to the Qt main thread.
+
+    done(backend_info: object | None, error: str) — error is "" on success.
     """
     done = Signal(object, str)
 
@@ -426,12 +396,13 @@ class SettingsDialog(QDialog):
         if failures:
             QMessageBox.warning(
                 self,
-                "Some API keys were not saved",
-                "These keys could not be written to the OS keychain and were "
-                "NOT stored:\n\n"
+                t("Some API keys were not saved"),
+                t("These keys could not be written to the OS keychain and were NOT stored:")
+                + "\n\n"
                 + "\n".join(f"• {item}" for item in failures)
-                + "\n\nYour other settings were still saved. See the log for "
-                "details, then try saving the affected keys again.",
+                + "\n\n"
+                + t("Your other settings were still saved. See the log for details, "
+                    "then try saving the affected keys again."),
             )
             return False
         return True
@@ -523,7 +494,7 @@ class SettingsDialog(QDialog):
             background: {c["card"]}; border: 1px solid {c["border"]}; border-radius: 12px;
         }}
         QLabel#sectionHeader {{
-            color: {c["text_dim"]}; font-size: 8pt; font-weight: 700;
+            color: {c["text"]}; font-size: 10pt; font-weight: 700;
             letter-spacing: 0.5px; padding: 0px;
         }}
         QLabel#areaHeader {{
@@ -1533,8 +1504,6 @@ class SettingsDialog(QDialog):
         self._fields["CUSTOM_BASE_URL"].setPlaceholderText("https://api.example.com/v1")
         self._fields["CUSTOM_API_KEY"] = self._password()
         self._fields["CUSTOM_API_KEY"].setPlaceholderText("Stored in OS keychain")
-        self._custom_test_status_lbl = QLabel()
-        self._custom_test_status_lbl.setWordWrap(True)
 
         custom_card, custom_cv = self._card("Custom provider")
         custom_note = QLabel(
@@ -1560,13 +1529,6 @@ class SettingsDialog(QDialog):
         custom_f.addRow(t("API key"), self._fields["CUSTOM_API_KEY"])
         custom_cv.addWidget(custom_f_w)
 
-        test_custom_row = QWidget()
-        tcrh = QHBoxLayout(test_custom_row)
-        tcrh.setContentsMargins(0, 0, 0, 0)
-        tcrh.setSpacing(10)
-        tcrh.addWidget(self._button_row(("Test custom", self._test_custom_connection)))
-        tcrh.addWidget(self._custom_test_status_lbl, 1)
-        custom_cv.addWidget(test_custom_row)
         credentials_layout.addWidget(custom_card)
         outer.addWidget(credentials_group)
 
@@ -1610,8 +1572,12 @@ class SettingsDialog(QDialog):
             mch_h = QHBoxLayout(mch_w)
             mch_h.setContentsMargins(0, 0, 0, 0)
             mch_h.setSpacing(8)
+            lp = QLabel(f"<small><b>{t('Priority')}</b></small>")
+            lp.setFixedWidth(_MODEL_PRIORITY_COL_W)
+            lp.setToolTip(t("The first row is the primary model; lower rows are fallbacks tried in priority order."))
             lk = QLabel(f"<small><b>{t('Provider')}</b></small>")
             lm = QLabel(f"<small><b>{t('Model')}</b></small>")
+            mch_h.addWidget(lp)
             mch_h.addWidget(lk, 2)
             mch_h.addWidget(lm, 3)
             mch_h.addSpacing(32)
@@ -1823,22 +1789,81 @@ class SettingsDialog(QDialog):
             options.append((t(_PROVIDER_LABELS.get("custom", "Custom (OpenAI-compatible)")), "custom"))
         return options
 
+    def _credential_availability(self) -> "dict[str, tuple[bool, str]]":
+        """Map OAuth/keychain providers to (available, hint-when-unavailable).
+
+        Routes that authenticate via sign-in (chatgpt, copilot) are only usable
+        once signed in. Copilot also accepts the GitHub OAuth login as a fallback
+        token, so signing into GitHub enables it. Anything not listed is treated
+        as always available. On any lookup error we fail open (available) so a
+        keychain hiccup never hides a provider the user has configured.
+        """
+        avail: dict[str, tuple[bool, str]] = {}
+        try:
+            from core.auth import chatgpt as chatgpt_auth
+            avail["chatgpt"] = (bool(chatgpt_auth.get_tokens()), t("sign in first"))
+        except Exception:  # noqa: BLE001 — fail open
+            avail["chatgpt"] = (True, "")
+        try:
+            from core.auth import copilot_auth
+            avail["copilot"] = (
+                copilot_auth.has_effective_token(),
+                t("sign in to GitHub or add a Copilot token first"),
+            )
+        except Exception:  # noqa: BLE001 — fail open
+            avail["copilot"] = (True, "")
+        return avail
+
+    def _fill_credential_combo(self, combo, current: str | None = None) -> None:
+        """Populate a model-route credential combo, disabling un-signed-in routes.
+
+        Unavailable entries (e.g. ChatGPT/Copilot when not signed in) stay in the
+        list but are greyed out with a hint, so a route already pointed at one
+        still displays its value while the inline route warning explains the fix.
+        """
+        options = self._get_api_key_display_options()
+        avail = self._credential_availability()
+        combo.blockSignals(True)
+        combo.clear()
+        for display, provider in options:
+            enabled, hint = avail.get(provider, (True, ""))
+            label = display if enabled else (f"{display} — {hint}" if hint else display)
+            combo.addItem(label, provider)
+            if not enabled:
+                item = combo.model().item(combo.count() - 1)
+                if item is not None:
+                    item.setEnabled(False)
+                    if hint:
+                        item.setToolTip(hint)
+        target = (current or "").strip()
+        idx = combo.findData(target) if target else -1
+        if target and idx < 0:
+            # The configured route points at a provider with no saved credential
+            # yet — common on a fresh install where the default Chat route is
+            # openai but no key has been entered. Show that provider with an
+            # actionable hint instead of silently landing on a disabled OAuth
+            # entry (e.g. Copilot "sign in first"), which looks like a warning the
+            # user never triggered and also misfires the subscription markers.
+            label = t(_PROVIDER_LABELS.get(target, target))
+            combo.addItem(f"{label} — {t('add an API key below')}", target)
+            idx = combo.count() - 1
+        elif not target:
+            # No provider chosen (e.g. an Image/Memory model inheriting the Chat
+            # model). Offer a neutral entry so the combo doesn't default onto a
+            # disabled OAuth provider and raise a spurious credential warning.
+            idx = combo.findData("")
+            if idx < 0:
+                combo.insertItem(0, t("Not set"), "")
+                idx = 0
+        combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+
     def _refresh_model_api_key_combos(self) -> None:
         """Refresh model api key combos."""
-        options = self._get_api_key_display_options()
         for section_rows in self._model_section_rows.values():
             for row in section_rows:
                 combo = row["api_key_combo"]
-                current = combo.currentData()
-                combo.blockSignals(True)
-                combo.clear()
-                for display, provider in options:
-                    combo.addItem(display, provider)
-                if current:
-                    idx = combo.findData(current)
-                    if idx >= 0:
-                        combo.setCurrentIndex(idx)
-                combo.blockSignals(False)
+                self._fill_credential_combo(combo, combo.currentData())
 
     # ---- Model section row helpers ----
 
@@ -1849,21 +1874,18 @@ class SettingsDialog(QDialog):
         model: str = "",
     ) -> dict:
         """Add model section row."""
-        options = self._get_api_key_display_options()
-
         row_w = QWidget()
         h = QHBoxLayout(row_w)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(8)
 
+        priority_lbl = QLabel()
+        priority_lbl.setFixedWidth(_MODEL_PRIORITY_COL_W)
+        priority_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         api_key_combo = _NoScrollCombo()
         api_key_combo.setMinimumWidth(140)
-        for display, prov in options:
-            api_key_combo.addItem(display, prov)
-        if provider:
-            idx = api_key_combo.findData(provider)
-            if idx >= 0:
-                api_key_combo.setCurrentIndex(idx)
+        self._fill_credential_combo(api_key_combo, provider or None)
 
         # Model cell: a non-editable combo (curated list + a "Custom / enter
         # manually…" sentinel) stacked over a hidden line edit that appears only
@@ -1888,6 +1910,7 @@ class SettingsDialog(QDialog):
         remove_btn.setFixedWidth(40)
         remove_btn.setStyleSheet("QPushButton { padding: 5px 4px; }")
 
+        h.addWidget(priority_lbl)
         h.addWidget(api_key_combo, 2)
         h.addWidget(model_container, 3)
         h.addWidget(refresh_btn)
@@ -1895,6 +1918,7 @@ class SettingsDialog(QDialog):
 
         row_info: dict = {
             "widget":        row_w,
+            "priority_lbl":  priority_lbl,
             "api_key_combo": api_key_combo,
             "model_combo":   model_combo,
             "model_edit":    model_edit,
@@ -1931,10 +1955,26 @@ class SettingsDialog(QDialog):
 
         self._model_section_layouts[section_key].addWidget(row_w)
         self._model_section_rows[section_key].append(row_info)
+        self._relabel_section_priorities(section_key)
         self._wire_change_tracking(row_w)
         self._refresh_search_index()
         self._schedule_dirty_refresh()
         return row_info
+
+    def _relabel_section_priorities(self, section_key: str) -> None:
+        """Number each model row by priority — row 1 is primary, the rest fallbacks."""
+        rows = self._model_section_rows.get(section_key, [])
+        for idx, row in enumerate(rows):
+            lbl = row.get("priority_lbl")
+            if lbl is None:
+                continue
+            rank = idx + 1
+            if idx == 0:
+                lbl.setText(f"<b>{rank}</b>")
+                lbl.setToolTip(t("Priority {n} — primary model").format(n=rank))
+            else:
+                lbl.setText(str(rank))
+                lbl.setToolTip(t("Priority {n} — fallback (tried if the rows above fail)").format(n=rank))
 
     def _fill_model_combo(
         self, row_info: dict, models: list, provider: str, selected: str
@@ -2038,6 +2078,7 @@ class SettingsDialog(QDialog):
         if row_info in rows:
             rows.remove(row_info)
         row_info["widget"].deleteLater()
+        self._relabel_section_priorities(section_key)
         self._refresh_search_index()
         self._schedule_dirty_refresh()
 
@@ -2133,39 +2174,6 @@ class SettingsDialog(QDialog):
                 if (row["api_key_combo"].currentData() or "") == "custom":
                     row["model_edit"].setPlaceholderText(f"e.g. {model_hint}")
 
-    def _test_custom_connection(self) -> None:
-        """Verify custom connection behavior."""
-        from core.llm_clients import client as llm
-
-        provider = "custom"
-        rows = self._model_section_rows.get("LLM", [])
-        model = self._model_value(rows[0]) if rows else ""
-        custom_api_key = (
-            _get(self._fields.get("CUSTOM_API_KEY", QLineEdit())).strip()
-            or secret_store.get_keychain_secret("CUSTOM_API_KEY")
-            or ""
-        )
-        custom_base_url = _get(self._fields["CUSTOM_BASE_URL"]).strip()
-
-        if not model:
-            self._set_test_status(self._custom_test_status_lbl, False, "Enter a model name in the Main LLM row first.")
-            return
-        if not custom_base_url:
-            self._set_test_status(self._custom_test_status_lbl, False, "Enter a base URL first.")
-            return
-
-        self._start_async_test(
-            "custom_test",
-            self._custom_test_status_lbl,
-            lambda: llm.test_route_connection(
-                provider,
-                model,
-                "Custom",
-                custom_base_url=custom_base_url,
-                compat_keys={"custom": custom_api_key},
-            ),
-        )
-
     def _refresh_chatgpt_status(self) -> None:
         """Refresh chatgpt status."""
         try:
@@ -2225,6 +2233,7 @@ class SettingsDialog(QDialog):
             if chatgpt_auth.get_tokens():
                 self._auth_poll_timer.stop()
                 self._refresh_chatgpt_status()
+                self._refresh_model_api_key_combos()
                 return
         except Exception:
             pass
@@ -2243,6 +2252,7 @@ class SettingsDialog(QDialog):
         except Exception:
             pass
         self._refresh_chatgpt_status()
+        self._refresh_model_api_key_combos()
 
     def _refresh_github_status(self) -> None:
         """Refresh github status."""
@@ -2331,6 +2341,9 @@ class SettingsDialog(QDialog):
             if github_auth.get_tokens():
                 self._github_auth_poll_timer.stop()
                 self._refresh_github_status()
+                # GitHub login also enables the Copilot route (OAuth fallback token).
+                self._refresh_copilot_status()
+                self._refresh_model_api_key_combos()
                 return
         except Exception:
             pass
@@ -2348,6 +2361,9 @@ class SettingsDialog(QDialog):
         except Exception:
             pass
         self._refresh_github_status()
+        # Signing out of GitHub may disable the Copilot route's fallback token.
+        self._refresh_copilot_status()
+        self._refresh_model_api_key_combos()
 
     def _refresh_copilot_status(self) -> None:
         """Refresh copilot status."""
@@ -2378,10 +2394,11 @@ class SettingsDialog(QDialog):
             if not token.strip():
                 raise ValueError("Add a GitHub Copilot provider row and paste a token first.")
             self._refresh_copilot_status()
+            self._refresh_model_api_key_combos()
         except Exception as exc:
             self._copilot_status_lbl.setText(t(str(exc)))
             self._copilot_status_lbl.setStyleSheet("color: #c04040;")
-            QMessageBox.warning(self, "GitHub Copilot token", str(exc))
+            QMessageBox.warning(self, t("GitHub Copilot token"), str(exc))
 
     def _copilot_clear_token(self) -> None:
         """Handle copilot clear token for settings dialog."""
@@ -2393,10 +2410,11 @@ class SettingsDialog(QDialog):
                     row["key"].clear()
                     self._sync_api_key_row_placeholder(row)
             self._refresh_copilot_status()
+            self._refresh_model_api_key_combos()
         except Exception as exc:
             self._copilot_status_lbl.setText(t(str(exc)))
             self._copilot_status_lbl.setStyleSheet("color: #c04040;")
-            QMessageBox.warning(self, "GitHub Copilot token", str(exc))
+            QMessageBox.warning(self, t("GitHub Copilot token"), str(exc))
 
     def _copilot_test_token(self) -> None:
         """Handle copilot test token for settings dialog."""
@@ -2454,6 +2472,17 @@ class SettingsDialog(QDialog):
         )
         stt_note.setWordWrap(True)
         stt_cv.addWidget(stt_note)
+
+        stt_first_use = QLabel(
+            "<small>"
+            + t(
+                "First use downloads the model (about 150 MB for base) and needs "
+                "internet once. Use the button below to download it ahead of time."
+            )
+            + "</small>"
+        )
+        stt_first_use.setWordWrap(True)
+        stt_cv.addWidget(stt_first_use)
 
         stt_model = _NoScrollCombo()
         stt_model.setProperty("allow_custom_saved_value", True)
@@ -2513,6 +2542,18 @@ class SettingsDialog(QDialog):
         stt_f.addRow(_tooltip_label("Beam size", stt_beam_tip), self._fields["STT_BEAM_SIZE"])
         stt_cv.addWidget(stt_fw)
 
+        stt_hint = QLabel(
+            "<small>"
+            + t(
+                "Hold the voice hotkey while you speak, then release. Hold for at "
+                "least half a second and speak clearly; very short or silent taps "
+                "are skipped."
+            )
+            + "</small>"
+        )
+        stt_hint.setWordWrap(True)
+        stt_cv.addWidget(stt_hint)
+
         # Backend readout. Avoid importing core.stt while building Settings:
         # that pulls in NumPy/faster-whisper and can freeze the Qt UI thread.
         # If STT is already loaded in this process, the label below can still
@@ -2523,12 +2564,21 @@ class SettingsDialog(QDialog):
         ssr.setSpacing(8)
         self._stt_active_lbl = QLabel()
         self._stt_active_lbl.setWordWrap(True)
+        self._stt_download_btn = QPushButton(t("Download / load model now"))
+        self._stt_download_btn.setToolTip(
+            t(
+                "Download and load the speech model now so the first hold-to-talk "
+                "does not stall. The first download needs an internet connection."
+            )
+        )
+        self._stt_download_btn.clicked.connect(self._preload_stt_model)
         stt_recheck = QPushButton(t("Recheck"))
         stt_recheck.setToolTip(
             t("Refresh the speech backend readout without loading the speech model.")
         )
         stt_recheck.clicked.connect(self._refresh_stt_active_backend)
         ssr.addWidget(self._stt_active_lbl, 1)
+        ssr.addWidget(self._stt_download_btn, 0)
         ssr.addWidget(stt_recheck, 0)
         stt_cv.addWidget(stt_status_row)
         self._refresh_stt_active_backend()
@@ -3404,7 +3454,7 @@ class SettingsDialog(QDialog):
         context_documents_mode: str = "off",
         context_browser_mode: str = "off",
         context_github_mode: str = "off",
-        context_memory_mode: str = "on",
+        context_memory_mode: str = "off",
         context_screenshot: str = "off",
         file_access: str = "off",
         screenshot_enabled: bool = True,
@@ -3470,7 +3520,7 @@ class SettingsDialog(QDialog):
         context_documents_mode: str | None = None,
         context_browser_mode: str = "off",
         context_github_mode: str = "off",
-        context_memory_mode: str = "on",
+        context_memory_mode: str = "off",
         context_screenshot: str = "off",
         file_access: str = "off",
         tools: "dict[str, str] | None" = None,
@@ -5684,6 +5734,64 @@ class SettingsDialog(QDialog):
             lbl.setText(t("Active backend: {summary}").format(summary=summary))
             lbl.setStyleSheet("color: #80c080; font-size: 9pt;")
 
+    def _preload_stt_model(self) -> None:
+        """Download (first use) and load the speech model now, with feedback.
+
+        On a fresh machine the model weights aren't bundled — they download on
+        the first hold-to-talk, which looks like a hang or silently fails when
+        offline. This button fetches them up front on a worker thread and reports
+        success or a clear offline message in the backend readout.
+        """
+        btn = getattr(self, "_stt_download_btn", None)
+        lbl = getattr(self, "_stt_active_lbl", None)
+        if btn is not None:
+            btn.setEnabled(False)
+            btn.setText(t("Loading..."))
+        if lbl is not None:
+            lbl.setText(
+                t(
+                    "Loading the speech model... the first time downloads it "
+                    "(about 150 MB for the base model)."
+                )
+            )
+            lbl.setStyleSheet("color: palette(placeholder-text); font-size: 9pt;")
+
+        carrier = _SttPreloadSignals()
+        carrier.done.connect(self._on_stt_model_preloaded)
+        self._stt_preload_carrier = carrier  # keep alive until the load completes
+
+        def _worker():
+            """Load the model off the UI thread; first call downloads it."""
+            try:
+                from core import stt as _stt
+                info = _stt.preload_model()
+                carrier.done.emit(info, "")
+            except Exception as exc:  # noqa: BLE001 — surfaced to the user below
+                carrier.done.emit(None, str(exc))
+
+        threading.Thread(target=_worker, daemon=True, name="settings-stt-preload").start()
+
+    def _on_stt_model_preloaded(self, _info, err: str) -> None:
+        """Apply an STT preload result on the Qt thread."""
+        self._stt_preload_carrier = None
+        btn = getattr(self, "_stt_download_btn", None)
+        if btn is not None:
+            btn.setEnabled(True)
+            btn.setText(t("Download / load model now"))
+        lbl = getattr(self, "_stt_active_lbl", None)
+        if err:
+            if lbl is not None:
+                lbl.setText(
+                    t(
+                        "Could not load the speech model. Connect to the internet "
+                        "for the first download, then try again."
+                    )
+                )
+                lbl.setStyleSheet("color: #c0392b; font-size: 9pt;")
+            return
+        # core.stt is now imported, so the readout can show the live backend.
+        self._refresh_stt_active_backend()
+
     def _stt_fields_changed(self, old_env: dict[str, str]) -> bool:
         """Handle STT fields changed for settings dialog."""
         import config as cfg
@@ -5883,6 +5991,13 @@ class SettingsDialog(QDialog):
 
     def _confirm(self):
         """Save settings, apply changes live, then close the dialog."""
+        self._refresh_dirty_state()
+        if not self._dirty_keys:
+            # Nothing changed since the dialog opened or the last Apply, so skip
+            # the heavy reload (config.reload, model/TTS/STT reconnect, worker
+            # restart) that would otherwise show a needless loading pass.
+            self.accept()
+            return
         if self._apply_settings():
             self.accept()
 
@@ -6055,10 +6170,14 @@ class SettingsDialog(QDialog):
             _write_env(preset_values, remove_keys=remove_keys - set(preset_values))
             self._reload_after_page_reset(page)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "Reset page failed", str(exc))
+            QMessageBox.warning(self, t("Reset page failed"), str(exc))
             return
 
-        QMessageBox.information(self, "Page reset", f"{page} settings were reset to defaults.")
+        QMessageBox.information(
+            self,
+            t("Page reset"),
+            t("{page} settings were reset to defaults.").format(page=page),
+        )
 
     def _reset_all(self) -> None:
         """Factory reset: erase every setting and delete all API keys.
@@ -6133,8 +6252,8 @@ class SettingsDialog(QDialog):
         except OSError as exc:
             _settings_log.error("Could not erase %s: %s", ENV_PATH, exc)
             QMessageBox.warning(
-                self, "Reset error",
-                f"Could not erase the settings file:\n{exc}",
+                self, t("Reset error"),
+                t("Could not erase the settings file:\n{error}").format(error=exc),
             )
 
         # 3. Reload config + live app and refresh the dialog to show defaults.
@@ -6172,17 +6291,19 @@ class SettingsDialog(QDialog):
 
         if key_failures:
             QMessageBox.warning(
-                self, "Reset partly complete",
-                "Settings were reset, but these items could not be fully cleared:\n\n"
+                self, t("Reset partly complete"),
+                t("Settings were reset, but these items could not be fully cleared:")
+                + "\n\n"
                 + "\n".join(f"• {item}" for item in key_failures)
-                + "\n\nYou may need to remove them manually (e.g. from your system "
-                "credential store). See the log for details.",
+                + "\n\n"
+                + t("You may need to remove them manually (e.g. from your system "
+                    "credential store). See the log for details."),
             )
         else:
             QMessageBox.information(
-                self, "Reset complete",
-                "All API keys were removed from the OS keychain, you were signed "
-                "out of all OAuth logins, and every setting was reset to defaults.",
+                self, t("Reset complete"),
+                t("All API keys were removed from the OS keychain, you were signed "
+                  "out of all OAuth logins, and every setting was reset to defaults."),
             )
 
     def _do_save(self) -> bool:
@@ -6395,8 +6516,8 @@ class SettingsDialog(QDialog):
         )
         non_empty = [k for k in all_keys if k]
         if len(non_empty) != len(set(non_empty)):
-            QMessageBox.warning(self, "Duplicate keys",
-                                "Two or more bindings share the same key.\nPlease resolve conflicts before saving.")
+            QMessageBox.warning(self, t("Duplicate keys"),
+                                t("Two or more bindings share the same key.\nPlease resolve conflicts before saving."))
             return False
         for i, blk in enumerate(self._caller_blocks):
             n = i + 1
@@ -6506,45 +6627,51 @@ _PROVIDER_KEY_NAMES: dict[str, str] = {
 }
 
 _MODEL_HINTS: dict[str, str] = {
-    "groq":       "e.g. llama3-8b-8192",
+    "groq":       "e.g. llama-3.3-70b-versatile",
     "openai":     "e.g. gpt-5.5",
-    "anthropic":  "e.g. claude-sonnet-4-5",
-    "google":     "e.g. gemini-2.5-flash",
-    "chatgpt":    "gpt-5.5  |  gpt-5.4  |  gpt-5.4-mini  |  gpt-5.3-codex",
+    "anthropic":  "e.g. claude-sonnet-4-6",
+    "google":     "e.g. gemini-3.5-flash",
+    "chatgpt":    "gpt-5.5  |  gpt-5.4  |  gpt-5.4-mini  |  gpt-5.4-nano  |  gpt-5.3-codex",
     "copilot":    "e.g. gpt-4.1",
     "deepseek":   "e.g. deepseek-chat",
-    "openrouter": "e.g. openai/gpt-4o",
+    "openrouter": "e.g. openai/gpt-5.5",
     "mistral":    "e.g. mistral-large-latest",
-    "xai":        "e.g. grok-3",
-    "together":   "e.g. meta-llama/Llama-3-70b-chat-hf",
-    "cerebras":   "e.g. llama-3.3-70b",
-    "zai":        "e.g. glm-4.7-flash",
+    "xai":        "e.g. grok-4.3",
+    "together":   "e.g. meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+    "cerebras":   "e.g. llama-4-scout-17b-16e-instruct",
+    "zai":        "e.g. glm-4.5-flash",
     "nvidia":     "e.g. meta/llama-3.3-70b-instruct",
     "sambanova":  "e.g. Meta-Llama-3.1-8B-Instruct",
-    "github_models": "e.g. openai/gpt-4.1-mini",
-    "huggingface": "e.g. meta-llama/Llama-3.1-8B-Instruct",
+    "github_models": "e.g. openai/gpt-5.4-mini",
+    "huggingface": "e.g. meta-llama/Llama-3.3-70B-Instruct",
     "chutes":     "e.g. deepseek-ai/DeepSeek-V3-0324",
-    "vercel":     "e.g. openai/gpt-4o-mini",
+    "vercel":     "e.g. openai/gpt-5.4-mini",
     "fireworks":  "e.g. accounts/fireworks/models/llama-v3p1-8b-instruct",
     "cohere":     "e.g. command-r-plus",
     "ai21":       "e.g. jamba-large",
-    "nebius":     "e.g. meta-llama/Meta-Llama-3.1-8B-Instruct",
+    "nebius":     "e.g. meta-llama/Meta-Llama-3.3-70B-Instruct",
     "ollama":     "e.g. llama3  (model pulled locally)",
     "custom":     "model name for your custom endpoint",
 }
 
 _PROVIDER_MODELS: dict[str, list[str]] = {
     "groq": [
+        "groq/compound",
+        "groq/compound-mini",
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "meta-llama/llama-4-scout-17b-16e-instruct",
+        "qwen/qwen3-32b",
+        "qwen/qwen3.6-27b",
         "llama-3.3-70b-versatile",
-        "llama3-70b-8192",
-        "llama3-8b-8192",
         "llama-3.1-8b-instant",
-        "mixtral-8x7b-32768",
         "gemma2-9b-it",
     ],
     "openai": [
         "gpt-5.5",
         "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
         "gpt-4o",
         "gpt-4o-mini",
         "gpt-4.1",
@@ -6553,36 +6680,54 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "o4-mini",
     ],
     "anthropic": [
+        "claude-opus-4-8",
         "claude-opus-4-7",
         "claude-sonnet-4-6",
         "claude-haiku-4-5-20251001",
+        "claude-haiku-4-5",
         "claude-opus-4-5",
         "claude-sonnet-4-5",
     ],
     "google": [
+        "gemini-3.5-flash",
+        "gemini-3.1-pro-preview",
+        "gemini-3-flash-preview",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-latest",
+        "gemini-pro-latest",
         "gemini-2.5-pro",
         "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-pro",
-        "gemini-1.5-flash",
+        "gemini-2.5-flash-lite",
     ],
     "chatgpt": [
         "gpt-5.5",
         "gpt-5.4",
         "gpt-5.4-mini",
+        "gpt-5.4-nano",
         "gpt-5.3-codex",
     ],
     "copilot": [
+        "gpt-5.4-mini",
+        "gpt-5.4",
         "gpt-4.1",
         "gpt-4o",
-        "claude-sonnet-4-5",
+        "claude-sonnet-4-6",
         "gemini-2.5-pro",
     ],
     "deepseek": [
         "deepseek-chat",
         "deepseek-reasoner",
+        "deepseek-r1",
+        "deepseek-v3.1",
     ],
     "openrouter": [
+        "openai/gpt-5.5",
+        "openai/gpt-5.4-mini",
+        "anthropic/claude-sonnet-4-6",
+        "google/gemini-3.5-flash",
+        "x-ai/grok-4.3",
+        "meta-llama/llama-4-maverick",
+        "deepseek/deepseek-r1",
         "openai/gpt-4o",
         "openai/gpt-4o-mini",
         "anthropic/claude-sonnet-4-5",
@@ -6593,86 +6738,130 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
     ],
     "mistral": [
         "mistral-large-latest",
+        "magistral-medium-latest",
+        "magistral-small-latest",
         "mistral-small-latest",
         "mistral-medium-latest",
         "codestral-latest",
+        "devstral-small-latest",
+        "ministral-8b-latest",
     ],
     "xai": [
+        "grok-4.3",
+        "grok-build-0.1",
+        "grok-4",
+        "grok-4-latest",
         "grok-3",
         "grok-3-mini",
         "grok-2-latest",
     ],
     "together": [
+        "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        "deepseek-ai/DeepSeek-R1",
+        "Qwen/Qwen3-235B-A22B-fp8-tput",
         "meta-llama/Llama-3-70b-chat-hf",
         "meta-llama/Llama-3-8b-chat-hf",
         "mistralai/Mixtral-8x7B-Instruct-v0.1",
         "Qwen/Qwen2.5-72B-Instruct-Turbo",
     ],
     "cerebras": [
+        "llama-4-scout-17b-16e-instruct",
         "llama-3.3-70b",
         "llama3.1-8b",
         "qwen-3-32b",
     ],
     "zai": [
+        "glm-4.5-flash",
+        "glm-4.5",
+        "glm-4.5-air",
+        "glm-4.6",
         "glm-4.7-flash",
-        "glm-5.2",
     ],
     "nvidia": [
+        "meta/llama-4-maverick-17b-128e-instruct",
+        "meta/llama-4-scout-17b-16e-instruct",
         "meta/llama-3.3-70b-instruct",
+        "nvidia/llama-3.3-nemotron-super-49b-v1",
         "nvidia/llama-3.1-nemotron-70b-instruct",
         "mistralai/mixtral-8x7b-instruct-v0.1",
     ],
     "sambanova": [
+        "Meta-Llama-4-Maverick-17B-128E-Instruct",
         "Meta-Llama-3.1-8B-Instruct",
         "Meta-Llama-3.1-70B-Instruct",
         "Meta-Llama-3.3-70B-Instruct",
     ],
     "github_models": [
+        "openai/gpt-5.4-mini",
+        "openai/gpt-5.4",
+        "openai/gpt-4.1",
         "openai/gpt-4.1-mini",
         "openai/gpt-4o-mini",
+        "anthropic/claude-sonnet-4-6",
         "meta/Llama-3.3-70B-Instruct",
     ],
     "huggingface": [
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "Qwen/Qwen3-32B",
+        "deepseek-ai/DeepSeek-R1",
         "meta-llama/Llama-3.1-8B-Instruct",
         "Qwen/Qwen2.5-72B-Instruct",
         "mistralai/Mistral-7B-Instruct-v0.3",
     ],
     "chutes": [
+        "deepseek-ai/DeepSeek-R1",
         "deepseek-ai/DeepSeek-V3-0324",
         "Qwen/Qwen3-32B",
+        "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
         "meta-llama/Llama-3.3-70B-Instruct",
     ],
     "vercel": [
+        "openai/gpt-5.4-mini",
+        "openai/gpt-5.4",
+        "anthropic/claude-sonnet-4-6",
+        "google/gemini-3.5-flash",
+        "xai/grok-4.3",
         "openai/gpt-4o-mini",
         "anthropic/claude-3-5-haiku",
         "xai/grok-3-mini",
     ],
     "fireworks": [
+        "accounts/fireworks/models/llama-v3p3-70b-instruct",
+        "accounts/fireworks/models/deepseek-r1",
+        "accounts/fireworks/models/qwen3-235b-a22b",
         "accounts/fireworks/models/llama-v3p1-8b-instruct",
         "accounts/fireworks/models/llama-v3p1-70b-instruct",
         "accounts/fireworks/models/mixtral-8x7b-instruct",
     ],
     "cohere": [
+        "command-a-03-2025",
         "command-r-plus",
         "command-r",
-        "command-a-03-2025",
     ],
     "ai21": [
+        "jamba-large-1.7",
+        "jamba-mini-1.7",
         "jamba-large",
         "jamba-mini",
     ],
     "nebius": [
+        "meta-llama/Meta-Llama-3.3-70B-Instruct",
+        "Qwen/Qwen3-235B-A22B",
+        "deepseek-ai/DeepSeek-R1",
         "meta-llama/Meta-Llama-3.1-8B-Instruct",
         "meta-llama/Meta-Llama-3.1-70B-Instruct",
         "Qwen/Qwen2.5-72B-Instruct",
     ],
     "ollama": [
-        "llama3",
-        "llama3:70b",
+        "llama3.3",
+        "llama3.2",
+        "llama3.1",
+        "qwen3",
+        "deepseek-r1",
         "mistral",
         "codellama",
-        "phi3",
-        "gemma2",
+        "gemma3",
     ],
     "custom": [],
 }

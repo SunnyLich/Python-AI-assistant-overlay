@@ -7,7 +7,7 @@ from dotenv import dotenv_values, load_dotenv
 from core import secret_store
 from core.system.env_utils import (
     env_bool, env_file_access_mode, env_float, env_int, env_screenshot_mode,
-    normalize_file_access_mode, parse_tool_modes,
+    normalize_file_access_mode, parse_tool_modes, write_env_file,
 )
 from core.system.paths import REPO_ROOT, MODEL_FILE_ACCESS_DIR, MODEL_TOOLS_DIR
 from core.settings_model import (
@@ -117,7 +117,7 @@ _CALLER_DEFAULTS: list[dict] = [
         "context_documents_mode": "off",
         "context_browser_mode": "off",
         "context_github_mode": "off",
-        "context_memory_mode": "on",
+        "context_memory_mode": "off",
         "context_screenshot": "off",   # "off" | "auto" | "model"
         "context_clipboard": False,
         "file_access": "off",
@@ -151,7 +151,7 @@ _PROFILE_DEFAULTS: list[dict] = [
             "documents": "off",
             "browser": "off",
             "github": "off",
-            "memory": "on",
+            "memory": "off",
             "screenshot": "off",
             "file_access": "off",
         },
@@ -168,7 +168,7 @@ _PROFILE_DEFAULTS: list[dict] = [
             "documents": "off",
             "browser": "off",
             "github": "off",
-            "memory": "on",
+            "memory": "off",
             "screenshot": "off",
             "file_access": "off",
         },
@@ -359,8 +359,8 @@ def _profile_from_template(template: dict, prefix: str | None = None) -> Profile
         "off",
     )
     memory_mode = _memory_context_mode(
-        env("CONTEXT_MEMORY_MODE", str(context_defaults.get("memory") or "on")),
-        "on",
+        env("CONTEXT_MEMORY_MODE", str(context_defaults.get("memory") or "off")),
+        "off",
     )
     screenshot_mode = env_screenshot_mode(
         f"{prefix}_CONTEXT_SCREENSHOT" if prefix else "__WISP_PROFILE_CONTEXT_SCREENSHOT__",
@@ -467,7 +467,7 @@ def effective_caller(caller: dict | None) -> dict:
         "context_documents_mode": defaults.get("context_documents_mode", "auto"),
         "context_browser_mode": defaults.get("context_browser_mode", "off"),
         "context_github_mode": defaults.get("context_github_mode", "off"),
-        "context_memory_mode": defaults.get("context_memory_mode", "on"),
+        "context_memory_mode": defaults.get("context_memory_mode", "off"),
         "context_screenshot": defaults.get("context_screenshot", "off"),
         "file_access": defaults.get("file_access", "off"),
     }
@@ -489,7 +489,7 @@ _VOICE_DEFAULTS: dict = {
     "context_documents_mode": "off",
     "context_browser_mode": "off",
     "context_github_mode": "off",
-    "context_memory_mode": "on",
+    "context_memory_mode": "off",
     "context_screenshot": "off",   # "off" | "auto" | "model"
     "file_access": "off",
 }
@@ -503,7 +503,7 @@ _SNIP_DEFAULTS: dict = {
     "context_documents_mode": "off",
     "context_browser_mode": "off",
     "context_github_mode": "off",
-    "context_memory_mode": "on",
+    "context_memory_mode": "off",
     "context_screenshot": "off",
     "file_access": "off",
 }
@@ -812,7 +812,7 @@ def _load_config() -> None:
     global CONTEXT_BROWSER_MAX_CHARS, CONTEXT_AMBIENT_DOCUMENT_MAX_CHARS, CONTEXT_TOOL_DOCUMENT_MAX_CHARS
     global TOOL_TURN_MAX_CALLS, TOOL_TURN_MAX_RESULT_CHARS, TOOL_TURN_MAX_TOTAL_CHARS
     global TOOL_PLUGIN_DIR, TOOL_GIT_ROOT, TOOL_FILE_ROOTS, TOOL_FILE_MODE, TOOL_FILE_BLOCKED_GLOBS
-    global BUBBLE_WIDTH, BUBBLE_LINES, BUBBLE_FONT_SIZE
+    global BUBBLE_WIDTH, BUBBLE_LINES, BUBBLE_FONT_SIZE, CHAT_FONT_SCALE
     global BUBBLE_COLOR, BUBBLE_TEXT_COLOR, BUBBLE_READ_WORD_COLOR
     global BUBBLE_SCROLL_ENABLED, BUBBLE_SCROLL_SNAP_ENABLED, BUBBLE_SCROLL_SNAP_DELAY_MS
     global ICON_SIZE, ICON_BACKSTOP_MS, BUBBLE_HIDE_DELAY_MS
@@ -1078,6 +1078,8 @@ def _load_config() -> None:
     BUBBLE_WIDTH           = env_int("BUBBLE_WIDTH",      340)
     BUBBLE_LINES           = env_int("BUBBLE_LINES",      4)
     BUBBLE_FONT_SIZE       = max(6, min(env_int("BUBBLE_FONT_SIZE", 10), 32))
+    # Chat-window text zoom multiplier (Ctrl+wheel / Ctrl+±). Clamped 0.7–2.5×.
+    CHAT_FONT_SCALE        = max(0.7, min(env_float("CHAT_FONT_SCALE", 1.0), 2.5))
     BUBBLE_COLOR           = os.getenv("BUBBLE_COLOR",           "#1c1c24dc")
     BUBBLE_TEXT_COLOR      = os.getenv("BUBBLE_TEXT_COLOR",      "#e6e6e6")
     BUBBLE_READ_WORD_COLOR = os.getenv("BUBBLE_READ_WORD_COLOR", "#4da3ff")
@@ -1150,3 +1152,18 @@ def reload() -> None:
     secret_store.refresh_cache()
     _reload_dotenv()
     _load_config()
+
+
+def set_chat_font_scale(scale: float) -> float:
+    """Persist the chat-window text zoom multiplier to .env and update the global.
+
+    Clamped to the same 0.7–2.5× range as the loader. Returns the stored value.
+    """
+    global CHAT_FONT_SCALE
+    clamped = max(0.7, min(float(scale), 2.5))
+    CHAT_FONT_SCALE = clamped
+    try:
+        write_env_file(_ENV_FILE, {"CHAT_FONT_SCALE": f"{clamped:.3f}".rstrip("0").rstrip(".")})
+    except Exception:
+        pass  # best-effort: the in-memory scale still applies this session
+    return clamped

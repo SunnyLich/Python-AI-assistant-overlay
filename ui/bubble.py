@@ -686,6 +686,18 @@ class SpeechBubble(QWidget):
             return
         self._show_static_text(f"{t('Reading')}: {text}", timeout_ms=0, cancel_on_close=True)
 
+    def show_progress(self, text: str):
+        """Show a transient progress status (e.g. "Using tools...").
+
+        Marked as a preview so the first real reply token replaces it instead of
+        appending after it — otherwise the bubble would read "Using tools... hi".
+        """
+        text = (text or "").strip()
+        if not text:
+            return
+        self._show_static_text(text, timeout_ms=0, cancel_on_close=True)
+        self._transcript_preview = True
+
     def _show_static_text(
         self,
         text: str,

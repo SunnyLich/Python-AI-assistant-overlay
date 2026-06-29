@@ -80,6 +80,12 @@ _WHITE_BG_8 = "#24242c"
 _WHITE_BG_10 = "#282832"
 _WHITE_BG_12 = "#2c2c36"
 _PROJECT_HEADER_BG = "#181820"
+# Derived accents used on top of the accent colour (text/bg over accent buttons,
+# disabled states). Seeded dark; refreshed from the app theme on each open.
+_ON_ACCENT = "#1c1c24"
+_ACCENT_HOVER = "#b8b8ff"
+_DISABLED_BG = "#444444"
+_DISABLED_TEXT = "#666666"
 _REVERT_DELAY_MS = 3000   # how long bold words stay highlighted after TTS finishes
 _CHAT_RENDER_CHAR_LIMIT = 24_000
 _CONTEXT_TOOLTIP_CHAR_LIMIT = 4_000
@@ -87,6 +93,75 @@ _ATTACHMENT_CONTEXT_CHAR_LIMIT = 40_000
 _SIDEBAR_MENU_W = 32
 _SIDEBAR_FADE_W = 34
 _SIDEBAR_GENERAL_GROUP_GAP = 8
+
+
+def _mix_hex(a: str, b: str, t: float) -> str:
+    """Blend two hex colours: t=0 → a, t=1 → b."""
+    ca, cb = QColor(a), QColor(b)
+    return (
+        f"#{round(ca.red() * (1 - t) + cb.red() * t):02x}"
+        f"{round(ca.green() * (1 - t) + cb.green() * t):02x}"
+        f"{round(ca.blue() * (1 - t) + cb.blue() * t):02x}"
+    )
+
+
+def _refresh_chat_palette() -> None:
+    """Re-derive the chat window's module colours from the active app theme.
+
+    The chat window predates the shared light/dark theme and was written with a
+    fixed dark palette spread across ~150 inline stylesheet f-strings. Rather
+    than thread a palette object through all of them, we recompute those
+    module-level colour names from ui.shared.theme on each window open (the
+    window is rebuilt per open via WA_DeleteOnClose), so the whole surface —
+    bubbles, sidebar, title bar and the composer — follows the chosen theme
+    instead of staying dark in light mode.
+    """
+    global _BG, _SIDEBAR_BG, _TITLE_BG, _USER_BG, _AI_BG, _BORDER, _TEXT, _HINT
+    global _ACCENT, _SEL_BG, _PROJECT_HEADER_BG
+    global _ACCENT_BG_10, _ACCENT_BG_12, _ACCENT_BG_18, _ACCENT_BG_28
+    global _ACCENT_BG_32, _ACCENT_BG_46, _ACCENT_BG_60
+    global _WHITE_BG_8, _WHITE_BG_10, _WHITE_BG_12
+    global _ON_ACCENT, _ACCENT_HOVER, _DISABLED_BG, _DISABLED_TEXT
+    try:
+        from ui.shared.theme import theme_colors
+        c = theme_colors()
+    except Exception:
+        return
+    bg, surface, text, accent = c["bg"], c["surface"], c["text"], c["accent"]
+    _BG = bg
+    _SIDEBAR_BG = surface
+    _TITLE_BG = surface
+    _PROJECT_HEADER_BG = surface
+    _AI_BG = c["card"]
+    _BORDER = c["border"]
+    _TEXT = text
+    _HINT = c["text_dim"]
+    _ACCENT = accent
+    _ON_ACCENT = c["on_accent"]
+    _ACCENT_HOVER = c["accent_hover"]
+    _USER_BG = _mix_hex(bg, accent, 0.30)
+    _SEL_BG = _mix_hex(bg, accent, 0.22)
+    _ACCENT_BG_10 = _mix_hex(bg, accent, 0.10)
+    _ACCENT_BG_12 = _mix_hex(bg, accent, 0.12)
+    _ACCENT_BG_18 = _mix_hex(bg, accent, 0.18)
+    _ACCENT_BG_28 = _mix_hex(bg, accent, 0.28)
+    _ACCENT_BG_32 = _mix_hex(bg, accent, 0.32)
+    _ACCENT_BG_46 = _mix_hex(bg, accent, 0.46)
+    _ACCENT_BG_60 = _mix_hex(bg, accent, 0.60)
+    _WHITE_BG_8 = surface
+    _WHITE_BG_10 = _mix_hex(bg, text, 0.10)
+    _WHITE_BG_12 = _mix_hex(bg, text, 0.14)
+    _DISABLED_BG = _mix_hex(bg, text, 0.16)
+    _DISABLED_TEXT = c["text_dim"]
+    try:
+        from ui.chat_rendering import set_render_palette
+        set_render_palette(
+            code_bg=_mix_hex(bg, text, 0.08),
+            code_inline_bg=_mix_hex(bg, text, 0.16),
+            thought=c["text_dim"],
+        )
+    except Exception:
+        pass
 
 
 def _ui_font(point_size: int, weight: QFont.Weight = QFont.Weight.Normal) -> QFont:
@@ -270,6 +345,24 @@ def _normalized_file_context(items: list) -> list[dict]:
         if item["tool"] and item["path"] and item not in out:
             out.append(item)
     return out[-20:]
+
+
+def _normalized_context_snippets(items: object) -> list[dict]:
+    """Normalize display-only per-source context snippets for a user turn.
+
+    These are shown under the message in the transcript and are never sent to
+    the model. Each entry is ``{"label": str, "preview": str}``.
+    """
+    out: list[dict] = []
+    for raw in items if isinstance(items, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        label = " ".join(str(raw.get("label") or "").split())
+        preview = " ".join(str(raw.get("preview") or "").split())
+        if not preview:
+            continue
+        out.append({"label": label, "preview": preview})
+    return out[:20]
 
 
 def _merge_file_context(conv: dict, items: list) -> None:
@@ -573,9 +666,13 @@ class _StreamSignals(QObject):
 
 class _MessageTextView(QTextBrowser):
     """Model message text view."""
-    def __init__(self, style_sheet: str):
+    _BASE_PT = 10
+
+    def __init__(self, bg: str, scale: float = 1.0):
         """Initialize the message text view instance."""
         super().__init__()
+        self._bg = bg
+        self._scale = scale
         self.setOpenLinks(False)
         self.setReadOnly(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -586,8 +683,19 @@ class _MessageTextView(QTextBrowser):
             | Qt.TextInteractionFlag.TextSelectableByKeyboard
         )
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setStyleSheet(style_sheet)
+        self.set_font_scale(scale)
         self.textChanged.connect(self._sync_height)
+
+    def set_font_scale(self, scale: float) -> None:
+        """Apply the chat text zoom multiplier to this bubble."""
+        self._scale = scale
+        pt = max(7, round(self._BASE_PT * scale))
+        self.setStyleSheet(
+            f"QTextBrowser {{ background: {self._bg}; color: {_TEXT}; border-radius: 8px;"
+            f" padding: 8px 11px; font-size: {pt}pt; border: none; }}"
+            f"QTextBrowser::selection {{ background: {_ACCENT_BG_60}; color: {_TEXT}; }}"
+        )
+        self._sync_height()
 
     def _sync_height(self):
         """Handle sync height for message text view."""
@@ -642,9 +750,13 @@ class _ConversationTitleButton(QPushButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         rect = self.rect()
-        bg = QColor(160, 160, 255, 18) if self._active or self.isChecked() else QColor(0, 0, 0, 0)
+        accent = QColor(_ACCENT)
+        accent.setAlpha(34)
+        hover = QColor(_TEXT)
+        hover.setAlpha(16)
+        bg = accent if self._active or self.isChecked() else QColor(0, 0, 0, 0)
         if self.underMouse() and not (self._active or self.isChecked()):
-            bg = QColor(255, 255, 255, 10)
+            bg = hover
         if bg.alpha():
             painter.fillRect(rect, bg)
 
@@ -679,9 +791,13 @@ class _ConversationTitleButton(QPushButton):
         if metrics.horizontalAdvance(self._title) > available:
             fade_left = max(text_rect.left(), text_rect.right() - _SIDEBAR_FADE_W)
             gradient = QLinearGradient(fade_left, 0, text_rect.right(), 0)
-            fade_color = QColor(31, 31, 45) if self._active or self.isChecked() else QColor(_SIDEBAR_BG)
+            fade_color = (
+                QColor(_mix_hex(_SIDEBAR_BG, _ACCENT, 0.07))
+                if self._active or self.isChecked()
+                else QColor(_SIDEBAR_BG)
+            )
             if self.underMouse() and not (self._active or self.isChecked()):
-                fade_color = QColor(36, 36, 46)
+                fade_color = QColor(_mix_hex(_SIDEBAR_BG, _TEXT, 0.04))
             clear = QColor(fade_color)
             clear.setAlpha(0)
             gradient.setColorAt(0.0, clear)
@@ -774,6 +890,7 @@ class ChatWindow(QWidget):
                            estimates for visible context controls.
         """
         super().__init__()
+        _refresh_chat_palette()  # match the active light/dark theme on open
         self._conversations = conversations  # live reference -” NOT a copy
         for conv in self._conversations:
             if isinstance(conv, dict):
@@ -789,6 +906,19 @@ class ChatWindow(QWidget):
         self._on_new_project = on_new_project
         self._persist_fn = persist_fn
         self._streaming = False
+        # The conversation index that currently owns the single _current_ai_*
+        # streaming buffer. When one query is still in-flight while a newer query
+        # starts streaming, the older one's late chunks target a different index;
+        # they are dropped here so they can't be appended into the active bubble.
+        # Their final text still lands via add_conversation.
+        self._streaming_idx: int | None = None
+        self._font_scale = max(0.7, min(float(getattr(config, "CHAT_FONT_SCALE", 1.0) or 1.0), 2.5))
+        self._font_scale_save_timer = QTimer(self)
+        self._font_scale_save_timer.setSingleShot(True)
+        self._font_scale_save_timer.setInterval(600)
+        self._font_scale_save_timer.timeout.connect(
+            lambda: config.set_chat_font_scale(self._font_scale)
+        )
         self._current_ai_label: _MessageTextView | None = None
         self._current_ai_text = ""
         self._current_ai_reply_text = ""
@@ -796,6 +926,8 @@ class ChatWindow(QWidget):
         self._current_ai_parser: ThoughtStreamParser | None = None
         self._current_file_context: list[dict] = []
         self._current_tool_context: dict = {}
+        self._current_context_snippets: list[dict] = []
+        self._current_user_message: dict | None = None
         self._pending_attachment_context = ""
         self._pending_attachment_image_b64: str | None = None
         self._pending_attachments: list[dict] = []
@@ -837,6 +969,11 @@ class ChatWindow(QWidget):
         self._center_on_screen()
         self._new_shortcut = QShortcut(QKeySequence.StandardKey.New, self)
         self._new_shortcut.activated.connect(self.start_new_conversation)
+        self._install_zoom_shortcuts()
+        from PySide6.QtWidgets import QApplication
+        _app = QApplication.instance()
+        if _app is not None:
+            _app.installEventFilter(self)  # Ctrl+wheel zoom over the conversation
 
         if start_new:
             QTimer.singleShot(0, lambda: self.start_new_conversation(auto_message=auto_message))
@@ -903,7 +1040,7 @@ class ChatWindow(QWidget):
             f" border: 1px solid {_BORDER}; border-radius: 6px; font-size: 9pt;"
             " font-weight: 700; }}"
             f"QPushButton:hover {{ background: {_ACCENT_BG_28}; }}"
-            f"QPushButton:disabled {{ color: #666666; border-color: {_WHITE_BG_10}; }}"
+            f"QPushButton:disabled {{ color: {_DISABLED_TEXT}; border-color: {_WHITE_BG_10}; }}"
         )
         new_chat.clicked.connect(self.start_new_conversation)
         self._new_chat_btn = new_chat
@@ -1319,6 +1456,7 @@ class ChatWindow(QWidget):
         if layout is None:
             return
         self._streaming = True
+        self._streaming_idx = idx
         self._send_btn.setEnabled(False)
         self._new_chat_btn.setEnabled(False)
         self._current_ai_text = ""
@@ -1327,12 +1465,18 @@ class ChatWindow(QWidget):
         self._current_ai_parser = ThoughtStreamParser()
         self._current_file_context = []
         self._current_tool_context = {}
+        self._current_context_snippets = []
+        self._current_user_message = None
         self._current_ai_label = self._bubble(layout, "...", "assistant", created_at=_now_iso())
         self._scroll_bottom()
 
     def external_reply_chunk(self, idx: int, chunk: object) -> None:
         """Append one hotkey/overlay reply chunk to the temporary assistant bubble."""
         if not (0 <= idx < len(self._conversations)):
+            return
+        if self._current_ai_label is not None and self._streaming_idx not in (None, idx):
+            # Another conversation owns the active stream; dropping this late
+            # chunk keeps a stalled query's reply out of the current bubble.
             return
         if self._current_ai_label is None:
             self.begin_external_reply_stream(idx)
@@ -1341,6 +1485,10 @@ class ChatWindow(QWidget):
     def finish_external_reply_stream(self, idx: int, final_text: str = "") -> None:
         """Finalize and remove the temporary assistant bubble before persistence sync."""
         if not (0 <= idx < len(self._conversations)):
+            return
+        if self._current_ai_label is not None and self._streaming_idx not in (None, idx):
+            # Not the conversation that owns the active stream — leave it intact;
+            # this turn's final text is rendered by the add_conversation sync.
             return
         if final_text:
             self._on_final_text(final_text)
@@ -1353,7 +1501,10 @@ class ChatWindow(QWidget):
         self._current_ai_parser = None
         self._current_file_context = []
         self._current_tool_context = {}
+        self._current_context_snippets = []
+        self._current_user_message = None
         self._streaming = False
+        self._streaming_idx = None
         self._send_btn.setEnabled(True)
         self._new_chat_btn.setEnabled(True)
         if wrapper is not None:
@@ -1530,6 +1681,9 @@ class ChatWindow(QWidget):
                 msg_hint = self._message_context_hint(msg.get("context"))
                 if msg_hint is not None:
                     layout.insertWidget(layout.count() - 1, msg_hint)
+                snippets = self._context_snippets_widget(msg.get("context_snippets"))
+                if snippets is not None:
+                    layout.insertWidget(layout.count() - 1, snippets)
             if msg["role"] == "assistant":
                 last_ai = view
 
@@ -1610,6 +1764,39 @@ class ChatWindow(QWidget):
         )
         return lbl
 
+    def _context_snippets_widget(self, snippets: object) -> QLabel | None:
+        """Display-only, per-source context snippets shown under a user turn.
+
+        Styled like the intent overlay's grey context preview rows. This text is
+        never sent to the model — it only records what context accompanied the
+        message."""
+        items = _normalized_context_snippets(snippets)
+        if not items:
+            return None
+        rows: list[str] = []
+        for idx, item in enumerate(items, start=1):
+            label = item.get("label") or t("Context")
+            preview = item.get("preview") or ""
+            if len(preview) > 160:
+                preview = preview[:160].rstrip() + "…"
+            rows.append(
+                f"<span style='color:{_HINT};'>{idx}.</span> "
+                f"<span style='color:{_TEXT};'>{html.escape(label)}</span>"
+                f"<span style='color:{_HINT};'> · {html.escape(preview)}</span>"
+            )
+        lbl = QLabel("<br>".join(rows))
+        lbl.setObjectName("messageContextSnippets")
+        lbl.setTextFormat(Qt.TextFormat.RichText)
+        lbl.setWordWrap(True)
+        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lbl.setToolTip(t("Context included with this message (display only - not part of the reply)."))
+        lbl.setStyleSheet(
+            "QLabel#messageContextSnippets {"
+            f" color: {_HINT}; background: transparent; font-size: 8pt;"
+            " padding: 2px 8px; margin-left: 4px; margin-right: 4px; }"
+        )
+        return lbl
+
     def _conversation_time_label(self, conv: dict) -> QLabel | None:
         """Small display-only timestamp for a conversation page."""
         created = _format_conversation_datetime(conv.get("created_at"))
@@ -1655,10 +1842,7 @@ class ChatWindow(QWidget):
         self._input.setAcceptDrops(False)
         self._input.setFixedHeight(62)
         self._input.setPlaceholderText(t("Message... (Enter to send, Shift+Enter for newline)"))
-        self._input.setStyleSheet(
-            f"QTextEdit {{ background: {_WHITE_BG_8}; border: 1px solid {_BORDER};"
-            f" border-radius: 6px; color: {_TEXT}; padding: 6px 8px; font-size: 10pt; }}"
-        )
+        self._apply_input_font_scale()
         self._input.installEventFilter(self)
 
         self._attach_btn = QPushButton("+")
@@ -1672,17 +1856,17 @@ class ChatWindow(QWidget):
             f" border: 1px solid {_BORDER}; border-radius: 6px; font-size: 18pt;"
             " padding: 0px; }"
             f"\nQPushButton:hover {{ background-color: {_ACCENT_BG_32}; }}"
-            f"\nQPushButton:disabled {{ color: #666666; border: 1px solid {_WHITE_BG_10}; }}"
+            f"\nQPushButton:disabled {{ color: {_DISABLED_TEXT}; border: 1px solid {_WHITE_BG_10}; }}"
         )
         self._attach_btn.clicked.connect(self._choose_attachments)
 
         self._send_btn = QPushButton(t("Send"))
         self._send_btn.setFixedSize(64, 46)
         self._send_btn.setStyleSheet(
-            f"QPushButton {{ background: {_ACCENT}; color: #1c1c24; border: none;"
+            f"QPushButton {{ background: {_ACCENT}; color: {_ON_ACCENT}; border: none;"
             f" border-radius: 6px; font-size: 10pt; font-weight: bold; }}"
-            f"QPushButton:hover {{ background: #b8b8ff; }}"
-            f"QPushButton:disabled {{ background: #444444; color: #666666; }}"
+            f"QPushButton:hover {{ background: {_ACCENT_HOVER}; }}"
+            f"QPushButton:disabled {{ background: {_DISABLED_BG}; color: {_DISABLED_TEXT}; }}"
         )
         self._send_btn.clicked.connect(self._on_send_clicked)
         h.addWidget(self._attach_btn)
@@ -1930,13 +2114,9 @@ class ChatWindow(QWidget):
         message_index: int | None = None,
     ) -> _MessageTextView:
         """Handle bubble for chat window."""
-        bg = '#3a3a5c' if role == 'user' else '#26263a'
+        bg = _USER_BG if role == 'user' else _AI_BG
         display_text = _truncate_for_display(text, _CHAT_RENDER_CHAR_LIMIT, "chat display")
-        lbl = _MessageTextView(
-            f"QTextBrowser {{ background: {bg}; color: {_TEXT}; border-radius: 8px;"
-            f" padding: 8px 11px; font-size: 10pt; border: none; }}"
-            f"QTextBrowser::selection {{ background: {_ACCENT_BG_60}; color: {_TEXT}; }}"
-        )
+        lbl = _MessageTextView(bg, self._font_scale)
         if role == "assistant":
             lbl.setHtml(_assistant_text_to_html(display_text))
         else:
@@ -2007,7 +2187,7 @@ class ChatWindow(QWidget):
                     img_lbl = QLabel()
                     img_lbl.setPixmap(thumb)
                     img_lbl.setStyleSheet(
-                        "QLabel { background: #3a3a5c; border-radius: 8px; padding: 4px; }"
+                        f"QLabel {{ background: {_USER_BG}; border-radius: 8px; padding: 4px; }}"
                     )
                     img_lbl.setFixedSize(thumb.width() + 8, thumb.height() + 8)
                     wl.addWidget(img_lbl)
@@ -2349,6 +2529,7 @@ class ChatWindow(QWidget):
         if self._on_select and 0 <= self._active_idx < len(self._conversations):
             self._on_select(self._active_idx)
         self._streaming = True
+        self._streaming_idx = self._active_idx
         self._send_btn.setEnabled(False)
         self._new_chat_btn.setEnabled(False)
 
@@ -2412,6 +2593,8 @@ class ChatWindow(QWidget):
         self._current_ai_parser = ThoughtStreamParser()
         self._current_file_context = []
         self._current_tool_context = {}
+        self._current_context_snippets = []
+        self._current_user_message = user_message
         self._current_ai_label = self._bubble(layout, "...", "assistant", created_at=_now_iso()) if layout else None
         self._scroll_bottom()
 
@@ -2509,6 +2692,7 @@ class ChatWindow(QWidget):
         if isinstance(item, dict):
             self._current_file_context = _normalized_file_context(item.get("file_context") or [])
             self._current_tool_context = _normalized_tool_context(item.get("tool_context") or {})
+            self._current_context_snippets = _normalized_context_snippets(item.get("context_snippets") or [])
 
     def request_live_file_approval(self, request: dict) -> dict:
         """Show a file-tool approval request inline in the active chat."""
@@ -2583,7 +2767,7 @@ class ChatWindow(QWidget):
             btn.setFixedHeight(28)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
         approve.setStyleSheet(
-            f"QPushButton {{ background: {_ACCENT}; color: #1c1c24; border: none;"
+            f"QPushButton {{ background: {_ACCENT}; color: {_ON_ACCENT}; border: none;"
             " border-radius: 6px; padding: 4px 14px; font-weight: 700; }}"
         )
         secondary_style = (
@@ -2670,6 +2854,10 @@ class ChatWindow(QWidget):
                 self._current_ai_label.setHtml(
                     _assistant_segments_to_html(_truncate_segments_for_display(self._current_ai_segments))
                 )
+        if self._current_context_snippets:
+            if isinstance(self._current_user_message, dict):
+                self._current_user_message["context_snippets"] = list(self._current_context_snippets)
+            self._insert_live_context_snippets()
         if self._current_ai_reply_text and self._conversations and 0 <= self._active_idx < len(self._conversations):
             conv = self._conversations[self._active_idx]
             stamp = _touch_conversation(conv)
@@ -2696,9 +2884,29 @@ class ChatWindow(QWidget):
         self._current_ai_parser = None
         self._current_file_context = []
         self._current_tool_context = {}
+        self._current_context_snippets = []
+        self._current_user_message = None
         self._streaming = False
+        self._streaming_idx = None
         self._send_btn.setEnabled(True)
         self._new_chat_btn.setEnabled(True)
+
+    def _insert_live_context_snippets(self) -> None:
+        """Insert per-source context snippet rows just above the active reply bubble."""
+        layout = self._active_layout()
+        if layout is None:
+            return
+        anchor = self._current_ai_label.parentWidget() if self._current_ai_label else None
+        idx = layout.indexOf(anchor) if anchor is not None else -1
+        if idx < 0:
+            # The reply bubble isn't on the active page (e.g. the user switched
+            # conversations mid-stream). Skip the live insert; the snippets are
+            # persisted on the user message and render on the next sync.
+            return
+        widget = self._context_snippets_widget(self._current_context_snippets)
+        if widget is None:
+            return
+        layout.insertWidget(idx, widget)
 
     def update_live_highlight(self, reply_text: str, revealed_count: int, finished: bool):
         """Optionally mirror a read-position without wiring bubble/TTS events here."""
@@ -2737,12 +2945,66 @@ class ChatWindow(QWidget):
     def eventFilter(self, obj, event):
         """Handle event filter for chat window."""
         from PySide6.QtCore import QEvent
+        if event.type() == QEvent.Type.Wheel and (
+            event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            # Ctrl+wheel zooms the conversation text instead of scrolling it.
+            if isinstance(obj, QWidget) and (obj is self or self.isAncestorOf(obj)):
+                delta = event.angleDelta().y()
+                if delta:
+                    self._change_font_scale(1 if delta > 0 else -1)
+                return True
         if obj is self._input and event.type() == QEvent.Type.KeyPress:
             if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
                     and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier)):
                 self._on_send_clicked()
                 return True
         return super().eventFilter(obj, event)
+
+    # ------------------------------------------------------------------ Text zoom
+
+    def _install_zoom_shortcuts(self) -> None:
+        """Bind Ctrl+±/Ctrl+0 to zoom the chat text (Ctrl+wheel also works)."""
+        self._zoom_shortcuts = []
+        bindings = (
+            ("Ctrl++", lambda: self._change_font_scale(1)),
+            ("Ctrl+=", lambda: self._change_font_scale(1)),   # + without Shift
+            ("Ctrl+-", lambda: self._change_font_scale(-1)),
+            ("Ctrl+0", lambda: self._set_font_scale(1.0)),    # reset to 100%
+        )
+        for sequence, handler in bindings:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.activated.connect(handler)
+            self._zoom_shortcuts.append(shortcut)
+
+    def _change_font_scale(self, steps: int) -> None:
+        """Zoom the chat text by ``steps`` increments of 10%."""
+        self._set_font_scale(self._font_scale + 0.1 * steps)
+
+    def _set_font_scale(self, value: float) -> None:
+        """Set the chat text zoom multiplier, apply it, and persist it (debounced)."""
+        value = max(0.7, min(round(value, 2), 2.5))
+        if abs(value - self._font_scale) < 1e-3:
+            return
+        self._font_scale = value
+        self._apply_font_scale()
+        self._font_scale_save_timer.start()
+
+    def _apply_font_scale(self) -> None:
+        """Restyle every message bubble and the input box at the current zoom."""
+        for view in self.findChildren(_MessageTextView):
+            view.set_font_scale(self._font_scale)
+        self._apply_input_font_scale()
+
+    def _apply_input_font_scale(self) -> None:
+        """Apply the current text zoom to the message composer."""
+        if getattr(self, "_input", None) is None:
+            return
+        pt = max(7, round(10 * self._font_scale))
+        self._input.setStyleSheet(
+            f"QTextEdit {{ background: {_WHITE_BG_8}; border: 1px solid {_BORDER};"
+            f" border-radius: 6px; color: {_TEXT}; padding: 6px 8px; font-size: {pt}pt; }}"
+        )
 
     # ------------------------------------------------------------------ Helpers
 

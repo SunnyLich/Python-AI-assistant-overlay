@@ -11,6 +11,25 @@ from core.assistant_text import split_tagged_text
 
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 _BULLET_RE = re.compile(r"^\s*[-*+]\s+(.*)$")
+
+# Colours for code blocks and "thinking" text in rendered replies. Seeded with
+# the original dark values and refreshed from the app theme by
+# ui.chat_window._refresh_chat_palette() so light mode renders readable code.
+_RENDER_PALETTE: dict[str, str] = {
+    "code_bg": "#26263a",
+    "code_inline_bg": "#303044",
+    "thought": "#8f8f9e",
+}
+
+
+def set_render_palette(*, code_bg: str = "", code_inline_bg: str = "", thought: str = "") -> None:
+    """Update the themed colours used when rendering chat reply HTML."""
+    if code_bg:
+        _RENDER_PALETTE["code_bg"] = code_bg
+    if code_inline_bg:
+        _RENDER_PALETTE["code_inline_bg"] = code_inline_bg
+    if thought:
+        _RENDER_PALETTE["thought"] = thought
 _NUMBER_RE = re.compile(r"^\s*\d+[.)]\s+(.*)$")
 _HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*$")
 _WS_RE = re.compile(r"(\s+)")
@@ -162,16 +181,19 @@ def _assistant_segments_to_html(
 ) -> str:
     """Render assistant thought/reply segments for the chat transcript."""
     if read_count == 0:
+        code_bg = _RENDER_PALETTE["code_bg"]
+        code_inline_bg = _RENDER_PALETTE["code_inline_bg"]
+        thought_color = _RENDER_PALETTE["thought"]
         parts: list[str] = [
             "<style>"
             "p { margin: 0 0 8px 0; }"
             "p:last-child { margin-bottom: 0; }"
             "ul, ol { margin: 0 0 8px 22px; padding: 0; }"
             "li { margin: 2px 0; }"
-            "pre { margin: 0 0 8px 0; padding: 8px; border-radius: 6px;"
-            " background: #26263a; white-space: pre-wrap; }"
-            "code { font-family: Consolas, 'Cascadia Mono', monospace;"
-            " background: #303044; padding: 1px 3px; border-radius: 3px; }"
+            f"pre {{ margin: 0 0 8px 0; padding: 8px; border-radius: 6px;"
+            f" background: {code_bg}; white-space: pre-wrap; }}"
+            f"code {{ font-family: Consolas, 'Cascadia Mono', monospace;"
+            f" background: {code_inline_bg}; padding: 1px 3px; border-radius: 3px; }}"
             "pre code { background: transparent; padding: 0; }"
             "h1, h2, h3, h4, h5, h6 { margin: 0 0 8px 0; font-weight: 700; }"
             "</style>"
@@ -179,7 +201,7 @@ def _assistant_segments_to_html(
         prev_is_thought: bool | None = None
         for text, is_thought in segments:
             if is_thought:
-                parts.append(f'<div style="color: #8f8f9e;">{_chat_markdown_html(text)}</div>')
+                parts.append(f'<div style="color: {thought_color};">{_chat_markdown_html(text)}</div>')
             else:
                 if prev_is_thought:
                     parts.append("<div style='height: 6px;'></div>")
@@ -192,7 +214,9 @@ def _assistant_segments_to_html(
     prev_is_thought: bool | None = None
     for text, is_thought in segments:
         if is_thought:
-            parts.append(f'<span style="color: #8f8f9e;">{_segment_text_to_html(text)}</span>')
+            parts.append(
+                f'<span style="color: {_RENDER_PALETTE["thought"]};">{_segment_text_to_html(text)}</span>'
+            )
         else:
             if prev_is_thought:
                 parts.append("<br>")

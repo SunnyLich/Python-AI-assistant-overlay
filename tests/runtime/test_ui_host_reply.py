@@ -85,13 +85,17 @@ class _Bubble:
 
     def __init__(self) -> None:
         self.chunks: list[tuple[str, bool]] = []
+        self.progress: list[str] = []
 
     def append_chunk(self, text: str, is_thought: bool = False) -> None:
         self.chunks.append((text, is_thought))
 
+    def show_progress(self, text: str) -> None:
+        self.progress.append(text)
+
 
 def test_reply_chunk_accepts_progress_metadata() -> None:
-    """Verify ui.reply.chunk accepts supervisor progress metadata."""
+    """Progress chunks show as a transient status, not appended reply content."""
     from runtime.workers.ui_host import QtProtocolHost
 
     host = QtProtocolHost.__new__(QtProtocolHost)
@@ -101,7 +105,11 @@ def test_reply_chunk_accepts_progress_metadata() -> None:
     result = host._reply_chunk(text="Reading files...", is_progress=True)
 
     assert result == {"appended": len("Reading files..."), "is_progress": True}
-    assert bubble.chunks == [("Reading files...", False)]
+    # Progress text must NOT be appended as reply content (would read
+    # "Reading files... <answer>" in the bubble); it goes to show_progress so the
+    # first real reply token replaces it.
+    assert bubble.chunks == []
+    assert bubble.progress == ["Reading files..."]
 
 
 def test_ui_shutdown_message_closes_stdin_reader() -> None:
@@ -322,6 +330,7 @@ def test_chat_request_reuses_active_conversation_tool_context() -> None:
             "type": "metadata",
             "file_context": [],
             "tool_context": emitted[0][1]["tool_context"],
+            "context_snippets": [],
         },
         {"type": "final", "text": "ok"},
     ]

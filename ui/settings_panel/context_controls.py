@@ -26,8 +26,8 @@ class BooleanContextCombo(NoScrollCombo):
 
     def __init__(self, checked: bool = False) -> None:
         super().__init__()
-        self.addItem("Off", "false")
-        self.addItem("On", "true")
+        self.addItem(t("Off"), "false")
+        self.addItem(t("On"), "true")
         self.setChecked(checked)
 
     def isChecked(self) -> bool:  # noqa: N802 - checkbox compatibility
@@ -45,13 +45,13 @@ class AppContextCombo(NoScrollCombo):
 
     def __init__(self, ambient: bool = True, documents_mode: str = "auto") -> None:
         super().__init__()
-        self.addItem("Off", "off")
+        self.addItem(t("Off"), "off")
         self.setItemData(0, False, self._AMBIENT_ROLE)
-        self.addItem("On", "off")
+        self.addItem(t("On"), "off")
         self.setItemData(1, True, self._AMBIENT_ROLE)
-        self.addItem("On + open docs", "auto")
+        self.addItem(t("On + open docs"), "auto")
         self.setItemData(2, True, self._AMBIENT_ROLE)
-        self.addItem("Let model decide", "model")
+        self.addItem(t("Let model decide"), "model")
         self.setItemData(3, True, self._AMBIENT_ROLE)
         self.set_state(ambient, documents_mode)
 
@@ -156,7 +156,7 @@ def build_context_controls(
     context_documents_mode: str = "auto",
     context_browser_mode: str = "off",
     context_github_mode: str = "off",
-    context_memory_mode: str = "on",
+    context_memory_mode: str = "off",
     context_screenshot: str = "off",
     file_access: str = "off",
     screenshot_enabled: bool = True,

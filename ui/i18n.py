@@ -41,6 +41,7 @@ _LANGUAGE_ALIASES = {
 _SUPPORTED_LANGUAGES = {"en", "zh", "zh-Hant", "es", "fr"}
 _QT_CONTEXT = "Wisp"
 _QT_LOCALES_DIR = Path(__file__).with_name("locales") / "qt"
+_COMBO_ORIGINAL_TEXT_ROLE = 0x0100 + 1000
 
 _qt_translator: Any = None
 _qt_translator_language = ""
@@ -220,10 +221,10 @@ def localize_widget_tree(root: Any) -> None:
                 text = widget.itemText(idx)
                 if not text:
                     continue
-                original = widget.itemData(idx, 0x0100 + 1)
+                original = widget.itemData(idx, _COMBO_ORIGINAL_TEXT_ROLE)
                 if original is None:
                     original = text
-                    widget.setItemData(idx, original, 0x0100 + 1)
+                    widget.setItemData(idx, original, _COMBO_ORIGINAL_TEXT_ROLE)
                 widget.setItemText(idx, t(str(original)))
         if isinstance(widget, QTabWidget):
             for idx in range(widget.count()):

@@ -74,9 +74,11 @@ async def _ask_async(
     from copilot import CopilotClient  # type: ignore
     from core.auth import copilot_auth
 
-    token = copilot_auth.get_token()
+    token = copilot_auth.get_effective_token()
     if not token:
-        raise RuntimeError("No GitHub Copilot token is stored yet.")
+        raise RuntimeError(
+            "No Copilot token is stored and you are not signed in to GitHub."
+        )
 
     ok, message = copilot_auth.validate_token_format(token)
     if not ok:
@@ -149,9 +151,9 @@ def test_copilot_token() -> tuple[bool, str]:
     """Verify copilot token behavior."""
     from core.auth import copilot_auth
 
-    token = copilot_auth.get_token()
+    token = copilot_auth.get_effective_token()
     if not token:
-        return False, "No GitHub Copilot token is stored yet."
+        return False, "No Copilot token is stored and you are not signed in to GitHub."
 
     ok, message = copilot_auth.validate_token_format(token)
     if not ok:

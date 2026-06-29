@@ -7,6 +7,10 @@
       <translation>Avancé</translation>
     </message>
     <message>
+      <source>Advanced settings</source>
+      <translation>Réglages avancés</translation>
+    </message>
+    <message>
       <source>Search settings...</source>
       <translation>Rechercher dans les réglages...</translation>
     </message>
@@ -1743,8 +1747,12 @@ Dites "remember that ...", "note that ..." ou "keep in mind ..." pour enregistre
       <translation>Activé</translation>
     </message>
     <message>
+      <source>On + open docs</source>
+      <translation>Activé + documents ouverts</translation>
+    </message>
+    <message>
       <source>on send</source>
-      <translation>à l’envoi</translation>
+      <translation>à l'envoi</translation>
     </message>
     <message>
       <source>On the ChatGPT provider, 'Let model decide' context tools are not run as live Wisp tool calls. Open documents can be injected up front when enabled, but browser/web and GitHub tool calls will not run live on that route.</source>
@@ -1895,6 +1903,14 @@ Laisser le modèle décider — expose un outil de document ouvert pendant la r�
     <message>
       <source>Planner</source>
       <translation>Planificateur</translation>
+    </message>
+    <message>
+      <source>Planned reply chunks</source>
+      <translation>Blocs de réponse planifiée</translation>
+    </message>
+    <message>
+      <source>Planned reply min chars</source>
+      <translation>Caractères minimum pour réponse planifiée</translation>
     </message>
     <message>
       <source>Planning</source>
@@ -2077,6 +2093,10 @@ Laisser le modèle décider — expose un outil de document ouvert pendant la r�
       <translation>Réinitialiser par défaut ?</translation>
     </message>
     <message>
+      <source>Reasoning effort</source>
+      <translation>Effort de raisonnement</translation>
+    </message>
+    <message>
       <source>Responsibility</source>
       <translation>Responsabilité</translation>
     </message>
@@ -2151,6 +2171,10 @@ Laisser le modèle décider — expose un outil de document ouvert pendant la r�
     <message>
       <source>Runtime</source>
       <translation>Exécution</translation>
+    </message>
+    <message>
+      <source>Runtime Status</source>
+      <translation>État d’exécution</translation>
     </message>
     <message>
       <source>Russian</source>
@@ -3740,6 +3764,480 @@ Continuer ?</translation>
       <translation>Votre préférence a été enregistrée, mais Wisp n’a pas pu mettre à jour l’entrée de démarrage du système :
 
 {error}</translation>
+    </message>
+    <message>
+      <source>Hold the voice hotkey while you speak, then release. Hold for at least half a second and speak clearly; very short or silent taps are skipped.</source>
+      <translation>Maintenez la touche vocale enfoncée pendant que vous parlez, puis relâchez-la. Maintenez-la au moins une demi-seconde et parlez clairement ; les appuis très courts ou silencieux sont ignorés.</translation>
+    </message>
+    <message>
+      <source>First use downloads the model (about 150 MB for base) and needs internet once. Use the button below to download it ahead of time.</source>
+      <translation>La première utilisation télécharge le modèle (environ 150 Mo pour base) et nécessite une connexion une fois. Utilisez le bouton ci-dessous pour le télécharger à l'avance.</translation>
+    </message>
+    <message>
+      <source>Download / load model now</source>
+      <translation>Télécharger / charger le modèle maintenant</translation>
+    </message>
+    <message>
+      <source>Download and load the speech model now so the first hold-to-talk does not stall. The first download needs an internet connection.</source>
+      <translation>Téléchargez et chargez le modèle vocal maintenant pour que le premier appui-pour-parler ne se bloque pas. Le premier téléchargement nécessite une connexion internet.</translation>
+    </message>
+    <message>
+      <source>Loading the speech model... the first time downloads it (about 150 MB for the base model).</source>
+      <translation>Chargement du modèle vocal... le premier téléchargement a lieu (environ 150 Mo pour le modèle base).</translation>
+    </message>
+    <message>
+      <source>Could not load the speech model. Connect to the internet for the first download, then try again.</source>
+      <translation>Impossible de charger le modèle vocal. Connectez-vous à internet pour le premier téléchargement, puis réessayez.</translation>
+    </message>
+    <message>
+      <source>All API keys were removed from the OS keychain, you were signed out of all OAuth logins, and every setting was reset to defaults.</source>
+      <translation>Toutes les clés API ont été supprimées du trousseau du système d'exploitation, vous avez été déconnecté de toutes les connexions OAuth et tous les paramètres ont été réinitialisés aux valeurs par défaut.</translation>
+    </message>
+    <message>
+      <source>Any server with an OpenAI-style /audio/speech endpoint that can return PCM (self-hosted Kokoro/LocalAI, Groq, …).</source>
+      <translation>Tout serveur avec un point de terminaison /audio/speech de style OpenAI capable de renvoyer du PCM (Kokoro/LocalAI auto-hébergé, Groq, …).</translation>
+    </message>
+    <message>
+      <source>Check GitHub Releases for a newer Wisp build.</source>
+      <translation>Vérifiez les versions GitHub pour une nouvelle version de Wisp.</translation>
+    </message>
+    <message>
+      <source>Check for updates</source>
+      <translation>Rechercher des mises à jour</translation>
+    </message>
+    <message>
+      <source>Checking...</source>
+      <translation>Vérification...</translation>
+    </message>
+    <message>
+      <source>Could not erase the settings file:
+{error}</source>
+      <translation>Impossible d'effacer le fichier de paramètres :
+{error}</translation>
+    </message>
+    <message>
+      <source>Current version</source>
+      <translation>Version actuelle</translation>
+    </message>
+    <message>
+      <source>Download update</source>
+      <translation>Télécharger la mise à jour</translation>
+    </message>
+    <message>
+      <source>Downloading...</source>
+      <translation>Téléchargement...</translation>
+    </message>
+    <message>
+      <source>Duplicate keys</source>
+      <translation>Touches en double</translation>
+    </message>
+    <message>
+      <source>ElevenLabs installed</source>
+      <translation>ElevenLabs installé</translation>
+    </message>
+    <message>
+      <source>ElevenLabs not installed</source>
+      <translation>ElevenLabs non installé</translation>
+    </message>
+    <message>
+      <source>ElevenLabs support can be installed after setup if it was skipped during the exe build because the build path was too long.</source>
+      <translation>La prise en charge d'ElevenLabs peut être installée après la configuration si elle a été ignorée lors de la compilation de l'exe parce que le chemin de compilation était trop long.</translation>
+    </message>
+    <message>
+      <source>Install ElevenLabs</source>
+      <translation>Installer ElevenLabs</translation>
+    </message>
+    <message>
+      <source>Install ElevenLabs before applying it as the active TTS provider.</source>
+      <translation>Installez ElevenLabs avant de l'appliquer comme fournisseur TTS actif.</translation>
+    </message>
+    <message>
+      <source>Install Kokoro before applying it as the active TTS provider.</source>
+      <translation>Installez Kokoro avant de l'appliquer comme fournisseur TTS actif.</translation>
+    </message>
+    <message>
+      <source>Kokoro not installed</source>
+      <translation>Kokoro non installé</translation>
+    </message>
+    <message>
+      <source>Loading...</source>
+      <translation>Chargement...</translation>
+    </message>
+    <message>
+      <source>No matching settings.</source>
+      <translation>Aucun paramètre correspondant.</translation>
+    </message>
+    <message>
+      <source>Not set</source>
+      <translation>Non défini</translation>
+    </message>
+    <message>
+      <source>Open update</source>
+      <translation>Ouvrir la mise à jour</translation>
+    </message>
+    <message>
+      <source>Page reset</source>
+      <translation>Page réinitialisée</translation>
+    </message>
+    <message>
+      <source>Priority</source>
+      <translation>Priorité</translation>
+    </message>
+    <message>
+      <source>Priority {n} — fallback (tried if the rows above fail)</source>
+      <translation>Priorité {n} — secours (essayé si les lignes ci-dessus échouent)</translation>
+    </message>
+    <message>
+      <source>Priority {n} — primary model</source>
+      <translation>Priorité {n} — modèle principal</translation>
+    </message>
+    <message>
+      <source>Ready to check for updates.</source>
+      <translation>Prêt à rechercher des mises à jour.</translation>
+    </message>
+    <message>
+      <source>Recheck</source>
+      <translation>Revérifier</translation>
+    </message>
+    <message>
+      <source>Recommendation: close Settings, reopen it, and try again.</source>
+      <translation>Recommandation : fermez les Paramètres, rouvrez-les et réessayez.</translation>
+    </message>
+    <message>
+      <source>Refresh the speech backend readout without loading the speech model.</source>
+      <translation>Actualisez l'affichage du moteur vocal sans charger le modèle vocal.</translation>
+    </message>
+    <message>
+      <source>Reset complete</source>
+      <translation>Réinitialisation terminée</translation>
+    </message>
+    <message>
+      <source>Reset error</source>
+      <translation>Erreur de réinitialisation</translation>
+    </message>
+    <message>
+      <source>Reset page failed</source>
+      <translation>Échec de la réinitialisation de la page</translation>
+    </message>
+    <message>
+      <source>Reset partly complete</source>
+      <translation>Réinitialisation partiellement terminée</translation>
+    </message>
+    <message>
+      <source>Runs through a local GPT-SoVITS api_v2.py server. No cloud key is needed.</source>
+      <translation>Fonctionne via un serveur local GPT-SoVITS api_v2.py. Aucune clé cloud n'est nécessaire.</translation>
+    </message>
+    <message>
+      <source>Settings were reset, but these items could not be fully cleared:</source>
+      <translation>Les paramètres ont été réinitialisés, mais ces éléments n'ont pas pu être entièrement effacés :</translation>
+    </message>
+    <message>
+      <source>Show chat tool-loop trace</source>
+      <translation>Afficher la trace de la boucle d'outils du chat</translation>
+    </message>
+    <message>
+      <source>The first row is the primary model; lower rows are fallbacks tried in priority order.</source>
+      <translation>La première ligne est le modèle principal ; les lignes inférieures sont des secours essayés par ordre de priorité.</translation>
+    </message>
+    <message>
+      <source>These keys could not be written to the OS keychain and were NOT stored:</source>
+      <translation>Ces clés n'ont pas pu être écrites dans le trousseau du système et n'ont PAS été enregistrées :</translation>
+    </message>
+    <message>
+      <source>This build does not include a GitHub OAuth app client ID yet.</source>
+      <translation>Cette version n'inclut pas encore d'ID client d'application OAuth GitHub.</translation>
+    </message>
+    <message>
+      <source>Two or more bindings share the same key.
+Please resolve conflicts before saving.</source>
+      <translation>Deux raccourcis ou plus partagent la même touche.
+Veuillez résoudre les conflits avant d'enregistrer.</translation>
+    </message>
+    <message>
+      <source>Unsaved changes</source>
+      <translation>Modifications non enregistrées</translation>
+    </message>
+    <message>
+      <source>Use planned chunked replies</source>
+      <translation>Utiliser des réponses planifiées par blocs</translation>
+    </message>
+    <message>
+      <source>Uses your OpenAI API key from the Models tab.</source>
+      <translation>Utilise votre clé API OpenAI de l'onglet Modèles.</translation>
+    </message>
+    <message>
+      <source>Wisp will install ElevenLabs support into its user-writable optional packages folder.
+
+Package: elevenlabs&gt;=1.0.0
+
+Use this when the packaged exe skipped ElevenLabs because the build path was too long. The install may need internet access and will survive Wisp rebuilds.
+
+Continue?</source>
+      <translation>Wisp installera la prise en charge d'ElevenLabs dans son dossier de paquets optionnels accessible en écriture.
+
+Paquet : elevenlabs&gt;=1.0.0
+
+Utilisez ceci lorsque l'exe empaqueté a ignoré ElevenLabs parce que le chemin de compilation était trop long. L'installation peut nécessiter un accès internet et persistera après les recompilations de Wisp.
+
+Continuer ?</translation>
+    </message>
+    <message>
+      <source>Wisp will install Kokoro into its user-writable optional packages folder.
+
+Packages: kokoro&gt;=0.9.4, soundfile, English speech model
+Estimated storage: up to about 2 GB if speech dependencies are missing; less if they are already installed. First use may also download the Kokoro model cache.
+
+Current Kokoro settings:
+Voice: {voice}
+Language code: {lang_code}
+Device: {device}
+Speed: {speed}
+Sample rate: {sample_rate} Hz
+Volume: {volume}
+
+On Windows, Kokoro may also need eSpeak NG installed separately if Test TTS reports a phoneme/espeak error.
+
+Continue?</source>
+      <translation>Wisp installera Kokoro dans son dossier de paquets optionnels accessible en écriture.
+
+Paquets : kokoro&gt;=0.9.4, soundfile, modèle vocal anglais
+Stockage estimé : jusqu'à environ 2 Go si les dépendances vocales sont manquantes ; moins si elles sont déjà installées. La première utilisation peut aussi télécharger le cache du modèle Kokoro.
+
+Paramètres Kokoro actuels :
+Voix : {voice}
+Code de langue : {lang_code}
+Périphérique : {device}
+Vitesse : {speed}
+Fréquence d'échantillonnage : {sample_rate} Hz
+Volume : {volume}
+
+Sous Windows, Kokoro peut aussi nécessiter l'installation séparée d'eSpeak NG si Test TTS signale une erreur de phonème/espeak.
+
+Continuer ?</translation>
+    </message>
+    <message>
+      <source>You may need to remove them manually (e.g. from your system credential store). See the log for details.</source>
+      <translation>Vous devrez peut-être les supprimer manuellement (par exemple, depuis le magasin d'identifiants de votre système). Consultez le journal pour plus de détails.</translation>
+    </message>
+    <message>
+      <source>Your other settings were still saved. See the log for details, then try saving the affected keys again.</source>
+      <translation>Vos autres paramètres ont bien été enregistrés. Consultez le journal pour plus de détails, puis réessayez d'enregistrer les clés concernées.</translation>
+    </message>
+    <message>
+      <source>add an API key below</source>
+      <translation>ajoutez une clé API ci-dessous</translation>
+    </message>
+    <message>
+      <source>custom endpoint API key</source>
+      <translation>clé API du point de terminaison personnalisé</translation>
+    </message>
+    <message>
+      <source>e.g. 10</source>
+      <translation>p. ex. 10</translation>
+    </message>
+    <message>
+      <source>e.g. 4</source>
+      <translation>p. ex. 4</translation>
+    </message>
+    <message>
+      <source>e.g. 60</source>
+      <translation>p. ex. 60</translation>
+    </message>
+    <message>
+      <source>not required</source>
+      <translation>non requis</translation>
+    </message>
+    <message>
+      <source>sign in first</source>
+      <translation>connectez-vous d'abord</translation>
+    </message>
+    <message>
+      <source>sign in to GitHub or add a Copilot token first</source>
+      <translation>connectez-vous à GitHub ou ajoutez d'abord un jeton Copilot</translation>
+    </message>
+    <message>
+      <source>{count} matching pages.</source>
+      <translation>{count} pages correspondantes.</translation>
+    </message>
+    <message>
+      <source>{page} settings were reset to defaults.</source>
+      <translation>Les paramètres de {page} ont été réinitialisés aux valeurs par défaut.</translation>
+    </message>
+    <message>
+      <source>Auto</source>
+      <translation>Auto</translation>
+    </message>
+    <message>
+      <source>LOCAL FILE TOOLS</source>
+      <translation>OUTILS DE FICHIERS LOCAUX</translation>
+    </message>
+    <message>
+      <source>Local files</source>
+      <translation>Fichiers locaux</translation>
+    </message>
+    <message>
+      <source>MCP tools are grouped by server. Tool rows can override their server.</source>
+      <translation>Les outils MCP sont regroupés par serveur. Les lignes d'outils peuvent remplacer leur serveur.</translation>
+    </message>
+    <message>
+      <source>OTHER INSTALLED + ADD-ON TOOLS</source>
+      <translation>AUTRES OUTILS INSTALLÉS + MODULES COMPLÉMENTAIRES</translation>
+    </message>
+    <message>
+      <source>These default to the Local files dropdown. Writes still follow the configured file roots and approval mode.</source>
+      <translation>Ceux-ci utilisent par défaut le menu déroulant Fichiers locaux. Les écritures suivent toujours les racines de fichiers configurées et le mode d'approbation.</translation>
+    </message>
+    <message>
+      <source>never offered to the model for this hotkey.</source>
+      <translation>jamais proposé au modèle pour ce raccourci.</translation>
+    </message>
+    <message>
+      <source>offered to the model; the model decides whether to call it.</source>
+      <translation>proposé au modèle ; le modèle décide de l'appeler ou non.</translation>
+    </message>
+    <message>
+      <source>{count} tools from this MCP server.</source>
+      <translation>{count} outils de ce serveur MCP.</translation>
+    </message>
+    <message>
+      <source>LLM request failed: {message}</source>
+      <translation>Échec de la requête LLM : {message}</translation>
+    </message>
+    <message>
+      <source>Rewrite failed: {message}</source>
+      <translation>Échec de la réécriture : {message}</translation>
+    </message>
+    <message>
+      <source>Dictation failed: {message}</source>
+      <translation>Échec de la dictée : {message}</translation>
+    </message>
+    <message>
+      <source>Couldn't start recording: {message}</source>
+      <translation>Impossible de démarrer l'enregistrement : {message}</translation>
+    </message>
+    <message>
+      <source>Couldn't start dictation: {message}</source>
+      <translation>Impossible de démarrer la dictée : {message}</translation>
+    </message>
+    <message>
+      <source>Could not read selected text: {message}</source>
+      <translation>Impossible de lire le texte sélectionné : {message}</translation>
+    </message>
+    <message>
+      <source>Local speech warmup failed: {message}</source>
+      <translation>Échec du préchauffage de la voix locale : {message}</translation>
+    </message>
+    <message>
+      <source>Global hotkeys did not start. Click the Wisp icon to summon it.</source>
+      <translation>Les raccourcis globaux n'ont pas démarré. Cliquez sur l'icône Wisp pour l'ouvrir.</translation>
+    </message>
+    <message>
+      <source>No selected text or clipboard text to add.</source>
+      <translation>Aucun texte sélectionné ni texte du presse-papiers à ajouter.</translation>
+    </message>
+    <message>
+      <source>No selected text to rewrite.</source>
+      <translation>Aucun texte sélectionné à réécrire.</translation>
+    </message>
+    <message>
+      <source>Local voice is still warming up. Try again when Wisp says local speech is ready.</source>
+      <translation>La voix locale est encore en préchauffage. Réessayez lorsque Wisp indique que la voix locale est prête.</translation>
+    </message>
+    <message>
+      <source>Warming up local voice and speech recognition...</source>
+      <translation>Préchauffage de la voix locale et de la reconnaissance vocale...</translation>
+    </message>
+    <message>
+      <source>Warming up local voice...</source>
+      <translation>Préchauffage de la voix locale...</translation>
+    </message>
+    <message>
+      <source>Warming up local speech recognition...</source>
+      <translation>Préchauffage de la reconnaissance vocale locale...</translation>
+    </message>
+    <message>
+      <source>Warming up speech recognition...</source>
+      <translation>Préchauffage de la reconnaissance vocale...</translation>
+    </message>
+    <message>
+      <source>Speech recognition is ready. Warming up local voice...</source>
+      <translation>La reconnaissance vocale est prête. Préchauffage de la voix locale...</translation>
+    </message>
+    <message>
+      <source>Local voice and speech recognition are ready.</source>
+      <translation>La voix locale et la reconnaissance vocale sont prêtes.</translation>
+    </message>
+    <message>
+      <source>Local voice is ready.</source>
+      <translation>La voix locale est prête.</translation>
+    </message>
+    <message>
+      <source>Local speech recognition is ready.</source>
+      <translation>La reconnaissance vocale locale est prête.</translation>
+    </message>
+    <message>
+      <source>Agent task spec was empty.</source>
+      <translation>La spécification de la tâche de l'agent était vide.</translation>
+    </message>
+    <message>
+      <source>No agent task is running.</source>
+      <translation>Aucune tâche d'agent n'est en cours d'exécution.</translation>
+    </message>
+    <message>
+      <source>Agent task was not running.</source>
+      <translation>La tâche de l'agent n'était pas en cours d'exécution.</translation>
+    </message>
+    <message>
+      <source>Agent task cancellation requested.</source>
+      <translation>Annulation de la tâche de l'agent demandée.</translation>
+    </message>
+    <message>
+      <source>Choose an agent run first.</source>
+      <translation>Choisissez d'abord une exécution d'agent.</translation>
+    </message>
+    <message>
+      <source>Could not load that agent task spec.</source>
+      <translation>Impossible de charger cette spécification de tâche d'agent.</translation>
+    </message>
+    <message>
+      <source>Agent approval could not be shown; declining the request.</source>
+      <translation>Impossible d'afficher l'approbation de l'agent ; la demande est refusée.</translation>
+    </message>
+    <message>
+      <source>Agent approval response was missing an id.</source>
+      <translation>La réponse d'approbation de l'agent n'avait pas d'identifiant.</translation>
+    </message>
+    <message>
+      <source>Recommendation: add or refresh the provider API key in Settings, then run Setup Check.</source>
+      <translation>Recommandation : ajoutez ou actualisez la clé API du fournisseur dans les Paramètres, puis lancez la Vérification de configuration.</translation>
+    </message>
+    <message>
+      <source>Recommendation: choose a supported model in Settings or refresh the provider model list.</source>
+      <translation>Recommandation : choisissez un modèle pris en charge dans les Paramètres ou actualisez la liste des modèles du fournisseur.</translation>
+    </message>
+    <message>
+      <source>Recommendation: check your network/provider status, then retry or switch to a fallback model.</source>
+      <translation>Recommandation : vérifiez l'état de votre réseau/fournisseur, puis réessayez ou passez à un modèle de secours.</translation>
+    </message>
+    <message>
+      <source>Recommendation: check the TTS provider, voice, and API key, then play a sample in Setup Check.</source>
+      <translation>Recommandation : vérifiez le fournisseur TTS, la voix et la clé API, puis lisez un échantillon dans la Vérification de configuration.</translation>
+    </message>
+    <message>
+      <source>Recommendation: check microphone permission/input device, then run the speech check in Settings.</source>
+      <translation>Recommandation : vérifiez l'autorisation du microphone/le périphérique d'entrée, puis lancez la vérification vocale dans les Paramètres.</translation>
+    </message>
+    <message>
+      <source>Recommendation: choose a different hotkey in Settings or close the app currently using it.</source>
+      <translation>Recommandation : choisissez un autre raccourci dans les Paramètres ou fermez l'application qui l'utilise actuellement.</translation>
+    </message>
+    <message>
+      <source>Recommendation: grant screenshot/screen-recording permission, then rerun Setup Check.</source>
+      <translation>Recommandation : accordez l'autorisation de capture d'écran/d'enregistrement d'écran, puis relancez la Vérification de configuration.</translation>
+    </message>
+    <message>
+      <source>Didn't catch any speech. Hold the key down while you speak, then release.</source>
+      <translation>Aucune parole détectée. Maintenez la touche enfoncée pendant que vous parlez, puis relâchez-la.</translation>
     </message>
   </context>
 </TS>

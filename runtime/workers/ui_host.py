@@ -165,23 +165,39 @@ def _translate_health_text(text: str) -> str:
     return t(value)
 
 
+# Bubble/notice lines whose prefix is fixed but whose tail is a dynamic error
+# detail. Translate the prefix via the catalog and keep the detail verbatim, the
+# same way _translate_health_text handles dynamic health rows.
+_NOTICE_DYNAMIC_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"^LLM request failed: (?P<message>.+)$", "LLM request failed: {message}"),
+    (r"^Rewrite failed: (?P<message>.+)$", "Rewrite failed: {message}"),
+    (r"^Dictation failed: (?P<message>.+)$", "Dictation failed: {message}"),
+    (r"^Couldn't start recording: (?P<message>.+)$", "Couldn't start recording: {message}"),
+    (r"^Couldn't start dictation: (?P<message>.+)$", "Couldn't start dictation: {message}"),
+    (r"^Could not read selected text: (?P<message>.+)$", "Could not read selected text: {message}"),
+    (r"^Local speech warmup failed: (?P<message>.+)$", "Local speech warmup failed: {message}"),
+)
+
+
+def _translate_notice_line(line: str) -> str:
+    """Translate one bubble/notice line: fixed prefix, dynamic error template, or
+    a plain catalog lookup."""
+    for prefix in ("Installed addon: ", "Technical detail: "):
+        if line.startswith(prefix):
+            return t(prefix) + line[len(prefix):]
+    for pattern, template in _NOTICE_DYNAMIC_PATTERNS:
+        match = re.match(pattern, line)
+        if match:
+            return t(template).format(**match.groupdict())
+    return t(line)
+
+
 def _translate_notice_text(text: str) -> str:
     """Translate known system notice/bubble lines without touching arbitrary output."""
     lines = str(text or "").splitlines()
     if not lines:
         return t(str(text or ""))
-    out: list[str] = []
-    for line in lines:
-        if not line:
-            out.append(line)
-            continue
-        for prefix in ("Installed addon: ", "Technical detail: "):
-            if line.startswith(prefix):
-                out.append(t(prefix) + line[len(prefix):])
-                break
-        else:
-            out.append(t(line))
-    return "\n".join(out)
+    return "\n".join(_translate_notice_line(line) if line else line for line in lines)
 
 
 def _live_file_approval_summary(params: dict[str, Any]) -> tuple[str, str, str]:
@@ -2367,6 +2383,11 @@ class QtProtocolHost:
 
     def _reply_notice(self, text: str = "", timeout_ms: int = 12000) -> dict[str, Any]:
         """Handle reply notice for qt protocol host."""
+        # Mirror whatever the bubble shows into the runtime log so notices and
+        # errors aren't on-screen only. Log the untranslated source (collapsed to
+        # one line) so log lines stay stable and greppable across UI languages.
+        collapsed = " | ".join(part for part in str(text or "").splitlines() if part)
+        log.info("bubble notice: %s", collapsed or "(empty)")
         translated = _translate_notice_text(text)
         self._ensure_bubble().show_notice(translated, timeout_ms=timeout_ms)
         return {"shown": True, "text": translated}
@@ -2415,7 +2436,12 @@ class QtProtocolHost:
     ) -> dict[str, Any]:
         """Handle reply chunk for qt protocol host."""
         bubble = self._ensure_bubble()
-        bubble.append_chunk(text, is_thought=is_thought)
+        if is_progress:
+            # Transient status (e.g. "Using tools...") — show it as a preview that
+            # the first real reply token replaces, not appended reply content.
+            bubble.show_progress(text)
+        else:
+            bubble.append_chunk(text, is_thought=is_thought)
         return {"appended": len(text or ""), "is_progress": bool(is_progress)}
 
     def _reply_done(self, flush: bool = True) -> dict[str, Any]:
@@ -2771,17 +2797,20 @@ class QtProtocolHost:
                         final_text = ""
                         file_context = []
                         tool_context = {}
+                        context_snippets = []
                         if isinstance(payload, dict):
                             final_text = str(payload.get("text") or "")
                             file_context = list(payload.get("file_context") or [])
                             tool_context = self._normalized_tool_context(payload.get("tool_context") or {})
+                            context_snippets = list(payload.get("context_snippets") or [])
                         elif payload is not None:
                             final_text = str(payload)
-                        if file_context or tool_context:
+                        if file_context or tool_context or context_snippets:
                             yield {
                                 "type": "metadata",
                                 "file_context": file_context,
                                 "tool_context": tool_context,
+                                "context_snippets": context_snippets,
                             }
                         if final_text and final_text != streamed_text:
                             yield {"type": "final", "text": final_text}
@@ -2839,6 +2868,7 @@ class QtProtocolHost:
         text: str = "",
         file_context: list | None = None,
         tool_context: dict | None = None,
+        context_snippets: list | None = None,
     ) -> dict[str, Any]:
         """Handle chat done for qt protocol host."""
         stream = self._chat_stream(request_id)
@@ -2850,6 +2880,7 @@ class QtProtocolHost:
                         "text": text,
                         "file_context": list(file_context or []),
                         "tool_context": self._normalized_tool_context(tool_context or {}),
+                        "context_snippets": list(context_snippets or []),
                     },
                 )
             )
@@ -2860,6 +2891,7 @@ class QtProtocolHost:
 
     def _chat_error(self, request_id: str = "", error: str = "") -> dict[str, Any]:
         """Handle chat error for qt protocol host."""
+        log.warning("chat error (request %s): %s", request_id or "?", error)
         stream = self._chat_stream(request_id)
         if stream is not None:
             stream.put(("error", error))

@@ -2679,7 +2679,7 @@ def list_models(provider: str, *, api_key: str = "", base_url: str = "") -> list
 
 
 _CHATGPT_SUPPORTED_MODELS = {
-    "gpt-5.5", "gpt-5.4", "gpt-5.4-mini",
+    "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano",
     "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2",
 }
 
@@ -2819,8 +2819,11 @@ def _check_route_config(provider: str, model: str, route_name: str) -> None:
         return
     if provider == "copilot":
         from core.auth import copilot_auth
-        if not copilot_auth.get_token():
-            raise ValueError(f"{route_name} route uses copilot but no GitHub Copilot token is stored.")
+        if not copilot_auth.get_effective_token():
+            raise ValueError(
+                f"{route_name} route uses copilot but no Copilot token is stored and "
+                "you are not signed in to GitHub."
+            )
         return
     if provider == "custom":
         if not config.CUSTOM_BASE_URL:
@@ -2856,8 +2859,11 @@ def _check_route_config_with_credentials(
         return
     if provider == "copilot":
         from core.auth import copilot_auth
-        if not copilot_auth.get_token():
-            raise ValueError(f"{route_name} route uses copilot but no GitHub Copilot token is stored.")
+        if not copilot_auth.get_effective_token():
+            raise ValueError(
+                f"{route_name} route uses copilot but no Copilot token is stored and "
+                "you are not signed in to GitHub."
+            )
         return
     if provider == "custom":
         if not (custom_base_url or config.CUSTOM_BASE_URL):

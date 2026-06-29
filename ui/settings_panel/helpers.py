@@ -6,6 +6,8 @@ try:
 except ImportError:  # pragma: no cover - exercised by collection without loadable Qt libraries
     QComboBox = QFormLayout = QLabel = QToolTip = QWidget = None  # type: ignore[assignment]
 
+from ui.i18n import t
+
 
 def parse_fallback_rows(raw: str) -> list[tuple[str, str]]:
     """Parse fallback rows."""
@@ -86,10 +88,10 @@ def context_mode_combo(
     if QComboBox is None:
         raise RuntimeError("PySide6 is required for settings UI widgets.")
     combo = NoScrollCombo()
-    combo.addItem("Off", "off")
+    combo.addItem(t("Off"), "off")
     if allow_auto:
-        combo.addItem("On", on_value)
-    combo.addItem("Let model decide", "model")
+        combo.addItem(t("On"), on_value)
+    combo.addItem(t("Let model decide"), "model")
     normalized = (value or "off").strip().lower()
     if normalized == "auto" and on_value == "on":
         normalized = "on"

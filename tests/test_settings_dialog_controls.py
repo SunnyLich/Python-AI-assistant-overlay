@@ -242,6 +242,42 @@ def test_technical_combo_options_translate_model_names_only():
 
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_context_combo_localization_preserves_app_context_labels():
+    """Verify app context combo localization does not leak internal boolean roles."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
+
+    import config
+    from ui import i18n
+    from ui.settings_panel.context_controls import AppContextCombo
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    old_language = getattr(config, "APP_LANGUAGE", "")
+    config.APP_LANGUAGE = "zh-Hant"
+    i18n.set_language("zh-Hant", app=app)
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    combo = AppContextCombo(False, "off")
+    layout.addWidget(combo)
+
+    try:
+        i18n.localize_widget_tree(host)
+
+        labels = [combo.itemText(i) for i in range(combo.count())]
+        assert labels == ["關閉", "開啟", "開啟 + 開啟文件", "讓模型決定"]
+        assert "False" not in labels
+        assert "True" not in labels
+        assert combo.itemData(0, int(Qt.ItemDataRole.UserRole) + 1) is False
+        assert combo.itemData(1, int(Qt.ItemDataRole.UserRole) + 1) is True
+    finally:
+        config.APP_LANGUAGE = old_language
+        i18n.set_language(old_language or None, app=app)
+        host.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
 def test_stt_model_dropdown_preserves_saved_custom_value():
     """Verify stt model dropdown preserves saved custom value behavior."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -264,6 +300,25 @@ def test_stt_model_dropdown_preserves_saved_custom_value():
     finally:
         combo.deleteLater()
         app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_provider_model_lists_include_current_defaults():
+    """Verify the static provider model dropdowns include current common choices."""
+    from ui.settings_panel.dialog import _PROVIDER_MODELS
+
+    expected = {
+        "openai": {"gpt-5.5", "gpt-5.4-mini", "gpt-5.4-nano"},
+        "chatgpt": {"gpt-5.5", "gpt-5.4-mini", "gpt-5.4-nano"},
+        "google": {"gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"},
+        "anthropic": {"claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"},
+        "groq": {"openai/gpt-oss-120b", "meta-llama/llama-4-scout-17b-16e-instruct"},
+        "xai": {"grok-4.3", "grok-4"},
+        "ollama": {"llama3.3", "qwen3", "deepseek-r1"},
+    }
+
+    for provider, models in expected.items():
+        assert models <= set(_PROVIDER_MODELS[provider])
 
 
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
@@ -1262,7 +1317,7 @@ def test_settings_tabs_use_app_first_order_without_memory_tab():
 def test_custom_provider_is_model_route_and_api_key_table_option():
     """Verify custom provider is available for both model routes and API key rows."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QPushButton
 
     from ui.settings_panel.dialog import SettingsDialog
 
@@ -1284,6 +1339,7 @@ def test_custom_provider_is_model_route_and_api_key_table_option():
         assert api_key_row["provider"].findData("custom") >= 0
         assert api_key_row["provider"].currentData() == "custom"
         assert "custom endpoint" in api_key_row["key"].placeholderText()
+        assert "Test custom" not in {button.text() for button in dialog.findChildren(QPushButton)}
     finally:
         dialog.deleteLater()
         app.processEvents()
@@ -1627,8 +1683,38 @@ def test_settings_footer_apply_stays_open_and_confirm_closes():
         assert calls == ["saved"]
         assert dialog.result() == int(QDialog.DialogCode.Rejected)
 
+        # Nothing edited since Apply, so Confirm just closes without re-applying:
+        # no redundant config reload / model-reconnect "loading" pass.
         dialog._confirm()
-        assert calls == ["saved", "saved"]
+        assert calls == ["saved"]
+        assert dialog.result() == int(QDialog.DialogCode.Accepted)
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_settings_confirm_applies_when_there_are_unsaved_changes():
+    """Confirm still saves+applies when the user edited something (the common path)."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QCheckBox, QDialog
+
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog()
+
+    try:
+        calls = []
+        dialog._apply_settings = lambda: calls.append("saved") or True
+
+        # Make a real edit so the dialog is dirty.
+        box = dialog._fields["CHAT_TOOL_TRACE_UI"]
+        assert isinstance(box, QCheckBox)
+        box.setChecked(not box.isChecked())
+
+        dialog._confirm()
+        assert calls == ["saved"]
         assert dialog.result() == int(QDialog.DialogCode.Accepted)
     finally:
         dialog.deleteLater()
@@ -1948,15 +2034,71 @@ def test_settings_preset_marks_reviewable_changes_without_saving():
         apply_btn = dialog.findChild(QPushButton, "settingsApplyButton")
         assert apply_btn is not None
 
-        dialog._apply_preset("Low cost")
+        dialog._apply_preset("Low setup")
         app.processEvents()
 
         assert apply_btn.isEnabled()
         assert _get(dialog._fields["STT_MODEL"]) == "base"
         assert _get(dialog._fields["CONTEXT_BROWSER_MAX_CHARS"]) == "3000"
-        assert dialog._active_preset_slug == "low_cost"
-        assert {"TTS / Voice", "Advanced", "Keybinds"} <= dialog._tab_dirty_names
+        assert dialog._active_preset_slug == "low_setup"
+        assert {"LLM", "TTS / Voice", "Advanced", "Keybinds"} <= dialog._tab_dirty_names
     finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_low_setup_preset_uses_chatgpt_oauth_routes():
+    """Verify low setup preset only needs ChatGPT OAuth for model routes."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog()
+
+    try:
+        dialog._apply_preset("Low setup")
+        app.processEvents()
+
+        assert dialog._active_preset_slug == "low_setup"
+        for section in ("LLM", "VISION_LLM", "MEMORY_LLM"):
+            rows = dialog._model_section_rows[section]
+            assert len(rows) == 1
+            assert rows[0]["api_key_combo"].currentData() == "chatgpt"
+            assert dialog._model_value(rows[0]) == "gpt-5.5"
+
+        assert dialog._voice_block["context_browser_mode"].currentData() == "off"
+        assert dialog._voice_block["context_github_mode"].currentData() == "off"
+        assert dialog._voice_block["context_screenshot"].currentData() == "off"
+    finally:
+        dialog.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_settings_profiles_menu_only_exposes_low_setup_builtin_preset():
+    """Verify old behavior presets are not shown as built-in Settings presets."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog()
+    menu = None
+
+    try:
+        menu = dialog._build_profiles_menu(dialog)
+        action_texts = [action.text() for action in menu.actions()]
+
+        assert "Low setup" in action_texts
+        for old_preset in ("Fast", "Best quality", "Private/local", "Coding assistant", "Low cost"):
+            assert old_preset not in action_texts
+    finally:
+        if menu is not None:
+            menu.deleteLater()
         dialog.deleteLater()
         app.processEvents()
 
@@ -1973,15 +2115,15 @@ def test_settings_active_preset_persists_user_edits_as_preset_overrides():
     dialog = SettingsDialog()
 
     try:
-        dialog._apply_preset("Fast")
+        dialog._apply_preset("Low setup")
         _set_value = "7"
         dialog._fields["MEMORY_TOP_K"].setText(_set_value)
         vals = {"MEMORY_TOP_K": _get(dialog._fields["MEMORY_TOP_K"])}
 
         persisted = dialog._preset_values_to_persist(vals)
 
-        assert persisted["WISP_SETTINGS_PRESET"] == "fast"
-        assert persisted["WISP_PRESET_FAST_MEMORY_TOP_K"] == _set_value
+        assert persisted["WISP_SETTINGS_PRESET"] == "low_setup"
+        assert persisted["WISP_PRESET_LOW_SETUP_MEMORY_TOP_K"] == _set_value
     finally:
         dialog.deleteLater()
         app.processEvents()

@@ -928,6 +928,10 @@ class FlowController:
 
     def voice_start(self) -> None:
         """Handle voice start for flow controller."""
+        # Acknowledge the keypress instantly with the listening icon, before any
+        # config reload or setup work, so holding the hotkey gives immediate
+        # visual feedback rather than waiting on the steps below.
+        self._fire(self.ui, "ui.overlay.state", {"state": "listening"})
         self._reload_supervisor_config_if_changed()
         self._ensure_voice_start_claimed()
         self._new_generation()
@@ -935,7 +939,6 @@ class FlowController:
         self._voice_context = {}
         self._voice_screenshot_b64 = None
         self._fire(self.audio, "audio.stop")
-        self._fire(self.ui, "ui.overlay.state", {"state": "listening"})
         try:
             record_result = self.audio.call("audio.record.start", timeout=20.0)
         except Exception as exc:  # noqa: BLE001
@@ -976,7 +979,11 @@ class FlowController:
             result = self.audio.call("audio.record.stop_transcribe", timeout=180.0)
             text = str((result or {}).get("text") or "").strip()
             if not text:
-                self._fire(self.ui, "ui.reply.reset")
+                # Empty transcript = the clip was too short/quiet or had no speech
+                # (a too-brief F8 tap is the usual cause). Tell the user how to
+                # hold the key instead of silently resetting and leaving them
+                # wondering why nothing happened.
+                self._notice("Didn't catch any speech. Hold the key down while you speak, then release.")
                 self._set_idle()
                 return
             text = self._confirm_voice_transcript(text, purpose="voice")
@@ -1041,6 +1048,7 @@ class FlowController:
                 return
             text = str((result or {}).get("text") or "").strip()
             if not text:
+                self._notice("Didn't catch any speech. Hold the key down while you speak, then release.")
                 self._set_idle()
                 return
             text = self._confirm_voice_transcript(text, purpose="dictation")
@@ -1221,6 +1229,7 @@ class FlowController:
                         "text": str((payload or {}).get("text") or ""),
                         "file_context": list((payload or {}).get("file_context") or []),
                         "tool_context": tool_context,
+                        "context_snippets": context_snippets,
                     },
                     timeout=30.0,
                 )
@@ -1248,7 +1257,13 @@ class FlowController:
             "pinned_tools": list(pinned_tools),
             "file_access_mode": file_access_mode,
         }
-        messages = self._messages_with_chat_context(messages, caller)
+        context_parts = self._chat_context_parts(caller)
+        messages = self._messages_with_chat_context(messages, caller, context_parts)
+        context_snippets: list[dict[str, str]] = []
+        for label, _block, preview_source in context_parts:
+            preview = self._context_preview_text(preview_source)
+            if preview:
+                context_snippets.append({"label": label, "preview": preview})
         chat_params: dict[str, Any] = {
             "messages": messages,
             "memory_enabled": self._context_mode(caller, "memory") == "on",
@@ -1299,6 +1314,7 @@ class FlowController:
                         "text": text,
                         "file_context": list((result or {}).get("file_context") or []),
                         "tool_context": tool_context,
+                        "context_snippets": context_snippets,
                     },
                     timeout=30.0,
                 )
@@ -2443,10 +2459,20 @@ class FlowController:
         self._fire(self.ui, "ui.overlay.state", {"state": "idle"})
 
     def _notice(self, text: str) -> None:
-        """Handle notice for flow controller."""
+        """Show a transient warning/status bubble that dismisses itself.
+
+        These are advisory ("didn't catch that", "couldn't start recording", …),
+        so they auto-hide after a few seconds instead of lingering — long enough
+        to read, short enough not to nag after an accidental tap.
+        """
         from core.error_recommendations import format_error
 
-        self._safe_call(self.ui, "ui.reply.notice", {"text": format_error(text)}, timeout=30.0)
+        self._safe_call(
+            self.ui,
+            "ui.reply.notice",
+            {"text": format_error(text), "timeout_ms": 6000},
+            timeout=30.0,
+        )
 
     def _handle_live_file_approval_request(self, payload: Any) -> None:
         """Ask the UI to approve a live model file edit, then answer the brain."""
@@ -3232,9 +3258,16 @@ class FlowController:
         file_access_mode = tool_modes.local_file_access_mode(caller)
         return allowed, pinned, file_access_mode
 
-    def _messages_with_chat_context(self, messages: list, caller: dict[str, Any]) -> list:
+    def _messages_with_chat_context(
+        self,
+        messages: list,
+        caller: dict[str, Any],
+        parts: list[tuple[str, str, str]] | None = None,
+    ) -> list:
         """Attach selected chat context as hidden system text."""
-        context_text = self._chat_context_text(caller)
+        if parts is None:
+            parts = self._chat_context_parts(caller)
+        context_text = "\n\n".join(block for _label, block, _src in parts if block.strip())
         if not context_text:
             return messages
         out = [dict(m) for m in messages]
@@ -3246,14 +3279,25 @@ class FlowController:
         return [{"role": "system", "content": block}] + out
 
     def _chat_context_text(self, caller: dict[str, Any]) -> str:
-        """Fetch frontloaded chat context selected in the chat controls."""
+        """Joined prompt text for the frontloaded chat context (model-facing)."""
+        parts = self._chat_context_parts(caller)
+        return "\n\n".join(block for _label, block, _src in parts if block.strip())
+
+    def _chat_context_parts(self, caller: dict[str, Any]) -> list[tuple[str, str, str]]:
+        """Fetch frontloaded chat context as ``(label, prompt_block, preview_source)``.
+
+        ``prompt_block`` is injected verbatim into the model prompt. ``label`` and
+        ``preview_source`` feed the display-only per-source snippets shown under the
+        user's turn in the chat transcript; those snippets are never sent to the
+        model.
+        """
         wants_documents = self._effective_document_mode(caller) == "auto"
         wants_browser = self._context_mode(caller, "browser") == "auto"
         wants_clipboard = bool(caller.get("context_clipboard"))
         wants_ambient = bool(caller.get("context_ambient"))
         wants_selection = bool(caller.get("_context_selection_enabled", False))
         if not any((wants_documents, wants_browser, wants_clipboard, wants_ambient, wants_selection)):
-            return ""
+            return []
 
         try:
             context = self._context_snapshot(caller, include_browser=False, preview_context_sources=wants_browser)
@@ -3261,20 +3305,21 @@ class FlowController:
             log.exception("chat context snapshot failed")
             context = {}
 
-        parts: list[str] = []
+        parts: list[tuple[str, str, str]] = []
         active_app = context.get("active_app") if isinstance(context.get("active_app"), dict) else {}
         if wants_ambient and active_app.get("name"):
-            parts.append(f"[App]\nActive app: {active_app.get('name')}")
+            body = f"Active app: {active_app.get('name')}"
+            parts.append(("App", f"[App]\n{body}", body))
 
         if wants_selection:
             selected = str(context.get("selected_text") or "").strip()
             if selected:
-                parts.append(f"[Selection]\n{selected}")
+                parts.append(("Selection", f"[Selection]\n{selected}", selected))
 
         if wants_clipboard:
             clipboard = str(context.get("clipboard_text") or "").strip()
             if clipboard:
-                parts.append(f"[Clipboard]\n{clipboard}")
+                parts.append(("Clipboard", f"[Clipboard]\n{clipboard}", clipboard))
 
         if wants_documents:
             active_document_text = str(context.get("active_document_text") or "").strip()
@@ -3282,11 +3327,12 @@ class FlowController:
                 active_document_text = self._fetch_active_document_text(context)
             if active_document_text:
                 label = self._active_document_context_label(context)
-                parts.append(
+                block = (
                     f"--- BEGIN ACTIVE DOCUMENT: {label} ---\n"
                     f"{active_document_text}\n"
                     f"--- END ACTIVE DOCUMENT: {label} ---"
                 )
+                parts.append((f"Document: {label}", block, active_document_text))
 
         if wants_browser:
             browser = self._fetch_browser_content_for_context(context)
@@ -3298,9 +3344,10 @@ class FlowController:
             if browser_content:
                 browser_bits.append(browser_content)
             if browser_bits:
-                parts.append("[Browser/Web]\n" + "\n\n".join(browser_bits))
+                joined = "\n\n".join(browser_bits)
+                parts.append(("Browser/Web", f"[Browser/Web]\n{joined}", joined))
 
-        return "\n\n".join(parts)
+        return parts
 
     def _screenshot_tool_allowed(self, caller: dict[str, Any]) -> bool:
         """Whether capture_screen is exposed: the Screenshot dropdown's "model"

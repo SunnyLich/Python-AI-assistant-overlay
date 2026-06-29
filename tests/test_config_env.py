@@ -717,8 +717,8 @@ class ConfigEnvTests(unittest.TestCase):
         "VOICE_TOOLS",
     )
 
-    def test_default_general_caller_uses_memory_only_context(self):
-        """Verify default general caller starts with only memory context."""
+    def test_default_general_caller_uses_no_extra_context(self):
+        """Verify default general caller starts with no extra context (memory off)."""
         previous_rows = list(config.CALLER_ROWS)
         try:
             with patch("config.load_dotenv"), patch.dict(os.environ, {}, clear=False):
@@ -744,7 +744,7 @@ class ConfigEnvTests(unittest.TestCase):
             self.assertEqual(row["context_documents_mode"], "off")
             self.assertEqual(row["context_browser_mode"], "off")
             self.assertEqual(row["context_github_mode"], "off")
-            self.assertEqual(row["context_memory_mode"], "on")
+            self.assertEqual(row["context_memory_mode"], "off")
             self.assertEqual(row["context_screenshot"], "off")
             self.assertFalse(row["context_tools"])
         finally:
@@ -789,7 +789,7 @@ class ConfigEnvTests(unittest.TestCase):
             self.assertEqual(voice["context_documents_mode"], "off")
             self.assertEqual(voice["context_browser_mode"], "off")
             self.assertEqual(voice["context_github_mode"], "off")
-            self.assertEqual(voice["context_memory_mode"], "on")
+            self.assertEqual(voice["context_memory_mode"], "off")
             self.assertEqual(voice["context_screenshot"], "off")
             self.assertFalse(voice["paste_back"])
             self.assertEqual(voice["tools"], {})
@@ -797,8 +797,8 @@ class ConfigEnvTests(unittest.TestCase):
             config.VOICE_CALLER.clear()
             config.VOICE_CALLER.update(previous)
 
-    def test_snip_defaults_use_memory_only_extra_context(self):
-        """Verify screen snip only adds memory by default."""
+    def test_snip_defaults_use_no_extra_context(self):
+        """Verify screen snip adds no extra context by default (memory off)."""
         previous = {
             "SNIP_CONTEXT_AMBIENT": config.SNIP_CONTEXT_AMBIENT,
             "SNIP_CONTEXT_DOCUMENTS": config.SNIP_CONTEXT_DOCUMENTS,
@@ -828,7 +828,7 @@ class ConfigEnvTests(unittest.TestCase):
             self.assertEqual(snip["context_documents_mode"], "off")
             self.assertEqual(snip["context_browser_mode"], "off")
             self.assertEqual(snip["context_github_mode"], "off")
-            self.assertEqual(snip["context_memory_mode"], "on")
+            self.assertEqual(snip["context_memory_mode"], "off")
             self.assertEqual(snip["context_screenshot"], "off")
             self.assertFalse(snip["context_tools"])
         finally:

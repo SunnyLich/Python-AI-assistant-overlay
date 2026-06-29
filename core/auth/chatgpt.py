@@ -33,9 +33,12 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Callable
+import logging
 from urllib.parse import urlencode, parse_qs, urlparse
 
 from core.system.native_locks import keychain_lock
+
+log = logging.getLogger("wisp.chatgpt_auth")
 
 # ---------------------------------------------------------------------------
 # Constants (sourced from opencode's built-in Codex plugin, MIT)
@@ -352,13 +355,43 @@ def start_browser_login(
                 error       = (qs.get("error") or [None])[0]
                 error_desc  = (qs.get("error_description") or [None])[0]
 
+                # Diagnostics: record which params came back so a failed sign-in
+                # is debuggable. Never log the authorization code value itself.
+                present = sorted(qs.keys())
+                log.info("ChatGPT OAuth callback received; params=%s", present)
+
                 if error:
                     msg = error_desc or error
+                    log.warning("ChatGPT OAuth callback returned error: %s", msg)
                     result.append(("error", msg))
                     self._send_html(_html_error(msg))
-                elif not code or got_state != state:
-                    result.append(("error", "Invalid state or missing code"))
-                    self._send_html(_html_error("Invalid OAuth callback"))
+                elif not code:
+                    # No code and no error: the authorize step never produced one.
+                    # Common for managed / SSO / ChatGPT Edu accounts that aren't
+                    # entitled to the personal Codex login this flow uses.
+                    log.warning("ChatGPT OAuth callback missing code; params=%s", present)
+                    result.append((
+                        "error",
+                        "Sign-in did not return an authorization code. This usually "
+                        "means the account isn't eligible for the ChatGPT login "
+                        "(managed, SSO, or ChatGPT Edu/Team accounts often aren't) — "
+                        "try a personal ChatGPT Plus/Pro account, or use an API key.",
+                    ))
+                    self._send_html(_html_error("Sign-in did not return an authorization code."))
+                elif got_state != state:
+                    # A code came back but the state doesn't match ours — typically an
+                    # organization/workspace selection step rewrote the redirect.
+                    log.warning(
+                        "ChatGPT OAuth state mismatch (expected %s…, got %s…)",
+                        state[:6], (got_state or "")[:6],
+                    )
+                    result.append((
+                        "error",
+                        "Sign-in state did not match — the login likely went through "
+                        "an organization/SSO step. Try again and, if prompted, pick "
+                        "your personal workspace rather than an institutional one.",
+                    ))
+                    self._send_html(_html_error("OAuth state mismatch"))
                 else:
                     result.append(("code", code))
                     self._send_html(_html_success())

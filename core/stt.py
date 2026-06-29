@@ -110,6 +110,25 @@ def reset_model() -> None:
         _active_compute = None
 
 
+def preload_model() -> dict | None:
+    """Load the Whisper model now (downloading it on first use) and return the
+    active backend info.
+
+    Unlike ``prewarm`` this is synchronous and lets the exception propagate, so a
+    caller (e.g. the Settings "Download / load model now" button) can tell the
+    user the difference between "ready" and "couldn't fetch — you're offline".
+    Call it from a worker thread, never the UI thread: the first call downloads
+    ~150 MB. On macOS the helper owns STT out-of-process, so this just kicks its
+    prewarm and returns ``None``.
+    """
+    if macos_helper.is_enabled():
+        from core.macos_helper import stt_client
+        stt_client.prewarm()
+        return None
+    _get_model()
+    return active_backend()
+
+
 def prewarm(on_ready=None):
     """Load the Whisper model in a background thread to avoid cold start on first
     use. ``on_ready`` (if given) is called with ``active_backend()`` once the

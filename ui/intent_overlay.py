@@ -322,6 +322,7 @@ class IntentOverlay(QWidget):
         self._move_to_screen_center(h)
 
         self._hovered: int | None = None
+        self._row_rects: list[QRect] = []
         self._handled = False
         self._selection_pending_idx: int | None = None
         self._custom_mode = False
@@ -635,6 +636,7 @@ class IntentOverlay(QWidget):
 
         y = _PAD_V
         self._warning_rects = []
+        self._row_rects = []
         if self._show_conversation_selector:
             self._paint_conversation_selector(p, y, hint_font, ctx_label_font, palette)
             y += _CONV_H
@@ -644,6 +646,7 @@ class IntentOverlay(QWidget):
 
         for i, row in enumerate(self._rows):
             row_rect = QRect(_PAD_H, y, _W - _PAD_H * 2, _ROW_H)
+            self._row_rects.append(row_rect)
             hovered  = (i == self._hovered)
 
             # Row highlight
@@ -1188,8 +1191,19 @@ class IntentOverlay(QWidget):
         return None
 
     def mouseMoveEvent(self, event):  # noqa: N802
-        """Show context warning reasons when hovering the warning sign."""
-        found = self._context_warning_at(event.position().toPoint())
+        """Show context warning reasons, and highlight the hovered intent row."""
+        pos = event.position().toPoint()
+        if not self._custom_mode and self._selection_pending_idx is None:
+            row_idx = self._row_at(pos)
+            if row_idx != self._hovered:
+                self._hovered = row_idx
+                self.setCursor(
+                    Qt.CursorShape.PointingHandCursor
+                    if row_idx is not None
+                    else Qt.CursorShape.ArrowCursor
+                )
+                self.update()
+        found = self._context_warning_at(pos)
         if found is None:
             if self._last_warning_idx is not None:
                 QToolTip.hideText()
@@ -1203,15 +1217,30 @@ class IntentOverlay(QWidget):
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event):  # noqa: N802
-        """Toggle context chips when clicked."""
+        """Toggle context chips, or select an intent row, when clicked."""
         if event.button() == Qt.MouseButton.LeftButton:
-            if self._handle_conversation_click(event.position().toPoint()):
+            pos = event.position().toPoint()
+            if self._handle_conversation_click(pos):
                 event.accept()
                 return
-            if self._cycle_context_at(event.position().toPoint()):
+            if self._cycle_context_at(pos):
                 event.accept()
                 return
+            # Clicking a row is equivalent to pressing its WASD/shortcut key.
+            if not self._custom_mode:
+                idx = self._row_at(pos)
+                if idx is not None:
+                    self._select(idx, drop_trigger_key=False)
+                    event.accept()
+                    return
         super().mousePressEvent(event)
+
+    def _row_at(self, pos) -> int | None:
+        """Return the intent row index under a point, or None."""
+        for idx, rect in enumerate(self._row_rects):
+            if rect.contains(pos):
+                return idx
+        return None
 
     # ── Key input ─────────────────────────────────────────────────────────
 

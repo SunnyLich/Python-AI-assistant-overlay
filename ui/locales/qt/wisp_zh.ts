@@ -7,6 +7,10 @@
       <translation>高级</translation>
     </message>
     <message>
+      <source>Advanced settings</source>
+      <translation>高级设置</translation>
+    </message>
+    <message>
       <source>Search settings...</source>
       <translation>搜索设置...</translation>
     </message>
@@ -1743,6 +1747,10 @@ Say "remember that ...", "note that ...", or "keep in mind ..." to store a fact.
       <translation>开启</translation>
     </message>
     <message>
+      <source>On + open docs</source>
+      <translation>开启 + 打开文档</translation>
+    </message>
+    <message>
       <source>on send</source>
       <translation>发送时</translation>
     </message>
@@ -1895,6 +1903,14 @@ Let model decide — expose an open-document tool during the answer.</source>
     <message>
       <source>Planner</source>
       <translation>规划员</translation>
+    </message>
+    <message>
+      <source>Planned reply chunks</source>
+      <translation>计划回复分块数</translation>
+    </message>
+    <message>
+      <source>Planned reply min chars</source>
+      <translation>计划回复最少字符数</translation>
     </message>
     <message>
       <source>Planning</source>
@@ -2077,6 +2093,10 @@ Let model decide — expose an open-document tool during the answer.</source>
       <translation>重置为默认？</translation>
     </message>
     <message>
+      <source>Reasoning effort</source>
+      <translation>推理力度</translation>
+    </message>
+    <message>
       <source>Responsibility</source>
       <translation>责任</translation>
     </message>
@@ -2151,6 +2171,10 @@ Let model decide — expose an open-document tool during the answer.</source>
     <message>
       <source>Runtime</source>
       <translation>运行时</translation>
+    </message>
+    <message>
+      <source>Runtime Status</source>
+      <translation>运行状态</translation>
     </message>
     <message>
       <source>Russian</source>
@@ -3740,6 +3764,480 @@ Continue?</source>
       <translation>你的偏好已保存，但 Wisp 无法更新操作系统启动项：
 
 {error}</translation>
+    </message>
+    <message>
+      <source>Hold the voice hotkey while you speak, then release. Hold for at least half a second and speak clearly; very short or silent taps are skipped.</source>
+      <translation>按住语音快捷键说话，说完后松开。请至少按住半秒并清晰发音；过短或无声的按键会被忽略。</translation>
+    </message>
+    <message>
+      <source>First use downloads the model (about 150 MB for base) and needs internet once. Use the button below to download it ahead of time.</source>
+      <translation>首次使用会下载模型（base 约 150 MB），需要联网一次。可使用下方按钮提前下载。</translation>
+    </message>
+    <message>
+      <source>Download / load model now</source>
+      <translation>立即下载/加载模型</translation>
+    </message>
+    <message>
+      <source>Download and load the speech model now so the first hold-to-talk does not stall. The first download needs an internet connection.</source>
+      <translation>立即下载并加载语音模型，避免首次按住说话时卡顿。首次下载需要联网。</translation>
+    </message>
+    <message>
+      <source>Loading the speech model... the first time downloads it (about 150 MB for the base model).</source>
+      <translation>正在加载语音模型……首次会下载（base 模型约 150 MB）。</translation>
+    </message>
+    <message>
+      <source>Could not load the speech model. Connect to the internet for the first download, then try again.</source>
+      <translation>无法加载语音模型。请先联网完成首次下载，然后重试。</translation>
+    </message>
+    <message>
+      <source>All API keys were removed from the OS keychain, you were signed out of all OAuth logins, and every setting was reset to defaults.</source>
+      <translation>已从操作系统密钥链中删除所有 API 密钥，已退出所有 OAuth 登录，并将所有设置重置为默认值。</translation>
+    </message>
+    <message>
+      <source>Any server with an OpenAI-style /audio/speech endpoint that can return PCM (self-hosted Kokoro/LocalAI, Groq, …).</source>
+      <translation>任何具有 OpenAI 风格 /audio/speech 端点并能返回 PCM 的服务器（自托管 Kokoro/LocalAI、Groq 等）。</translation>
+    </message>
+    <message>
+      <source>Check GitHub Releases for a newer Wisp build.</source>
+      <translation>在 GitHub Releases 中查看更新的 Wisp 版本。</translation>
+    </message>
+    <message>
+      <source>Check for updates</source>
+      <translation>检查更新</translation>
+    </message>
+    <message>
+      <source>Checking...</source>
+      <translation>正在检查……</translation>
+    </message>
+    <message>
+      <source>Could not erase the settings file:
+{error}</source>
+      <translation>无法删除设置文件：
+{error}</translation>
+    </message>
+    <message>
+      <source>Current version</source>
+      <translation>当前版本</translation>
+    </message>
+    <message>
+      <source>Download update</source>
+      <translation>下载更新</translation>
+    </message>
+    <message>
+      <source>Downloading...</source>
+      <translation>正在下载……</translation>
+    </message>
+    <message>
+      <source>Duplicate keys</source>
+      <translation>重复的按键</translation>
+    </message>
+    <message>
+      <source>ElevenLabs installed</source>
+      <translation>ElevenLabs 已安装</translation>
+    </message>
+    <message>
+      <source>ElevenLabs not installed</source>
+      <translation>ElevenLabs 未安装</translation>
+    </message>
+    <message>
+      <source>ElevenLabs support can be installed after setup if it was skipped during the exe build because the build path was too long.</source>
+      <translation>如果在生成 exe 时因构建路径过长而跳过了 ElevenLabs，可在安装后再单独安装其支持。</translation>
+    </message>
+    <message>
+      <source>Install ElevenLabs</source>
+      <translation>安装 ElevenLabs</translation>
+    </message>
+    <message>
+      <source>Install ElevenLabs before applying it as the active TTS provider.</source>
+      <translation>在将 ElevenLabs 设为当前 TTS 提供商之前，请先安装它。</translation>
+    </message>
+    <message>
+      <source>Install Kokoro before applying it as the active TTS provider.</source>
+      <translation>在将 Kokoro 设为当前 TTS 提供商之前，请先安装它。</translation>
+    </message>
+    <message>
+      <source>Kokoro not installed</source>
+      <translation>Kokoro 未安装</translation>
+    </message>
+    <message>
+      <source>Loading...</source>
+      <translation>正在加载……</translation>
+    </message>
+    <message>
+      <source>No matching settings.</source>
+      <translation>没有匹配的设置。</translation>
+    </message>
+    <message>
+      <source>Not set</source>
+      <translation>未设置</translation>
+    </message>
+    <message>
+      <source>Open update</source>
+      <translation>打开更新</translation>
+    </message>
+    <message>
+      <source>Page reset</source>
+      <translation>页面已重置</translation>
+    </message>
+    <message>
+      <source>Priority</source>
+      <translation>优先级</translation>
+    </message>
+    <message>
+      <source>Priority {n} — fallback (tried if the rows above fail)</source>
+      <translation>优先级 {n} — 备用（当上面的行失败时尝试）</translation>
+    </message>
+    <message>
+      <source>Priority {n} — primary model</source>
+      <translation>优先级 {n} — 主模型</translation>
+    </message>
+    <message>
+      <source>Ready to check for updates.</source>
+      <translation>已准备好检查更新。</translation>
+    </message>
+    <message>
+      <source>Recheck</source>
+      <translation>重新检查</translation>
+    </message>
+    <message>
+      <source>Recommendation: close Settings, reopen it, and try again.</source>
+      <translation>建议：关闭设置，重新打开后再试。</translation>
+    </message>
+    <message>
+      <source>Refresh the speech backend readout without loading the speech model.</source>
+      <translation>刷新语音后端读数，而不加载语音模型。</translation>
+    </message>
+    <message>
+      <source>Reset complete</source>
+      <translation>重置完成</translation>
+    </message>
+    <message>
+      <source>Reset error</source>
+      <translation>重置出错</translation>
+    </message>
+    <message>
+      <source>Reset page failed</source>
+      <translation>重置页面失败</translation>
+    </message>
+    <message>
+      <source>Reset partly complete</source>
+      <translation>重置部分完成</translation>
+    </message>
+    <message>
+      <source>Runs through a local GPT-SoVITS api_v2.py server. No cloud key is needed.</source>
+      <translation>通过本地 GPT-SoVITS api_v2.py 服务器运行。无需云端密钥。</translation>
+    </message>
+    <message>
+      <source>Settings were reset, but these items could not be fully cleared:</source>
+      <translation>设置已重置，但以下项目无法完全清除：</translation>
+    </message>
+    <message>
+      <source>Show chat tool-loop trace</source>
+      <translation>显示聊天工具循环跟踪</translation>
+    </message>
+    <message>
+      <source>The first row is the primary model; lower rows are fallbacks tried in priority order.</source>
+      <translation>第一行是主模型；下面的行是按优先级顺序尝试的备用模型。</translation>
+    </message>
+    <message>
+      <source>These keys could not be written to the OS keychain and were NOT stored:</source>
+      <translation>以下密钥无法写入操作系统密钥链，未被存储：</translation>
+    </message>
+    <message>
+      <source>This build does not include a GitHub OAuth app client ID yet.</source>
+      <translation>此版本尚未包含 GitHub OAuth 应用的客户端 ID。</translation>
+    </message>
+    <message>
+      <source>Two or more bindings share the same key.
+Please resolve conflicts before saving.</source>
+      <translation>两个或更多绑定使用了相同的按键。
+请在保存前解决冲突。</translation>
+    </message>
+    <message>
+      <source>Unsaved changes</source>
+      <translation>未保存的更改</translation>
+    </message>
+    <message>
+      <source>Use planned chunked replies</source>
+      <translation>使用计划的分块回复</translation>
+    </message>
+    <message>
+      <source>Uses your OpenAI API key from the Models tab.</source>
+      <translation>使用“模型”选项卡中的 OpenAI API 密钥。</translation>
+    </message>
+    <message>
+      <source>Wisp will install ElevenLabs support into its user-writable optional packages folder.
+
+Package: elevenlabs&gt;=1.0.0
+
+Use this when the packaged exe skipped ElevenLabs because the build path was too long. The install may need internet access and will survive Wisp rebuilds.
+
+Continue?</source>
+      <translation>Wisp 会将 ElevenLabs 支持安装到其用户可写的可选包文件夹中。
+
+包：elevenlabs&gt;=1.0.0
+
+当打包的 exe 因构建路径过长而跳过 ElevenLabs 时可使用此功能。安装可能需要联网，并会在 Wisp 重新构建后保留。
+
+是否继续？</translation>
+    </message>
+    <message>
+      <source>Wisp will install Kokoro into its user-writable optional packages folder.
+
+Packages: kokoro&gt;=0.9.4, soundfile, English speech model
+Estimated storage: up to about 2 GB if speech dependencies are missing; less if they are already installed. First use may also download the Kokoro model cache.
+
+Current Kokoro settings:
+Voice: {voice}
+Language code: {lang_code}
+Device: {device}
+Speed: {speed}
+Sample rate: {sample_rate} Hz
+Volume: {volume}
+
+On Windows, Kokoro may also need eSpeak NG installed separately if Test TTS reports a phoneme/espeak error.
+
+Continue?</source>
+      <translation>Wisp 会将 Kokoro 安装到其用户可写的可选包文件夹中。
+
+包：kokoro&gt;=0.9.4、soundfile、英语语音模型
+预计占用空间：若缺少语音依赖项最多约 2 GB；若已安装则更少。首次使用还可能下载 Kokoro 模型缓存。
+
+当前 Kokoro 设置：
+语音：{voice}
+语言代码：{lang_code}
+设备：{device}
+速度：{speed}
+采样率：{sample_rate} Hz
+音量：{volume}
+
+在 Windows 上，如果 Test TTS 报告音素/espeak 错误，Kokoro 可能还需要单独安装 eSpeak NG。
+
+是否继续？</translation>
+    </message>
+    <message>
+      <source>You may need to remove them manually (e.g. from your system credential store). See the log for details.</source>
+      <translation>你可能需要手动删除它们（例如从系统凭据存储中）。详情请查看日志。</translation>
+    </message>
+    <message>
+      <source>Your other settings were still saved. See the log for details, then try saving the affected keys again.</source>
+      <translation>你的其他设置仍已保存。详情请查看日志，然后重新尝试保存受影响的密钥。</translation>
+    </message>
+    <message>
+      <source>add an API key below</source>
+      <translation>在下方添加 API 密钥</translation>
+    </message>
+    <message>
+      <source>custom endpoint API key</source>
+      <translation>自定义端点 API 密钥</translation>
+    </message>
+    <message>
+      <source>e.g. 10</source>
+      <translation>例如 10</translation>
+    </message>
+    <message>
+      <source>e.g. 4</source>
+      <translation>例如 4</translation>
+    </message>
+    <message>
+      <source>e.g. 60</source>
+      <translation>例如 60</translation>
+    </message>
+    <message>
+      <source>not required</source>
+      <translation>无需填写</translation>
+    </message>
+    <message>
+      <source>sign in first</source>
+      <translation>请先登录</translation>
+    </message>
+    <message>
+      <source>sign in to GitHub or add a Copilot token first</source>
+      <translation>请先登录 GitHub 或添加 Copilot 令牌</translation>
+    </message>
+    <message>
+      <source>{count} matching pages.</source>
+      <translation>{count} 个匹配的页面。</translation>
+    </message>
+    <message>
+      <source>{page} settings were reset to defaults.</source>
+      <translation>{page} 设置已重置为默认值。</translation>
+    </message>
+    <message>
+      <source>Auto</source>
+      <translation>自动</translation>
+    </message>
+    <message>
+      <source>LOCAL FILE TOOLS</source>
+      <translation>本地文件工具</translation>
+    </message>
+    <message>
+      <source>Local files</source>
+      <translation>本地文件</translation>
+    </message>
+    <message>
+      <source>MCP tools are grouped by server. Tool rows can override their server.</source>
+      <translation>MCP 工具按服务器分组。工具行可以覆盖其所属服务器。</translation>
+    </message>
+    <message>
+      <source>OTHER INSTALLED + ADD-ON TOOLS</source>
+      <translation>其他已安装 + 附加工具</translation>
+    </message>
+    <message>
+      <source>These default to the Local files dropdown. Writes still follow the configured file roots and approval mode.</source>
+      <translation>这些默认采用“本地文件”下拉菜单的设置。写入仍遵循已配置的文件根目录和审批模式。</translation>
+    </message>
+    <message>
+      <source>never offered to the model for this hotkey.</source>
+      <translation>对于此快捷键，绝不提供给模型。</translation>
+    </message>
+    <message>
+      <source>offered to the model; the model decides whether to call it.</source>
+      <translation>提供给模型；由模型决定是否调用。</translation>
+    </message>
+    <message>
+      <source>{count} tools from this MCP server.</source>
+      <translation>来自此 MCP 服务器的 {count} 个工具。</translation>
+    </message>
+    <message>
+      <source>LLM request failed: {message}</source>
+      <translation>LLM 请求失败：{message}</translation>
+    </message>
+    <message>
+      <source>Rewrite failed: {message}</source>
+      <translation>改写失败：{message}</translation>
+    </message>
+    <message>
+      <source>Dictation failed: {message}</source>
+      <translation>听写失败：{message}</translation>
+    </message>
+    <message>
+      <source>Couldn't start recording: {message}</source>
+      <translation>无法开始录音：{message}</translation>
+    </message>
+    <message>
+      <source>Couldn't start dictation: {message}</source>
+      <translation>无法开始听写：{message}</translation>
+    </message>
+    <message>
+      <source>Could not read selected text: {message}</source>
+      <translation>无法读取所选文本：{message}</translation>
+    </message>
+    <message>
+      <source>Local speech warmup failed: {message}</source>
+      <translation>本地语音预热失败：{message}</translation>
+    </message>
+    <message>
+      <source>Global hotkeys did not start. Click the Wisp icon to summon it.</source>
+      <translation>全局快捷键未能启动。点击 Wisp 图标来唤出它。</translation>
+    </message>
+    <message>
+      <source>No selected text or clipboard text to add.</source>
+      <translation>没有可添加的所选文本或剪贴板文本。</translation>
+    </message>
+    <message>
+      <source>No selected text to rewrite.</source>
+      <translation>没有可改写的所选文本。</translation>
+    </message>
+    <message>
+      <source>Local voice is still warming up. Try again when Wisp says local speech is ready.</source>
+      <translation>本地语音仍在预热中。请在 Wisp 提示本地语音就绪后重试。</translation>
+    </message>
+    <message>
+      <source>Warming up local voice and speech recognition...</source>
+      <translation>正在预热本地语音和语音识别……</translation>
+    </message>
+    <message>
+      <source>Warming up local voice...</source>
+      <translation>正在预热本地语音……</translation>
+    </message>
+    <message>
+      <source>Warming up local speech recognition...</source>
+      <translation>正在预热本地语音识别……</translation>
+    </message>
+    <message>
+      <source>Warming up speech recognition...</source>
+      <translation>正在预热语音识别……</translation>
+    </message>
+    <message>
+      <source>Speech recognition is ready. Warming up local voice...</source>
+      <translation>语音识别已就绪。正在预热本地语音……</translation>
+    </message>
+    <message>
+      <source>Local voice and speech recognition are ready.</source>
+      <translation>本地语音和语音识别已就绪。</translation>
+    </message>
+    <message>
+      <source>Local voice is ready.</source>
+      <translation>本地语音已就绪。</translation>
+    </message>
+    <message>
+      <source>Local speech recognition is ready.</source>
+      <translation>本地语音识别已就绪。</translation>
+    </message>
+    <message>
+      <source>Agent task spec was empty.</source>
+      <translation>代理任务说明为空。</translation>
+    </message>
+    <message>
+      <source>No agent task is running.</source>
+      <translation>没有正在运行的代理任务。</translation>
+    </message>
+    <message>
+      <source>Agent task was not running.</source>
+      <translation>代理任务未在运行。</translation>
+    </message>
+    <message>
+      <source>Agent task cancellation requested.</source>
+      <translation>已请求取消代理任务。</translation>
+    </message>
+    <message>
+      <source>Choose an agent run first.</source>
+      <translation>请先选择一个代理运行。</translation>
+    </message>
+    <message>
+      <source>Could not load that agent task spec.</source>
+      <translation>无法加载该代理任务说明。</translation>
+    </message>
+    <message>
+      <source>Agent approval could not be shown; declining the request.</source>
+      <translation>无法显示代理审批；将拒绝该请求。</translation>
+    </message>
+    <message>
+      <source>Agent approval response was missing an id.</source>
+      <translation>代理审批响应缺少 id。</translation>
+    </message>
+    <message>
+      <source>Recommendation: add or refresh the provider API key in Settings, then run Setup Check.</source>
+      <translation>建议：在设置中添加或刷新提供商 API 密钥，然后运行设置检查。</translation>
+    </message>
+    <message>
+      <source>Recommendation: choose a supported model in Settings or refresh the provider model list.</source>
+      <translation>建议：在设置中选择受支持的模型，或刷新提供商的模型列表。</translation>
+    </message>
+    <message>
+      <source>Recommendation: check your network/provider status, then retry or switch to a fallback model.</source>
+      <translation>建议：检查你的网络/提供商状态，然后重试或切换到备用模型。</translation>
+    </message>
+    <message>
+      <source>Recommendation: check the TTS provider, voice, and API key, then play a sample in Setup Check.</source>
+      <translation>建议：检查 TTS 提供商、语音和 API 密钥，然后在设置检查中播放示例。</translation>
+    </message>
+    <message>
+      <source>Recommendation: check microphone permission/input device, then run the speech check in Settings.</source>
+      <translation>建议：检查麦克风权限/输入设备，然后在设置中运行语音检查。</translation>
+    </message>
+    <message>
+      <source>Recommendation: choose a different hotkey in Settings or close the app currently using it.</source>
+      <translation>建议：在设置中选择其他快捷键，或关闭当前正在使用它的应用。</translation>
+    </message>
+    <message>
+      <source>Recommendation: grant screenshot/screen-recording permission, then rerun Setup Check.</source>
+      <translation>建议：授予截图/屏幕录制权限，然后重新运行设置检查。</translation>
+    </message>
+    <message>
+      <source>Didn't catch any speech. Hold the key down while you speak, then release.</source>
+      <translation>没有捕捉到语音。请按住按键说话，说完后松开。</translation>
     </message>
   </context>
 </TS>

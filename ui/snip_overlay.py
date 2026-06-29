@@ -110,18 +110,39 @@ class SnipOverlay(QWidget):
             self._sel_rect = None
             self._unhook()
             if rect.width() > 4 and rect.height() > 4:
-                # Translate widget-local coords to absolute screen coords
-                abs_x = rect.x() + self._virtual_origin.x()
-                abs_y = rect.y() + self._virtual_origin.y()
-                self.region_selected.emit({
-                    "left":   abs_x,
-                    "top":    abs_y,
-                    "width":  rect.width(),
-                    "height": rect.height(),
-                })
+                self.region_selected.emit(self._region_for(rect))
             else:
                 self.cancelled.emit()
             self.close()
+
+    def _region_for(self, rect: QRect) -> dict:
+        """Translate the widget-local selection into an mss-style region.
+
+        Qt reports mouse coordinates in device-independent (logical) pixels, but
+        mss.grab on Windows/Linux captures in physical pixels. On a scaled
+        display (e.g. 150%) feeding logical coordinates straight to mss grabs a
+        region shifted up and to the left, with the error growing further from
+        the top-left corner. Scale by the screen's device-pixel ratio so the
+        grab lands exactly where the user dragged. macOS' screencapture -R takes
+        logical points, so that path keeps the unscaled coordinates.
+        """
+        # Widget-local coords -> absolute logical screen coords.
+        g_left = rect.x() + self._virtual_origin.x()
+        g_top  = rect.y() + self._virtual_origin.y()
+        width  = rect.width()
+        height = rect.height()
+
+        if sys.platform == "darwin":
+            return {"left": g_left, "top": g_top, "width": width, "height": height}
+
+        screen = QApplication.screenAt(QPoint(g_left, g_top)) or self.screen()
+        dpr = screen.devicePixelRatio() if screen is not None else 1.0
+        return {
+            "left":   round(g_left * dpr),
+            "top":    round(g_top * dpr),
+            "width":  round(width * dpr),
+            "height": round(height * dpr),
+        }
 
     # ------------------------------------------------------------------
     # Key input

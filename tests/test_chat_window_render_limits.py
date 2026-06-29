@@ -650,6 +650,46 @@ def test_chat_final_text_replaces_partial_stream_before_persist():
 
 
 @pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
+def test_late_chunk_for_other_conversation_does_not_contaminate_active_stream():
+    """An in-flight query's late reply must not append into a newer query's bubble.
+
+    Reproduces the overlapping-query race: the first question is still in-flight
+    (no reply yet), the user asks a second question that begins streaming, and
+    then the first question's answer finally arrives. Its chunks target
+    conversation 0, but the live bubble belongs to conversation 1, so they must
+    be dropped.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    conversations = [
+        {"messages": [{"role": "user", "content": "first question"}]},
+        {"messages": [{"role": "user", "content": "second question"}]},
+    ]
+    window = ChatWindow(conversations, lambda _messages: iter(()))
+    try:
+        # First query reserves its bubble, then stalls (no chunks yet).
+        window.begin_external_reply_stream(0)
+        # Second query takes over the live stream and produces real output.
+        window.begin_external_reply_stream(1)
+        assert window._streaming_idx == 1
+        window.external_reply_chunk(1, "answer two")
+        assert window._current_ai_reply_text == "answer two"
+
+        # The stalled first query finally replies — these must be ignored.
+        window.external_reply_chunk(0, " LEAKED-ONE")
+        window.finish_external_reply_stream(0, "answer one")
+
+        assert "LEAKED" not in window._current_ai_reply_text
+        assert window._current_ai_reply_text == "answer two"
+        assert window._streaming_idx == 1
+    finally:
+        window.close()
+        app.processEvents()
+
+
+@pytest.mark.skipif(not PYSIDE6_AVAILABLE, reason="PySide6 not installed")
 def test_chat_followup_injects_hidden_file_context():
     """Verify file metadata is sent as hidden system context, not message turns."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

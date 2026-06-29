@@ -62,13 +62,48 @@ def save_token(token: str) -> None:
 
 
 def get_token() -> str | None:
-    """Return token."""
+    """Return the dedicated Copilot PAT, if one was saved via save_token()."""
     try:
         with keychain_lock():
             keyring = _keyring_module()
             return keyring.get_password(_KEYRING_SERVICE, _KEYRING_ACCOUNT)
     except Exception as exc:
         raise CopilotTokenError(f"Could not read token from OS keychain: {exc}") from exc
+
+
+def github_oauth_token() -> str | None:
+    """Return the 'Sign in with GitHub' OAuth access token, if signed in."""
+    try:
+        from core.auth import github
+        return github.get_valid_access_token()
+    except Exception:
+        return None
+
+
+def get_effective_token() -> str | None:
+    """Return the token the Copilot route should authenticate with.
+
+    Prefers a dedicated Copilot PAT (saved via save_token). Falls back to the
+    GitHub OAuth access token from "Sign in with GitHub", so signing into GitHub
+    also enables the Copilot route. The OAuth token only works if GitHub has
+    granted that token/account Copilot access, but it lets the common case
+    (already signed into GitHub) work without a separate PAT.
+    """
+    try:
+        token = get_token()
+    except CopilotTokenError:
+        token = None
+    if token:
+        return token
+    return github_oauth_token()
+
+
+def has_effective_token() -> bool:
+    """Return whether the Copilot route has any usable token (PAT or GitHub OAuth)."""
+    try:
+        return bool(get_effective_token())
+    except Exception:
+        return False
 
 
 def clear_token() -> None:
@@ -88,6 +123,8 @@ def token_status() -> tuple[bool, str]:
     """Handle token status for auth copilot auth."""
     token = get_token()
     if not token:
+        if github_oauth_token():
+            return True, "Using your GitHub sign-in (no separate Copilot token saved)."
         return False, "Not configured"
     ok, message = validate_token_format(token)
     if ok:

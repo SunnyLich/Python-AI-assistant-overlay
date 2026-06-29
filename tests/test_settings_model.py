@@ -167,7 +167,7 @@ def test_default_profile_preserves_legacy_second_caller_defaults():
         assert default_profile.caller_defaults["context_documents_mode"] == "off"
         assert config.CALLER_ROWS[0]["context_ambient"] is False
         assert config.CALLER_ROWS[0]["context_documents_mode"] == "off"
-        assert config.CALLER_ROWS[0]["context_memory_mode"] == "on"
+        assert config.CALLER_ROWS[0]["context_memory_mode"] == "off"
         assert row["context_ambient"] is False
         assert row["context_documents_mode"] == "off"
         assert row["context_memory_mode"] == "off"

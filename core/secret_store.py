@@ -117,6 +117,23 @@ def _read_legacy_item(name: str) -> str:
         return ""
 
 
+def _delete_legacy_item(name: str) -> None:
+    """Remove an old per-key keychain item if one still exists.
+
+    No-op when the item is absent (keyring raises PasswordDeleteError), so this
+    is safe to call for keys that were never stored in the legacy layout.
+    """
+    try:
+        with keychain_lock():
+            import keyring  # type: ignore
+            try:
+                keyring.delete_password(_KEYRING_SERVICE, _account(name))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def _load_blob() -> dict:
     """Return the consolidated secrets dict, reading the keychain once and caching."""
     global _blob_cache
@@ -265,6 +282,10 @@ def delete_secret(name: str) -> None:
             _save_blob(blob)
     except Exception:
         pass
+    # Also remove any surviving legacy per-key item. Migration copies these into
+    # the blob but never deletes them, so a blob-only delete would be resurrected
+    # by get_keychain_secret's legacy fallback on the next read.
+    _delete_legacy_item(name)
     set_configured_marker(name, False)
 
 

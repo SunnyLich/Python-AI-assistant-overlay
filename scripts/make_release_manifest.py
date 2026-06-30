@@ -30,7 +30,7 @@ def _platform_key(name: str) -> str:
 
 def _version_from_tag(tag: str) -> str:
     version = tag[1:] if tag.startswith("v") else tag
-    if not re.match(r"^\d+\.\d+\.\d+(?:[.+-][0-9A-Za-z.-]+)?$", version):
+    if not re.match(r"^\d+\.\d+(?:\.\d+)?(?:[.+-][0-9A-Za-z.-]+)?$", version):
         raise ValueError(f"Release tag does not look like a version: {tag}")
     return version
 
@@ -58,7 +58,7 @@ def build_manifest(asset_paths: list[Path], repo: str, tag: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True, help="GitHub repository, e.g. owner/name")
-    parser.add_argument("--tag", required=True, help="Release tag, e.g. v0.1.0")
+    parser.add_argument("--tag", required=True, help="Release tag, e.g. v0.6 or v0.6.1")
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("assets", nargs="+", type=Path)
     args = parser.parse_args()

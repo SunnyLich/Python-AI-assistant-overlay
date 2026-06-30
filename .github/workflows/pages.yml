@@ -28,10 +28,51 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Check Pages setup
+        id: pages_setup
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          response="$RUNNER_TEMP/pages-response.json"
+          status="$(curl -sS -o "$response" -w "%{http_code}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPO/pages")"
+
+          if [ "$status" = "200" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$status" = "404" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=GitHub Pages is not enabled::Enable Settings > Pages > Source: GitHub Actions, then rerun this workflow."
+            {
+              echo "### GitHub Pages is not enabled"
+              echo
+              echo "Enable it once in repository settings:"
+              echo
+              echo "1. Open Settings > Pages."
+              echo "2. Set Source to GitHub Actions."
+              echo "3. Rerun this workflow."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "Unexpected GitHub Pages API status: $status" >&2
+          cat "$response" >&2
+          exit 1
+
       - name: Configure Pages
+        if: steps.pages_setup.outputs.enabled == 'true'
         uses: actions/configure-pages@v6
 
       - name: Prepare static site
+        if: steps.pages_setup.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -42,10 +83,17 @@ jobs:
           touch "$site_dir/.nojekyll"
 
       - name: Upload Pages artifact
+        if: steps.pages_setup.outputs.enabled == 'true'
         uses: actions/upload-pages-artifact@v4
         with:
           path: ${{ runner.temp }}/wisp-site
 
       - name: Deploy to GitHub Pages
+        if: steps.pages_setup.outputs.enabled == 'true'
         id: deployment
         uses: actions/deploy-pages@v5
+
+      - name: Skip deploy until Pages is enabled
+        if: steps.pages_setup.outputs.enabled != 'true'
+        shell: bash
+        run: echo "Skipped deploy because GitHub Pages is not enabled for this repository yet."

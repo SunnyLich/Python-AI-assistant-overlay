@@ -105,6 +105,12 @@ function applyContentI18n() {
     const translated = trText(current);
     if (translated !== current) img.setAttribute('alt', translated);
   });
+  document.querySelectorAll('#content code[data-i18n-text-block]').forEach(code => {
+    const key = _norm(code.textContent);
+    if (!key) return;
+    const val = d.tr[key];
+    if (val != null) code.textContent = val;
+  });
   document.querySelectorAll('#content code[data-i18n-system-prompt]').forEach(code => {
     if (!d.systemPrompt) return;
     code.innerHTML = _renderSystemPromptBlock(d.systemPrompt);

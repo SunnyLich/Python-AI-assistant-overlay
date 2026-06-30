@@ -37,6 +37,16 @@ class GitHubWorkflowTests(unittest.TestCase):
         self.assertNotIn("actions/checkout@v4", workflow_text)
         self.assertNotIn("actions/setup-python@v5", workflow_text)
 
+    def test_pages_workflow_skips_cleanly_when_pages_is_not_enabled(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "pages.yml").read_text(encoding="utf-8")
+
+        self.assertIn("Check Pages setup", workflow)
+        self.assertIn("https://api.github.com/repos/$REPO/pages", workflow)
+        self.assertIn('if [ "$status" = "404" ]; then', workflow)
+        self.assertIn("GitHub Pages is not enabled", workflow)
+        self.assertIn("Skip deploy until Pages is enabled", workflow)
+        self.assertIn("if: steps.pages_setup.outputs.enabled == 'true'", workflow)
+
     def test_build_workflow_publishes_three_platform_release_manifest(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
 

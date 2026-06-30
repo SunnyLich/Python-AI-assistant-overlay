@@ -747,7 +747,7 @@ Release             → <span class="c-blue">stop_and_transcribe()</span> → te
 
 <hr />
 <h2 id="anatomy">Anatomy of a task run</h2>
-<pre><code>1. A TaskSpec is built from your goal + captured context
+<pre><code data-i18n-text-block>1. A TaskSpec is built from your goal + captured context
 2. The runner works the goal turn by turn:
    a. plans the steps
    b. gathers facts / reads files via the toolbox

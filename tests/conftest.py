@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import sys
 
+import pytest
+
 os.environ.setdefault("PYTHONFAULTHANDLER", "1")
 
 _REAL_HOST_TESTS = os.environ.get("WISP_RUN_REAL_HOST_TESTS") == "1"
@@ -40,6 +42,32 @@ def _suppress_windows_crash_dialogs() -> None:
 _suppress_windows_crash_dialogs()
 
 
+def _set_test_app_language(language: str = "en") -> None:
+    """Keep UI text expectations independent from a developer's saved language."""
+    try:
+        import config as wisp_config
+
+        wisp_config.APP_LANGUAGE = language
+    except Exception:
+        return
+    try:
+        from ui import i18n
+
+        i18n.set_language(language, app=_QT_APP)
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _stable_app_language_for_tests():
+    """Start and finish each test with English UI strings."""
+    _set_test_app_language()
+    try:
+        yield
+    finally:
+        _set_test_app_language()
+
+
 def pytest_sessionstart(session) -> None:
     """Keep one offscreen QApplication alive for the full pytest process."""
     del session
@@ -52,3 +80,4 @@ def pytest_sessionstart(session) -> None:
 
     global _QT_APP
     _QT_APP = QApplication.instance() or QApplication(["wisp-tests"])
+    _set_test_app_language()

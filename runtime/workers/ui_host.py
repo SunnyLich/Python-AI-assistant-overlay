@@ -389,7 +389,9 @@ class QtFreezeWatchdog:
     def _write_report(self, prefix: str, kind: str, stalled_for: float, status: dict) -> None:
         """Write report."""
         try:
-            path = _ui_log_dir() / f"{prefix}_{time.strftime('%Y%m%d-%H%M%S')}.log"
+            log_dir = _ui_log_dir()
+            path = log_dir / f"{prefix}_{time.strftime('%Y%m%d-%H%M%S')}.log"
+            tmp_path = path.with_suffix(path.suffix + ".tmp")
             body = [
                 f"time={time.strftime('%Y-%m-%d %H:%M:%S')}\n",
                 f"kind={kind}\n",
@@ -402,7 +404,8 @@ class QtFreezeWatchdog:
                 "\nThread stacks:\n",
                 _format_thread_stacks(),
             ]
-            path.write_text("".join(body), encoding="utf-8")
+            tmp_path.write_text("".join(body), encoding="utf-8")
+            tmp_path.replace(path)
             print(f"[wisp-ui] watchdog wrote {path}", file=sys.stderr, flush=True)
         except Exception:
             log.exception("failed writing UI watchdog log")
@@ -2012,8 +2015,10 @@ class QtProtocolHost:
     def _write_slow_dispatch_log(self, method: str, elapsed: float) -> None:
         """Write slow dispatch log."""
         try:
-            path = _ui_log_dir() / f"ui_slow_dispatch_{time.strftime('%Y%m%d-%H%M%S')}.log"
-            path.write_text(
+            log_dir = _ui_log_dir()
+            path = log_dir / f"ui_slow_dispatch_{time.strftime('%Y%m%d-%H%M%S')}.log"
+            tmp_path = path.with_suffix(path.suffix + ".tmp")
+            tmp_path.write_text(
                 "".join(
                     [
                         f"time={time.strftime('%Y-%m-%d %H:%M:%S')}\n",
@@ -2026,6 +2031,7 @@ class QtProtocolHost:
                 ),
                 encoding="utf-8",
             )
+            tmp_path.replace(path)
             print(f"[wisp-ui] slow dispatch wrote {path}", file=sys.stderr, flush=True)
         except Exception:
             log.exception("failed writing UI slow-dispatch log")
@@ -3778,6 +3784,9 @@ class QtProtocolHost:
 
         def _open() -> None:
             """Open (or raise) the Memory viewer on the Qt thread."""
+            watchdog = getattr(self, "_watchdog", None)
+            if watchdog is not None:
+                watchdog.expect_slow(10.0)
             try:
                 from ui.memory_viewer import MemoryViewer
 
@@ -3797,8 +3806,11 @@ class QtProtocolHost:
                 viewer.activateWindow()
             except Exception:
                 traceback.print_exc()
+            finally:
+                if watchdog is not None:
+                    watchdog.beat()
 
-        QTimer.singleShot(0, _open)
+        QTimer.singleShot(50, _open)
         return {"queued": True}
 
     def _show_addons(

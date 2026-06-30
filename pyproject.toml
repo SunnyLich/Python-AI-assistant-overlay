@@ -1,7 +1,7 @@
 # Project metadata and shared tool configuration for the Wisp Python package.
 [project]
 name = "wisp"
-version = "0.5.1"
+version = "0.5.3"
 requires-python = ">=3.12,<3.13"
 
 [tool.pytest.ini_options]

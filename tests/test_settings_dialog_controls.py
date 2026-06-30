@@ -8,6 +8,22 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _default_settings_tests_to_english():
+    """Keep settings UI assertions independent from the developer's local language."""
+    import config
+    from ui import i18n
+
+    old_language = getattr(config, "APP_LANGUAGE", "")
+    config.APP_LANGUAGE = ""
+    i18n.set_language(None)
+    try:
+        yield
+    finally:
+        config.APP_LANGUAGE = old_language
+        i18n.set_language(None)
+
+
 @pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
 def test_settings_combo_ignores_wheel_when_popup_closed():
     """Verify settings combo ignores wheel when popup closed behavior."""

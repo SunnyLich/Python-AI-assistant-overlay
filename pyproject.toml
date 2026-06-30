@@ -16,7 +16,6 @@ extend-exclude = [
     "build",
     "dist",
     "build_logs",
-    "manual_test_addons",
 ]
 
 [tool.ruff.lint]

@@ -100,8 +100,8 @@ _Generated as an assessment pass._
 7. **Fix docstring drift** — several files still name old paths (`core/llm.py`,
    `core/agent_runner.py`). Cheap correctness-of-docs win.
 8. **Close out the open `*_PLAN.md` debt** — `AUTO_AGENT_TOOL_CAPABILITY_PLAN`,
-   `TEMP_PROFILE_PLAN`, `FLOWS_SPLIT_PLAN`, `CHAT_TOOL_LOOP_COMPARISON_PLAN`. Each is
-   an unfinished or finished-but-not-removed refactor marker. Finish or delete.
+   `FLOWS_SPLIT_PLAN`. Each is an unfinished or finished-but-not-removed
+   refactor marker. Finish or delete.
 9. **Audit `ui_host.py` (4,104) and `task_window.py` (3,601)** for the same
    decomposition treatment once the patterns above are proven.
 

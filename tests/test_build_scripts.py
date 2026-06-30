@@ -47,6 +47,8 @@ class BuildScriptTests(unittest.TestCase):
 
         self.assertIn("function Require-PackagingFile", powershell)
         self.assertIn("$RequiredBuildFiles = @(", powershell)
+        self.assertIn('$RequirementsFile = "requirements-windows.lock"', powershell)
+        self.assertIn('$BuildRequirementsFile = "requirements-build.lock"', powershell)
         self.assertIn('Path = (Join-Path $Root $RequirementsFile); Name = $RequirementsFile', powershell)
         self.assertIn('Path = (Join-Path $Root $BuildRequirementsFile); Name = $BuildRequirementsFile', powershell)
         self.assertIn("$Name is required for packaging.", powershell)
@@ -56,11 +58,13 @@ class BuildScriptTests(unittest.TestCase):
         shell = (ROOT / "tools" / "build_exe.sh").read_text(encoding="utf-8")
 
         self.assertIn("require_file()", shell)
-        self.assertIn('require_file "$REQUIREMENTS_FILE" "requirements.txt"', shell)
-        self.assertIn('require_file "$BUILD_REQUIREMENTS_FILE" "requirements-build.txt"', shell)
+        self.assertIn('REQUIREMENTS_FILE="$ROOT/requirements-linux.lock"', shell)
+        self.assertIn('BUILD_REQUIREMENTS_FILE="$ROOT/requirements-build.lock"', shell)
+        self.assertIn('require_file "$REQUIREMENTS_FILE" "requirements-linux.lock"', shell)
+        self.assertIn('require_file "$BUILD_REQUIREMENTS_FILE" "requirements-build.lock"', shell)
         self.assertIn('echo "ERROR: $name is required for packaging."', shell)
-        self.assertLess(shell.index('require_file "$BUILD_REQUIREMENTS_FILE" "requirements-build.txt"'), shell.index('"$CREATE_PYTHON" -m venv'))
-        self.assertLess(shell.index('require_file "$BUILD_REQUIREMENTS_FILE" "requirements-build.txt"'), shell.index("clean_build_outputs"))
+        self.assertLess(shell.index('require_file "$BUILD_REQUIREMENTS_FILE" "requirements-build.lock"'), shell.index('"$CREATE_PYTHON" -m venv'))
+        self.assertLess(shell.index('require_file "$BUILD_REQUIREMENTS_FILE" "requirements-build.lock"'), shell.index("clean_build_outputs"))
 
     def test_windows_build_warns_loudly_when_elevenlabs_is_skipped(self) -> None:
         powershell = (ROOT / "tools" / "build_exe.ps1").read_text(encoding="utf-8")

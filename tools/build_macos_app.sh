@@ -32,7 +32,7 @@ APP_NAME="Wisp"
 SPEC="$ROOT/packaging/$SPEC_NAME"
 REQUIREMENTS_FILE="$ROOT/requirements.txt"
 MACOS_LOCK_FILE="$ROOT/requirements-macos.lock"
-BUILD_REQUIREMENTS_FILE="$ROOT/requirements-build.txt"
+BUILD_REQUIREMENTS_FILE="$ROOT/requirements-build.lock"
 
 cd "$ROOT"
 
@@ -155,7 +155,7 @@ clean_build_outputs() {
 
 require_file "$REQUIREMENTS_FILE" "requirements.txt"
 require_file "$MACOS_LOCK_FILE" "requirements-macos.lock"
-require_file "$BUILD_REQUIREMENTS_FILE" "requirements-build.txt"
+require_file "$BUILD_REQUIREMENTS_FILE" "requirements-build.lock"
 require_file "$SPEC" "packaging/$SPEC_NAME"
 require_file "$ROOT/runtime/supervisor/app.py" "runtime/supervisor/app.py"
 require_file "$ROOT/.env.example" ".env.example"
@@ -212,7 +212,7 @@ if ! $SKIP_INSTALL; then
 fi
 
 if ! "$PYTHON" -m PyInstaller --version > /dev/null 2>&1; then
-    echo "PyInstaller is not installed. Run without --skip-install, or: $PYTHON -m pip install -r requirements-build.txt" >&2
+    echo "PyInstaller is not installed. Run without --skip-install, or: $PYTHON -m pip install -r requirements-build.lock" >&2
     exit 1
 fi
 

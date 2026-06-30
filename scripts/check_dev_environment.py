@@ -174,22 +174,35 @@ def ensure_build_requirements(root: Path) -> None:
     ensure_requirement_file(root, "requirements-build.txt", "build")
 
 
-def ensure_macos_lock(root: Path) -> None:
-    ensure_requirement_file(root, "requirements-macos.lock", "locked macOS")
-    lock_file = root / "requirements-macos.lock"
+def ensure_lock_file(root: Path, filename: str, source_filename: str, platform: str, description: str) -> None:
+    ensure_requirement_file(root, source_filename, description)
+    ensure_requirement_file(root, filename, description)
+    lock_file = root / filename
     unlocked = [
         text
         for line in lock_file.read_text(encoding="utf-8").splitlines()
         if (text := requirement_text(line)) and not requirement_is_exact_pin(line)
     ]
     if unlocked:
-        raise ValueError(f"requirements-macos.lock contains unlocked requirement {unlocked[0]!r}")
-    ensure_runtime_requirements(root)
-    runtime_requirements = requirement_names_for_platform(root / "requirements.txt", "darwin")
-    locked_requirements = requirement_names_for_platform(lock_file, "darwin")
-    missing = sorted(runtime_requirements - locked_requirements)
+        raise ValueError(f"{filename} contains unlocked requirement {unlocked[0]!r}")
+    source_requirements = requirement_names_for_platform(root / source_filename, platform)
+    locked_requirements = requirement_names_for_platform(lock_file, platform)
+    missing = sorted(source_requirements - locked_requirements)
     if missing:
-        raise ValueError(f"requirements-macos.lock is missing locked runtime requirement {missing[0]!r}")
+        raise ValueError(f"{filename} is missing locked {description} requirement {missing[0]!r}")
+
+
+def ensure_dependency_locks(root: Path) -> None:
+    ensure_runtime_requirements(root)
+    ensure_lock_file(root, "requirements-windows.lock", "requirements.txt", "win32", "Windows runtime")
+    ensure_lock_file(root, "requirements-linux.lock", "requirements.txt", "linux", "Linux runtime")
+    ensure_lock_file(root, "requirements-macos.lock", "requirements.txt", "darwin", "macOS runtime")
+    ensure_lock_file(root, "requirements-dev.lock", "requirements-dev.txt", sys.platform, "developer")
+    ensure_lock_file(root, "requirements-build.lock", "requirements-build.txt", sys.platform, "build")
+
+
+def ensure_macos_lock(root: Path) -> None:
+    ensure_lock_file(root, "requirements-macos.lock", "requirements.txt", "darwin", "runtime")
 
 
 def venv_python(root: Path, os_name: str | None = None) -> Path:
@@ -283,17 +296,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Developer environment is not ready: {exc}.")
         return 1
     try:
-        ensure_macos_lock(root)
-    except ValueError as exc:
-        print(f"Developer environment is not ready: {exc}.")
-        return 1
-    try:
         developer_modules = dev_modules(root)
     except ValueError as exc:
         print(f"Developer environment is not ready: {exc}.")
         return 1
     try:
         ensure_build_requirements(root)
+    except ValueError as exc:
+        print(f"Developer environment is not ready: {exc}.")
+        return 1
+    try:
+        ensure_dependency_locks(root)
     except ValueError as exc:
         print(f"Developer environment is not ready: {exc}.")
         return 1

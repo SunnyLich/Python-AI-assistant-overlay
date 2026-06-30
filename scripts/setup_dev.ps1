@@ -22,9 +22,11 @@ $WantMinor = ($Want -split "\.")[0..1] -join "."
 $VenvDir = Join-Path $Root ".venv"
 $VenvBackupDir = Join-Path $Root ".venv.rebuild-backup"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+$RequirementsFile = "requirements-windows.lock"
+$DevRequirementsFile = "requirements-dev.lock"
 $RequiredDependencyFiles = @(
-    (Join-Path $Root "requirements.txt"),
-    (Join-Path $Root "requirements-dev.txt")
+    (Join-Path $Root $RequirementsFile),
+    (Join-Path $Root $DevRequirementsFile)
 )
 foreach ($RequiredDependencyFile in $RequiredDependencyFiles) {
     if ((-not (Test-Path $RequiredDependencyFile)) -or ((Get-Item $RequiredDependencyFile).Length -eq 0)) {
@@ -184,7 +186,7 @@ try {
     }
 
     Invoke-Native "pip upgrade" $Python @("-m", "pip", "install", "--upgrade", "pip")
-    Invoke-Native "dependency install" $Python @("-m", "pip", "install", "-r", "requirements.txt", "-r", "requirements-dev.txt")
+    Invoke-Native "dependency install" $Python @("-m", "pip", "install", "-r", $RequirementsFile, "-r", $DevRequirementsFile)
     Invoke-Native "developer environment preflight" $Python @("scripts\check_dev_environment.py")
     Remove-VenvBackup
 } catch {

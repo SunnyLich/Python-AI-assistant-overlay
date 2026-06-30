@@ -69,20 +69,16 @@ fi
 WANT_MM="$(printf '%s' "$WANT" | cut -d. -f1,2)"
 
 VPY="$REPO_ROOT/.venv/bin/python"
-REQ_FILE="$REPO_ROOT/requirements.txt"
-STAMP_FILE="$REPO_ROOT/.venv/.wisp-deps.stamp"
+REQ_FILE="$REPO_ROOT/requirements-linux.lock"
+STAMP_FILE="$REPO_ROOT/.venv/.wisp-linux-python-deps.stamp"
 
 if [ "$OS_NAME" = "Darwin" ]; then
   REQ_FILE="$REPO_ROOT/requirements-macos.lock"
   STAMP_FILE="$REPO_ROOT/.venv/.wisp-macos-python-deps.stamp"
-  if [ ! -s "$REQ_FILE" ]; then
-    echo "ERROR: requirements-macos.lock is required for macOS setup." >&2
-    echo "Regenerate it with: bash scripts/compile_macos_lock.sh" >&2
-    exit 1
-  fi
 fi
 if [ ! -s "$REQ_FILE" ]; then
-  echo "ERROR: requirements.txt is required for setup." >&2
+  echo "ERROR: ${REQ_FILE##*/} is required for setup." >&2
+  echo "Regenerate locks with: bash scripts/compile_dependency_locks.sh" >&2
   exit 1
 fi
 

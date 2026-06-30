@@ -18,8 +18,8 @@ $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $PythonVersionFile = Join-Path $Root ".python-version"
 $SpecName = "Wisp.spec"
 $AppName = "Wisp"
-$RequirementsFile = "requirements.txt"
-$BuildRequirementsFile = "requirements-build.txt"
+$RequirementsFile = "requirements-windows.lock"
+$BuildRequirementsFile = "requirements-build.lock"
 $Spec = Join-Path $Root "packaging\$SpecName"
 $DistExe = Join-Path $Root "dist\$AppName\$AppName.exe"
 $IconPath = Join-Path $Root "assets\app.ico"
@@ -342,7 +342,7 @@ if (-not (Test-Path $IconPath)) {
 try {
     Invoke-CheckedPython -Python $Python -CommandArgs @("-m", "PyInstaller", "--version") -StepName "PyInstaller version check"
 } catch {
-    throw "PyInstaller is not installed in $Python. Run without -SkipInstall, or run: $Python -m pip install -r requirements-build.txt"
+    throw "PyInstaller is not installed in $Python. Run without -SkipInstall, or run: $Python -m pip install -r requirements-build.lock"
 }
 
 Invoke-CheckedPython -Python $Python -CommandArgs @("-m", "PyInstaller", "--noconfirm", $Spec) -StepName "PyInstaller build"

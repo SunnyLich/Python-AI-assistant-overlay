@@ -28,13 +28,16 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if not exist "requirements.txt" (
-  echo ERROR: requirements.txt is required for setup.
+set "REQ_FILE=requirements-windows.lock"
+if not exist "%REQ_FILE%" (
+  echo ERROR: %REQ_FILE% is required for setup.
+  echo Regenerate locks with: powershell.exe -ExecutionPolicy Bypass -File scripts\compile_dependency_locks.ps1
   pause
   exit /b 1
 )
-for %%I in ("requirements.txt") do if %%~zI EQU 0 (
-  echo ERROR: requirements.txt is required for setup.
+for %%I in ("%REQ_FILE%") do if %%~zI EQU 0 (
+  echo ERROR: %REQ_FILE% is required for setup.
+  echo Regenerate locks with: powershell.exe -ExecutionPolicy Bypass -File scripts\compile_dependency_locks.ps1
   pause
   exit /b 1
 )
@@ -66,7 +69,7 @@ if "!REBUILD_VENV!"=="0" if exist "%VPY%" (
   "%VPY%" -m pip --version >nul 2>nul
   if errorlevel 1 "%VPY%" -m ensurepip --upgrade
   "%VPY%" -m pip install --upgrade pip >nul 2>nul
-  "%VPY%" -m pip install -r requirements.txt
+  "%VPY%" -m pip install -r "%REQ_FILE%"
   if not errorlevel 1 call :write_req_stamp
   if not errorlevel 1 call :runtime_deps_ok
   if not errorlevel 1 goto run
@@ -89,7 +92,7 @@ if defined PYCMD (
     "%VPY%" -m pip --version >nul 2>nul
     if errorlevel 1 "%VPY%" -m ensurepip --upgrade
     "%VPY%" -m pip install --upgrade pip >nul 2>nul
-    "%VPY%" -m pip install -r requirements.txt
+    "%VPY%" -m pip install -r "%REQ_FILE%"
     if not errorlevel 1 call :write_req_stamp
     if not errorlevel 1 call :runtime_deps_ok
     if not errorlevel 1 goto run
@@ -120,7 +123,7 @@ echo Provisioning Python !WANT! with uv...
 if exist ".venv" rmdir /s /q .venv
 "!UV!" venv --python "!WANT!"
 if errorlevel 1 ( echo Failed to create environment & pause & exit /b 1 )
-"!UV!" pip install --python "%VPY%" -r requirements.txt
+"!UV!" pip install --python "%VPY%" -r "%REQ_FILE%"
 if errorlevel 1 ( echo Dependency install failed. & pause & exit /b 1 )
 call :write_req_stamp
 if errorlevel 1 ( echo Failed to record dependency stamp. & pause & exit /b 1 )
@@ -164,6 +167,6 @@ exit /b 0
 
 :read_req_hash
 set "REQ_HASH="
-for /f "usebackq delims=" %%h in (`powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "(Get-FileHash -Algorithm SHA256 -LiteralPath 'requirements.txt').Hash.ToLowerInvariant()"`) do set "REQ_HASH=%%h"
+for /f "usebackq delims=" %%h in (`powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "(Get-FileHash -Algorithm SHA256 -LiteralPath '%REQ_FILE%').Hash.ToLowerInvariant()"`) do set "REQ_HASH=%%h"
 if not defined REQ_HASH exit /b 1
 exit /b 0

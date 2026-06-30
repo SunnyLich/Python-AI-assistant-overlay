@@ -17,9 +17,13 @@ on:
       - "packaging/**"
       - "config.py"
       - "requirements*.txt"
+      - "requirements*.lock"
       - "requirements-dev.txt"
       - "pyproject.toml"
       - "requirements-macos.lock"
+      - "requirements-dev.lock"
+      - "requirements-build.lock"
+      - "scripts/compile_dependency_locks.sh"
       - "scripts/compile_macos_lock.sh"
       - "scripts/macos_testbot.py"
       - "scripts/macos_smoke.py"
@@ -33,9 +37,13 @@ on:
       - "packaging/**"
       - "config.py"
       - "requirements*.txt"
+      - "requirements*.lock"
       - "requirements-dev.txt"
       - "pyproject.toml"
       - "requirements-macos.lock"
+      - "requirements-dev.lock"
+      - "requirements-build.lock"
+      - "scripts/compile_dependency_locks.sh"
       - "scripts/compile_macos_lock.sh"
       - "scripts/macos_testbot.py"
       - "scripts/macos_smoke.py"
@@ -55,12 +63,12 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements-macos.lock
-            requirements-dev.txt
+            requirements-dev.lock
             pyproject.toml
 
       - uses: astral-sh/setup-uv@v5
 
-      - name: Verify macOS lock is current
+      - name: Verify macOS lock is reproducible
         run: |
           tmp_lock="$(mktemp)"
           python_minor="$(python -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
@@ -69,8 +77,29 @@ jobs:
             --python "$(command -v python)" \
             --python-version "$python_minor" \
             --python-platform aarch64-apple-darwin \
+            --constraint requirements-macos.lock \
             --output-file "$tmp_lock"
           diff -u requirements-macos.lock "$tmp_lock"
+
+      - name: Verify tooling locks are reproducible
+        run: |
+          dev_lock="$(mktemp)"
+          build_lock="$(mktemp)"
+          python_minor="$(python -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
+          uv pip compile requirements-dev.txt \
+            --universal \
+            --no-header \
+            --python-version "$python_minor" \
+            --constraint requirements-dev.lock \
+            --output-file "$dev_lock"
+          diff -u requirements-dev.lock "$dev_lock"
+          uv pip compile requirements-build.txt \
+            --universal \
+            --no-header \
+            --python-version "$python_minor" \
+            --constraint requirements-build.lock \
+            --output-file "$build_lock"
+          diff -u requirements-build.lock "$build_lock"
 
       - name: Install locked dependencies
         run: |

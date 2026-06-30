@@ -1,0 +1,263 @@
+annotated-doc==0.0.4
+    # via typer
+annotated-types==0.7.0
+    # via pydantic
+anthropic==0.113.0
+    # via -r requirements.txt
+anyio==4.14.1
+    # via
+    #   anthropic
+    #   cartesia
+    #   httpx
+    #   openai
+av==17.1.0
+    # via faster-whisper
+beautifulsoup4==4.15.0
+    # via -r requirements.txt
+cartesia==3.2.0
+    # via -r requirements.txt
+certifi==2026.6.17
+    # via
+    #   httpcore
+    #   httpx
+    #   requests
+cffi==2.0.0
+    # via
+    #   cryptography
+    #   sounddevice
+    #   soundfile
+charset-normalizer==3.4.7
+    # via requests
+click==8.4.2
+    # via
+    #   huggingface-hub
+    #   typer
+cryptography==49.0.0
+    # via secretstorage
+ctranslate2==4.8.0
+    # via faster-whisper
+defusedxml==0.7.1
+    # via odfpy
+distro==1.9.0
+    # via
+    #   anthropic
+    #   cartesia
+    #   openai
+docstring-parser==0.18.0
+    # via anthropic
+elevenlabs==2.55.0
+    # via -r requirements.txt
+et-xmlfile==2.0.0
+    # via openpyxl
+evdev==1.9.3
+    # via pynput
+ewmh==0.1.6
+    # via -r requirements.txt
+faster-whisper==1.2.1
+    # via -r requirements.txt
+filelock==3.29.4
+    # via huggingface-hub
+flatbuffers==25.12.19
+    # via onnxruntime
+fsspec==2026.6.0
+    # via huggingface-hub
+github-copilot-sdk==1.0.4
+    # via -r requirements.txt
+h11==0.16.0
+    # via httpcore
+hf-xet==1.5.1
+    # via huggingface-hub
+httpcore==1.0.9
+    # via httpx
+httpx==0.28.1
+    # via
+    #   anthropic
+    #   cartesia
+    #   elevenlabs
+    #   github-copilot-sdk
+    #   huggingface-hub
+    #   openai
+huggingface-hub==1.21.0
+    # via
+    #   faster-whisper
+    #   tokenizers
+idna==3.18
+    # via
+    #   anyio
+    #   httpx
+    #   requests
+jaraco-classes==3.4.0
+    # via keyring
+jaraco-context==6.1.2
+    # via keyring
+jaraco-functools==4.5.0
+    # via keyring
+jeepney==0.9.0
+    # via
+    #   keyring
+    #   secretstorage
+jiter==0.16.0
+    # via
+    #   anthropic
+    #   openai
+keyboard==0.13.5
+    # via -r requirements.txt
+keyring==25.7.0
+    # via -r requirements.txt
+liteparse==2.3.0
+    # via -r requirements.txt
+lxml==6.1.1
+    # via
+    #   python-docx
+    #   python-pptx
+markdown-it-py==4.2.0
+    # via rich
+mdurl==0.1.2
+    # via markdown-it-py
+more-itertools==11.1.0
+    # via
+    #   jaraco-classes
+    #   jaraco-functools
+mss==10.2.0
+    # via -r requirements.txt
+numpy==2.5.0
+    # via
+    #   -r requirements.txt
+    #   ctranslate2
+    #   onnxruntime
+    #   soundfile
+odfpy==1.4.1
+    # via -r requirements.txt
+onnxruntime==1.27.0
+    # via faster-whisper
+openai==2.44.0
+    # via -r requirements.txt
+openpyxl==3.1.5
+    # via -r requirements.txt
+packaging==26.2
+    # via
+    #   huggingface-hub
+    #   onnxruntime
+pillow==12.2.0
+    # via
+    #   -r requirements.txt
+    #   python-pptx
+protobuf==7.35.1
+    # via onnxruntime
+psutil==7.2.2
+    # via -r requirements.txt
+pycparser==3.0
+    # via cffi
+pydantic==2.13.4
+    # via
+    #   anthropic
+    #   cartesia
+    #   elevenlabs
+    #   github-copilot-sdk
+    #   openai
+pydantic-core==2.46.4
+    # via
+    #   elevenlabs
+    #   pydantic
+pygments==2.20.0
+    # via rich
+pynput==1.8.2
+    # via -r requirements.txt
+pypdf==6.14.2
+    # via -r requirements.txt
+pyperclip==1.11.0
+    # via -r requirements.txt
+pyside6==6.11.1
+    # via -r requirements.txt
+pyside6-addons==6.11.1
+    # via pyside6
+pyside6-essentials==6.11.1
+    # via
+    #   pyside6
+    #   pyside6-addons
+python-dateutil==2.9.0.post0
+    # via github-copilot-sdk
+python-docx==1.2.0
+    # via -r requirements.txt
+python-dotenv==1.2.2
+    # via -r requirements.txt
+python-pptx==1.0.2
+    # via -r requirements.txt
+python-xlib==0.33
+    # via
+    #   -r requirements.txt
+    #   ewmh
+    #   pynput
+pyyaml==6.0.3
+    # via
+    #   ctranslate2
+    #   huggingface-hub
+requests==2.34.2
+    # via
+    #   -r requirements.txt
+    #   elevenlabs
+rich==15.0.0
+    # via typer
+secretstorage==3.5.0
+    # via keyring
+setuptools==82.0.1
+    # via ctranslate2
+shellingham==1.5.4
+    # via typer
+shiboken6==6.11.1
+    # via
+    #   pyside6
+    #   pyside6-addons
+    #   pyside6-essentials
+six==1.17.0
+    # via
+    #   pynput
+    #   python-dateutil
+    #   python-xlib
+sniffio==1.3.1
+    # via
+    #   anthropic
+    #   cartesia
+    #   openai
+sounddevice==0.5.5
+    # via -r requirements.txt
+soundfile==0.14.0
+    # via -r requirements.txt
+soupsieve==2.8.4
+    # via beautifulsoup4
+tokenizers==0.23.1
+    # via faster-whisper
+tqdm==4.68.3
+    # via
+    #   faster-whisper
+    #   huggingface-hub
+    #   openai
+typer==0.25.1
+    # via huggingface-hub
+typing-extensions==4.15.0
+    # via
+    #   anthropic
+    #   anyio
+    #   beautifulsoup4
+    #   cartesia
+    #   elevenlabs
+    #   huggingface-hub
+    #   openai
+    #   pydantic
+    #   pydantic-core
+    #   python-docx
+    #   python-pptx
+    #   soundfile
+    #   typing-inspection
+typing-inspection==0.4.2
+    # via pydantic
+urllib3==2.7.0
+    # via requests
+watchdog==6.0.0
+    # via -r requirements.txt
+websockets==15.0.1
+    # via
+    #   cartesia
+    #   elevenlabs
+xlsxwriter==3.2.9
+    # via python-pptx

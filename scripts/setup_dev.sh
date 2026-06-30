@@ -18,22 +18,20 @@ VENV_DIR="$ROOT/.venv"
 VENV_BACKUP_DIR="$ROOT/.venv.rebuild-backup"
 VPY="$VENV_DIR/bin/python"
 OS_NAME="$(uname -s 2>/dev/null || true)"
-REQ_FILE="$ROOT/requirements.txt"
+REQ_FILE="$ROOT/requirements-linux.lock"
+DEV_REQ_FILE="$ROOT/requirements-dev.lock"
 
 if [ "$OS_NAME" = "Darwin" ]; then
   REQ_FILE="$ROOT/requirements-macos.lock"
-  if [ ! -s "$REQ_FILE" ]; then
-    echo "ERROR: requirements-macos.lock is required for macOS setup." >&2
-    echo "Regenerate it with: bash scripts/compile_macos_lock.sh" >&2
-    exit 1
-  fi
 fi
 if [ ! -s "$REQ_FILE" ]; then
-  echo "ERROR: requirements.txt is required for developer setup." >&2
+  echo "ERROR: ${REQ_FILE##*/} is required for developer setup." >&2
+  echo "Regenerate locks with: bash scripts/compile_dependency_locks.sh" >&2
   exit 1
 fi
-if [ ! -s "$ROOT/requirements-dev.txt" ]; then
-  echo "ERROR: requirements-dev.txt is required for developer setup." >&2
+if [ ! -s "$DEV_REQ_FILE" ]; then
+  echo "ERROR: requirements-dev.lock is required for developer setup." >&2
+  echo "Regenerate locks with: bash scripts/compile_dependency_locks.sh" >&2
   exit 1
 fi
 
@@ -152,7 +150,7 @@ if [ ! -x "$VPY" ] || [ "$REBUILD_VENV" -eq 1 ]; then
 fi
 
 "$VPY" -m pip install --upgrade pip
-"$VPY" -m pip install -r "$REQ_FILE" -r requirements-dev.txt
+"$VPY" -m pip install -r "$REQ_FILE" -r "$DEV_REQ_FILE"
 "$VPY" scripts/check_dev_environment.py
 SETUP_SUCCEEDED=1
 cleanup_venv_backup

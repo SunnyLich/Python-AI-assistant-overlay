@@ -57,50 +57,56 @@ class SetupScriptTests(unittest.TestCase):
         script = (ROOT / "scripts" / "setup_dev.sh").read_text(encoding="utf-8")
 
         self.assertIn('OS_NAME="$(uname -s 2>/dev/null || true)"', script)
-        self.assertIn('REQ_FILE="$ROOT/requirements.txt"', script)
+        self.assertIn('REQ_FILE="$ROOT/requirements-linux.lock"', script)
+        self.assertIn('DEV_REQ_FILE="$ROOT/requirements-dev.lock"', script)
         self.assertIn('if [ "$OS_NAME" = "Darwin" ]; then', script)
         self.assertIn('REQ_FILE="$ROOT/requirements-macos.lock"', script)
-        self.assertIn("requirements-macos.lock is required for macOS setup", script)
-        self.assertIn('"$VPY" -m pip install -r "$REQ_FILE" -r requirements-dev.txt', script)
+        self.assertIn("Regenerate locks with: bash scripts/compile_dependency_locks.sh", script)
+        self.assertIn('"$VPY" -m pip install -r "$REQ_FILE" -r "$DEV_REQ_FILE"', script)
         self.assertNotIn('"$VPY" -m pip install -r requirements.txt -r requirements-dev.txt', script)
 
     def test_install_entry_points_check_dependency_manifests_before_mutating_venv(self) -> None:
         launcher = (ROOT / "Start Wisp.command").read_text(encoding="utf-8")
         self.assertIn('if [ ! -s "$REQ_FILE" ]; then', launcher)
-        self.assertIn("requirements.txt is required for setup", launcher)
-        self.assertLess(launcher.index("requirements.txt is required for setup"), launcher.index("rm -rf"))
+        self.assertIn("is required for setup", launcher)
+        self.assertIn("scripts/compile_dependency_locks.sh", launcher)
+        self.assertLess(launcher.index("is required for setup"), launcher.index("rm -rf"))
 
         setup_sh = (ROOT / "scripts" / "setup_dev.sh").read_text(encoding="utf-8")
         self.assertIn('if [ ! -s "$REQ_FILE" ]; then', setup_sh)
-        self.assertIn('if [ ! -s "$ROOT/requirements-dev.txt" ]; then', setup_sh)
-        self.assertIn("requirements-dev.txt is required for developer setup", setup_sh)
-        self.assertLess(setup_sh.index("requirements-dev.txt is required for developer setup"), setup_sh.index('mv "$VENV_DIR" "$VENV_BACKUP_DIR"'))
+        self.assertIn('if [ ! -s "$DEV_REQ_FILE" ]; then', setup_sh)
+        self.assertIn("requirements-dev.lock is required for developer setup", setup_sh)
+        self.assertLess(setup_sh.index("requirements-dev.lock is required for developer setup"), setup_sh.index('mv "$VENV_DIR" "$VENV_BACKUP_DIR"'))
 
         compile_lock = (ROOT / "scripts" / "compile_macos_lock.sh").read_text(encoding="utf-8")
-        self.assertIn("requirements.txt is required to compile the macOS lock", compile_lock)
-        self.assertLess(compile_lock.index("requirements.txt is required to compile"), compile_lock.index("uv pip compile"))
+        compile_all = (ROOT / "scripts" / "compile_dependency_locks.sh").read_text(encoding="utf-8")
+        self.assertIn("compile_dependency_locks.sh", compile_lock)
+        self.assertIn("requirements.txt", compile_all)
+        self.assertIn("uv pip compile requirements.txt", compile_all)
 
         batch = (ROOT / "Start Wisp.bat").read_text(encoding="utf-8")
-        self.assertIn('if not exist "requirements.txt"', batch)
-        self.assertIn('for %%I in ("requirements.txt") do if %%~zI EQU 0', batch)
-        self.assertIn("requirements.txt is required for setup", batch)
-        self.assertLess(batch.index("requirements.txt is required for setup"), batch.index("rmdir /s /q .venv"))
+        self.assertIn('set "REQ_FILE=requirements-windows.lock"', batch)
+        self.assertIn('if not exist "%REQ_FILE%"', batch)
+        self.assertIn('for %%I in ("%REQ_FILE%") do if %%~zI EQU 0', batch)
+        self.assertIn("is required for setup", batch)
+        self.assertLess(batch.index("is required for setup"), batch.index("rmdir /s /q .venv"))
 
         powershell = (ROOT / "scripts" / "setup_dev.ps1").read_text(encoding="utf-8")
         self.assertIn('$RequiredDependencyFiles = @(', powershell)
-        self.assertIn('Join-Path $Root "requirements.txt"', powershell)
-        self.assertIn('Join-Path $Root "requirements-dev.txt"', powershell)
+        self.assertIn('$RequirementsFile = "requirements-windows.lock"', powershell)
+        self.assertIn('$DevRequirementsFile = "requirements-dev.lock"', powershell)
         self.assertIn("$Name is required for developer setup.", powershell)
         self.assertLess(powershell.index("$RequiredDependencyFiles = @("), powershell.index("Move-Item -LiteralPath $VenvDir -Destination $VenvBackupDir"))
 
-    def test_macos_lock_ci_verification_matches_compile_script_inputs(self) -> None:
+    def test_macos_lock_ci_verification_constrains_to_committed_lock(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "macos.yml").read_text(encoding="utf-8")
-        compile_lock = (ROOT / "scripts" / "compile_macos_lock.sh").read_text(encoding="utf-8")
+        compile_lock = (ROOT / "scripts" / "compile_dependency_locks.sh").read_text(encoding="utf-8")
 
-        self.assertIn("Verify macOS lock is current", workflow)
+        self.assertIn("Verify macOS lock is reproducible", workflow)
         self.assertIn("uv pip compile requirements.txt", workflow)
         self.assertIn("uv pip compile requirements.txt", compile_lock)
-        self.assertNotIn("--constraints requirements-macos.lock", workflow)
+        self.assertIn("--constraint requirements-macos.lock", workflow)
+        self.assertNotIn("--constraint requirements-macos.lock", compile_lock)
 
     def test_dev_setup_keeps_stale_venv_until_replacement_is_known(self) -> None:
         setup_sh = (ROOT / "scripts" / "setup_dev.sh").read_text(encoding="utf-8")
@@ -187,7 +193,7 @@ class SetupScriptTests(unittest.TestCase):
             "Start Wisp.command",
             "scripts/setup_dev.sh",
             "scripts/run_macos_tests.command",
-            "scripts/compile_macos_lock.sh",
+            "scripts/compile_dependency_locks.sh",
         ]
         for script_name in posix_scripts:
             with self.subTest(script=script_name):
@@ -220,8 +226,7 @@ class SetupScriptTests(unittest.TestCase):
         self.assertIn('if [ "$OS_NAME" = "Darwin" ]; then', script)
         self.assertIn('REQ_FILE="$REPO_ROOT/requirements-macos.lock"', script)
         self.assertIn('if [ ! -s "$REQ_FILE" ]; then', script)
-        self.assertIn("requirements-macos.lock is required for macOS setup", script)
-        self.assertIn("bash scripts/compile_macos_lock.sh", script)
+        self.assertIn("Regenerate locks with: bash scripts/compile_dependency_locks.sh", script)
 
     def test_macos_launcher_closes_terminal_only_after_app_launch(self) -> None:
         script = (ROOT / "Start Wisp.command").read_text(encoding="utf-8")
@@ -257,7 +262,7 @@ class SetupScriptTests(unittest.TestCase):
         self.assertIn("call :deps_stamp_ok", script)
         self.assertIn('if not exist "%STAMP_FILE%" exit /b 1', script)
         self.assertIn("powershell.exe -NoProfile -ExecutionPolicy Bypass", script)
-        self.assertIn("Get-FileHash -Algorithm SHA256 -LiteralPath 'requirements.txt'", script)
+        self.assertIn("Get-FileHash -Algorithm SHA256 -LiteralPath '%REQ_FILE%'", script)
 
     def test_windows_launcher_writes_dependency_stamp_after_installs(self) -> None:
         script = (ROOT / "Start Wisp.bat").read_text(encoding="utf-8")

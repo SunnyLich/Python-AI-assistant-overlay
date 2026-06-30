@@ -50,8 +50,8 @@ jobs:
           python-version-file: ".python-version"
           cache: pip
           cache-dependency-path: |
-            requirements.txt
-            requirements-build.txt
+            requirements-windows.lock
+            requirements-build.lock
 
       - name: Build Windows artifact
         shell: pwsh
@@ -94,8 +94,8 @@ jobs:
           python-version-file: ".python-version"
           cache: pip
           cache-dependency-path: |
-            requirements.txt
-            requirements-build.txt
+            requirements-linux.lock
+            requirements-build.lock
 
       - name: Install Linux system dependencies
         run: |
@@ -143,7 +143,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements-macos.lock
-            requirements-build.txt
+            requirements-build.lock
 
       - name: Make build script executable
         run: chmod +x ./tools/build_macos_app.sh

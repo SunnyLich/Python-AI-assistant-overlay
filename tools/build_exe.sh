@@ -41,8 +41,8 @@ WANT_MM="$(printf '%s' "$WANT" | cut -d. -f1,2)"
 
 SPEC_NAME="WispLinux.spec"
 APP_NAME="Wisp"
-REQUIREMENTS_FILE="$ROOT/requirements.txt"
-BUILD_REQUIREMENTS_FILE="$ROOT/requirements-build.txt"
+REQUIREMENTS_FILE="$ROOT/requirements-linux.lock"
+BUILD_REQUIREMENTS_FILE="$ROOT/requirements-build.lock"
 
 SPEC="$ROOT/packaging/$SPEC_NAME"
 DIST_BIN="$ROOT/dist/$APP_NAME/$APP_NAME"
@@ -77,8 +77,8 @@ require_dir() {
     exit 1
 }
 
-require_file "$REQUIREMENTS_FILE" "requirements.txt"
-require_file "$BUILD_REQUIREMENTS_FILE" "requirements-build.txt"
+require_file "$REQUIREMENTS_FILE" "requirements-linux.lock"
+require_file "$BUILD_REQUIREMENTS_FILE" "requirements-build.lock"
 require_file "$SPEC" "packaging/$SPEC_NAME"
 require_file "$ROOT/runtime/supervisor/app.py" "runtime/supervisor/app.py"
 require_file "$ROOT/.env.example" ".env.example"
@@ -236,7 +236,7 @@ if ! $SKIP_INSTALL; then
 fi
 
 if ! "$PYTHON" -m PyInstaller --version > /dev/null 2>&1; then
-    echo "PyInstaller is not installed. Run without --skip-install, or: $PYTHON -m pip install -r requirements-build.txt" >&2
+    echo "PyInstaller is not installed. Run without --skip-install, or: $PYTHON -m pip install -r requirements-build.lock" >&2
     exit 1
 fi
 

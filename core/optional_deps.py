@@ -6,6 +6,7 @@ import importlib.util
 import os
 import shutil
 import site
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,7 +18,16 @@ KOKORO_EN_MODEL_URL = (
     "https://github.com/explosion/spacy-models/releases/download/"
     "en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
 )
-KOKORO_INSTALL_PACKAGES = ["kokoro>=0.9.4", "soundfile", KOKORO_EN_MODEL_URL]
+PYTORCH_CUDA_WHEEL_INDEX = "https://download.pytorch.org/whl/cu128"
+KOKORO_BASE_INSTALL_PACKAGES = ["kokoro>=0.9.4", "soundfile", KOKORO_EN_MODEL_URL]
+KOKORO_INSTALL_PACKAGES = list(KOKORO_BASE_INSTALL_PACKAGES)
+KOKORO_GPU_INSTALL_PACKAGES = [
+    "--upgrade",
+    "--extra-index-url",
+    PYTORCH_CUDA_WHEEL_INDEX,
+    "torch",
+    *KOKORO_BASE_INSTALL_PACKAGES,
+]
 
 
 def _is_frozen() -> bool:
@@ -79,6 +89,77 @@ def is_importable(module_name: str) -> bool:
         return importlib.util.find_spec(module_name) is not None
     except Exception:
         return False
+
+
+def system_cuda_available() -> bool:
+    """Return whether the host appears to have an NVIDIA CUDA device."""
+    try:
+        import ctranslate2  # type: ignore
+
+        return int(ctranslate2.get_cuda_device_count()) > 0
+    except Exception:
+        pass
+    nvidia_smi = shutil.which("nvidia-smi")
+    if not nvidia_smi:
+        return False
+    try:
+        result = subprocess.run(
+            [nvidia_smi, "-L"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0 and "GPU" in (result.stdout or "")
+
+
+def kokoro_install_mode_for_device(device: str | None) -> str:
+    """Return cpu/gpu install mode for the selected Kokoro device."""
+    selected = (device or "auto").strip().lower()
+    if selected == "cpu":
+        return "cpu"
+    if selected == "cuda":
+        return "gpu"
+    return "gpu" if system_cuda_available() else "cpu"
+
+
+def kokoro_install_packages(device: str | None) -> list[str]:
+    """Return packages/flags for the selected Kokoro device install."""
+    if kokoro_install_mode_for_device(device) == "gpu":
+        return list(KOKORO_GPU_INSTALL_PACKAGES)
+    return list(KOKORO_BASE_INSTALL_PACKAGES)
+
+
+def kokoro_torch_status() -> dict[str, object]:
+    """Return installed Torch/Kokoro CUDA capability for Settings status."""
+    add_optional_packages_to_path(prepend=True)
+    importlib.invalidate_caches()
+    status: dict[str, object] = {
+        "installed": False,
+        "version": "",
+        "cuda_version": "",
+        "cuda_available": False,
+        "device": "",
+        "error": "",
+    }
+    try:
+        import torch  # type: ignore
+
+        status["installed"] = True
+        status["version"] = str(getattr(torch, "__version__", "") or "")
+        status["cuda_version"] = str(getattr(getattr(torch, "version", None), "cuda", "") or "")
+        cuda_available = bool(torch.cuda.is_available())
+        status["cuda_available"] = cuda_available
+        if cuda_available:
+            try:
+                status["device"] = str(torch.cuda.get_device_name(0))
+            except Exception:
+                status["device"] = "CUDA device"
+    except Exception as exc:
+        status["error"] = f"{type(exc).__name__}: {exc}"
+    return status
 
 
 def pip_install_command(packages: list[str]) -> list[str]:

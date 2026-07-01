@@ -1311,7 +1311,7 @@ Use simple prose on first reply. Use bullets, tables, or code blocks only on sec
   html: `
 <h2 id="what">Free model access</h2>
 <p>Wisp is free, but it still needs a model provider to answer your queries. You don't have to begin with a paid API key — several providers offer free-tier examples, free monthly credits, or no-cost rate-limited access. This page shows examples of providers you can connect in Wisp.</p>
-<div class="callout note"><div class="callout-label">Examples reviewed June 27, 2026</div><p>Free tiers move fast. The limits, credit amounts, and eligibility below are examples reviewed from provider docs, Z.AI docs, npm metadata, and OpenRouter's free LLM API comparison on June 27, 2026 — confirm on the provider's own pricing page before you depend on them.</p></div>
+<div class="callout note"><div class="callout-label">Examples reviewed June 27, 2026</div><p>Free tiers move fast. The limits, credit amounts, and eligibility below are examples reviewed from provider docs, Z.AI docs, npm metadata, and OpenRouter's free LLM API comparison on June 27, 2026; OmniRoute was checked against its README on July 1, 2026 — confirm on the provider's own pricing page before you depend on them.</p></div>
 
 <hr />
 <h2 id="hosted">Hosted free tiers</h2>
@@ -1333,6 +1333,7 @@ Use simple prose on first reply. Use bullets, tables, or code blocks only on sec
     <tr><td>Chutes</td><td>Community access to open-source models, subject to availability and rate limits.</td><td>Testing OpenAI-compatible hosted OSS endpoints.</td></tr>
     <tr><td>Puter.js</td><td>Front-end JavaScript access to many models with no API key of your own.</td><td>Browser apps and demos, "user-pays" style apps.</td></tr>
     <tr><td><a href="https://github.com/tashfeenahmed/freellmapi" target="_blank">FreeLLMAPI</a> (self-hosted)</td><td>Open-source MIT gateway you run yourself; pools ~16 providers' free tiers (Google, Groq, Cerebras, Mistral, OpenRouter, GitHub Models, and more) behind one OpenAI-compatible endpoint with automatic failover.</td><td>One token for many free backends; point Wisp's custom endpoint at your local deployment.</td></tr>
+    <tr><td><a href="https://github.com/diegosouzapw/OmniRoute" target="_blank">OmniRoute</a> (local gateway)</td><td>Open-source router you run locally; aggregates many provider accounts and free tiers behind one OpenAI-compatible endpoint with routing, fallback, and optional compression.</td><td>One local endpoint for many backends; point Wisp's custom endpoint at OmniRoute and use a model such as <code>auto</code>.</td></tr>
     <tr><td>Local — Ollama / LM Studio / vLLM</td><td>Free whenever you run the model on your own machine or server.</td><td>Privacy, no token billing, OpenAI-compatible local endpoints.</td></tr>
   </tbody>
 </table>
@@ -1378,7 +1379,7 @@ Use simple prose on first reply. Use bullets, tables, or code blocks only on sec
     <tr><td>Groq</td><td><code>LLM_PROVIDER=groq</code> — see <a onclick="navigate('provider-groq')">Groq</a></td></tr>
     <tr><td>Google AI Studio</td><td><code>LLM_PROVIDER=google</code> — see <a onclick="navigate('provider-google')">Google AI Studio</a></td></tr>
     <tr><td>Mistral / OpenRouter / Cerebras / DeepSeek / Z.AI / GLM / NVIDIA / SambaNova / GitHub Models / Hugging Face / Chutes / Vercel / Fireworks / Cohere / AI21 / Nebius</td><td>Native provider values are listed on <a onclick="navigate('provider-others')">Other providers</a>. Add the matching key in Settings.</td></tr>
-    <tr><td>Cloudflare Workers AI, Baseten, FreeLLMAPI</td><td><code>LLM_PROVIDER=custom</code> with the provider's OpenAI-compatible <code>CUSTOM_BASE_URL</code> because their URLs include your account, gateway, or deployment id (for FreeLLMAPI, your self-hosted address such as <code>http://localhost:3001/v1</code>) — see <a onclick="navigate('provider-custom')">Custom endpoint</a></td></tr>
+    <tr><td>Cloudflare Workers AI, Baseten, FreeLLMAPI, OmniRoute</td><td><code>LLM_PROVIDER=custom</code> with the provider's OpenAI-compatible <code>CUSTOM_BASE_URL</code> because their URLs include your account, gateway, or deployment id (for FreeLLMAPI, your self-hosted address such as <code>http://localhost:3001/v1</code>; for OmniRoute, usually <code>http://localhost:20128/v1</code> with the API key from its dashboard) — see <a onclick="navigate('provider-custom')">Custom endpoint</a></td></tr>
     <tr><td>Puter.js</td><td>Front-end browser SDK only — it is not a backend API Wisp can call.</td></tr>
   </tbody>
 </table>

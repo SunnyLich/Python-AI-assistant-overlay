@@ -28,6 +28,7 @@ def _repo_root() -> Path:
 
 ROOT = _repo_root()
 sys.path.insert(0, str(ROOT / "runtime" / "brain"))
+APP_ICON_ICO = ROOT / "assets" / "app.ico"
 PYSIDE6_ROOT = Path(PySide6.__file__).resolve().parent
 RUNTIME_WORKER_HIDDENIMPORTS = collect_submodules("runtime.workers")
 BRAIN_HIDDENIMPORTS = collect_submodules("wisp_brain")
@@ -119,7 +120,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(ROOT / "assets" / "app.ico") if (ROOT / "assets" / "app.ico").exists() else None,
+    icon=str(APP_ICON_ICO) if APP_ICON_ICO.exists() else None,
 )
 
 coll = COLLECT(

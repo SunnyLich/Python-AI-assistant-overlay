@@ -23,6 +23,7 @@ $BuildRequirementsFile = "requirements-build.lock"
 $Spec = Join-Path $Root "packaging\$SpecName"
 $DistExe = Join-Path $Root "dist\$AppName\$AppName.exe"
 $IconPath = Join-Path $Root "assets\app.ico"
+$IconPngPath = Join-Path $Root "assets\app.png"
 $IconSourcePng = Join-Path $Root "assets\doll\idle.png"
 
 Set-Location $Root
@@ -94,6 +95,7 @@ foreach ($RequiredPackagingDirectory in $RequiredPackagingDirectories) {
 if (-not (Test-Path -LiteralPath $IconPath -PathType Leaf)) {
     Require-PackagingFile -Path $IconSourcePng -Name "assets\doll\idle.png"
 }
+Require-PackagingFile -Path $IconPngPath -Name "assets\app.png"
 
 # Force child Python processes (pip, PyInstaller) to stream their output line by
 # line so progress shows up promptly instead of arriving in buffered chunks.

@@ -616,6 +616,89 @@ def test_kokoro_install_progress_text_classifies_pip_output():
     assert _optional_install_no_output_timeout_seconds() == 300
 
 
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_kokoro_status_warns_when_gpu_selected_but_cpu_torch_installed(monkeypatch):
+    """Kokoro status should explain CPU Torch when the selected device is GPU."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QComboBox
+
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog.__new__(SettingsDialog)
+    dialog._fields = {}
+    dialog._kokoro_install_btn = QPushButton()
+    dialog._kokoro_install_status_lbl = QLabel()
+    combo = QComboBox()
+    combo.addItem("GPU (CUDA)", "cuda")
+    dialog._fields["KOKORO_DEVICE"] = combo
+    monkeypatch.setattr(SettingsDialog, "_kokoro_installed", lambda self: True)
+    monkeypatch.setattr(
+        SettingsDialog,
+        "_kokoro_torch_status",
+        lambda self: {"cuda_available": False, "version": "2.12.1+cpu", "cuda_version": ""},
+    )
+
+    try:
+        SettingsDialog._refresh_kokoro_install_status(dialog)
+
+        assert dialog._kokoro_install_btn.isEnabled()
+        assert dialog._kokoro_install_btn.text() == "Install Kokoro GPU support"
+        assert "selected GPU device needs a CUDA-enabled Torch install" in dialog._kokoro_install_status_lbl.text()
+    finally:
+        dialog._kokoro_install_btn.deleteLater()
+        dialog._kokoro_install_status_lbl.deleteLater()
+        combo.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.skipif(pytest.importorskip("PySide6", reason="PySide6 not installed") is None, reason="PySide6 not installed")
+def test_kokoro_install_uses_gpu_packages_when_gpu_selected(monkeypatch):
+    """The install button should pass CUDA Torch packages when Kokoro device is GPU."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QLineEdit, QMessageBox
+
+    from core import optional_deps
+    from ui.settings_panel import dialog as dialog_mod
+    from ui.settings_panel.dialog import SettingsDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    dialog = SettingsDialog.__new__(SettingsDialog)
+    device = QComboBox()
+    device.addItem("GPU (CUDA)", "cuda")
+    dialog._fields = {
+        "KOKORO_DEVICE": device,
+        "KOKORO_VOICE": QLineEdit("af_heart"),
+        "KOKORO_LANG_CODE": QLineEdit("a"),
+        "KOKORO_SPEED": QLineEdit("1.0"),
+        "KOKORO_SAMPLE_RATE": QLineEdit("24000"),
+        "TTS_VOLUME": QLineEdit("1.0"),
+    }
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(SettingsDialog, "_kokoro_installed", lambda self: False)
+    monkeypatch.setattr(
+        dialog_mod.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    def fake_install(self, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(SettingsDialog, "_install_optional_tts_package", fake_install)
+
+    try:
+        SettingsDialog._install_kokoro(dialog)
+
+        assert captured["packages"] == optional_deps.kokoro_install_packages("cuda")
+        assert "torch" in captured["packages"]
+        assert captured["success_message"] == "Kokoro GPU support installed and local voice is ready."
+    finally:
+        for widget in dialog._fields.values():
+            widget.deleteLater()
+        app.processEvents()
+
+
 def test_i18n_translates_settings_apply_tool_warning(monkeypatch):
     """Verify i18n translates settings apply tool warning behavior."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -2061,6 +2144,8 @@ def test_settings_do_save_localizes_qtextedit_prompt_fields(monkeypatch):
         monkeypatch.setattr(dialog, "_save_api_keys_to_keychain", lambda: True)
         monkeypatch.setattr(dialog, "_capability_warnings_for_values", lambda _vals: ([], {}))
         monkeypatch.setattr(dialog, "_set_warning_markers", lambda _warnings: None)
+        monkeypatch.setattr(dialog, "_kokoro_installed", lambda: True)
+        monkeypatch.setattr(dialog, "_elevenlabs_installed", lambda: True)
         monkeypatch.setattr(settings_dialog, "_write_env", lambda vals, remove_keys=None: captured.update(vals))
 
         for index, block in enumerate(dialog._caller_blocks, 1):
@@ -2118,6 +2203,8 @@ def test_settings_apply_real_save_clears_dirty_after_language_change(monkeypatch
         monkeypatch.setattr(dialog, "_save_api_keys_to_keychain", lambda: True)
         monkeypatch.setattr(dialog, "_capability_warnings_for_values", lambda _vals: ([], {}))
         monkeypatch.setattr(dialog, "_set_warning_markers", lambda _warnings: None)
+        monkeypatch.setattr(dialog, "_kokoro_installed", lambda: True)
+        monkeypatch.setattr(dialog, "_elevenlabs_installed", lambda: True)
         monkeypatch.setattr(settings_dialog, "_write_env", lambda vals, remove_keys=None: captured.update(vals))
         monkeypatch.setattr(settings_dialog, "_read_env", lambda: dict(captured))
         monkeypatch.setattr(config, "reload", lambda: None)

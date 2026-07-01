@@ -33,6 +33,8 @@ SPEC="$ROOT/packaging/$SPEC_NAME"
 REQUIREMENTS_FILE="$ROOT/requirements.txt"
 MACOS_LOCK_FILE="$ROOT/requirements-macos.lock"
 BUILD_REQUIREMENTS_FILE="$ROOT/requirements-build.lock"
+ICON_ICNS_PATH="$ROOT/assets/app.icns"
+ICON_PNG_PATH="$ROOT/assets/app.png"
 
 cd "$ROOT"
 
@@ -161,6 +163,8 @@ require_file "$ROOT/runtime/supervisor/app.py" "runtime/supervisor/app.py"
 require_file "$ROOT/.env.example" ".env.example"
 require_file "$ROOT/pyproject.toml" "pyproject.toml"
 require_dir "$ROOT/assets" "assets"
+require_file "$ICON_ICNS_PATH" "assets/app.icns"
+require_file "$ICON_PNG_PATH" "assets/app.png"
 require_dir "$ROOT/ui/locales" "ui/locales"
 
 if ! $USE_GLOBAL_PYTHON; then

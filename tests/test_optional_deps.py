@@ -120,3 +120,39 @@ def test_kokoro_install_includes_persistent_english_g2p_model():
     assert optional_deps.KOKORO_INSTALL_PACKAGES[2].endswith(
         "/en_core_web_sm-3.8.0-py3-none-any.whl"
     )
+
+
+def test_kokoro_gpu_install_includes_cuda_torch_index():
+    """GPU Kokoro installs must request CUDA Torch wheels explicitly."""
+    from core import optional_deps
+
+    packages = optional_deps.kokoro_install_packages("cuda")
+
+    assert packages[:4] == [
+        "--upgrade",
+        "--extra-index-url",
+        optional_deps.PYTORCH_CUDA_WHEEL_INDEX,
+        "torch",
+    ]
+    assert "kokoro>=0.9.4" in packages
+    assert any(str(item).endswith("/en_core_web_sm-3.8.0-py3-none-any.whl") for item in packages)
+
+
+def test_kokoro_auto_install_selects_gpu_when_cuda_detected(monkeypatch):
+    """Auto should install the GPU stack only when the host has CUDA."""
+    from core import optional_deps
+
+    monkeypatch.setattr(optional_deps, "system_cuda_available", lambda: True)
+
+    assert optional_deps.kokoro_install_mode_for_device("auto") == "gpu"
+    assert "torch" in optional_deps.kokoro_install_packages("auto")
+
+
+def test_kokoro_auto_install_selects_cpu_without_cuda(monkeypatch):
+    """Auto should keep the smaller CPU stack on machines without CUDA."""
+    from core import optional_deps
+
+    monkeypatch.setattr(optional_deps, "system_cuda_available", lambda: False)
+
+    assert optional_deps.kokoro_install_mode_for_device("auto") == "cpu"
+    assert "torch" not in optional_deps.kokoro_install_packages("auto")

@@ -172,6 +172,7 @@ Wisp 是免費的，您也可以將模型費用保持在零。多個提供商提
 | Vercel AI Gateway | 免費層，符合條件的模型每月 $5 閘道積分 | Next.js/Vercel 專案；統一的 OpenAI 相容存取 |
 | SambaNova Cloud | $5 免費 API 積分，無需信用卡 | 快速託管開放模型推理 |
 | Puter.js | 前端 JS 存取多種模型，無需自己的 API 金鑰 | 瀏覽器應用程式和示範；不是 Wisp 後端提供商 |
+| [OmniRoute](https://github.com/diegosouzapw/OmniRoute)（本機閘道） | 本機執行的開源路由器；把多個提供商帳戶和免費層彙整到一個 OpenAI 相容端點後面，支援路由、容錯移轉和可選壓縮 | 透過 Wisp 的自訂端點連接 OmniRoute：`LLM_PROVIDER=custom`、`CUSTOM_BASE_URL=http://localhost:20128/v1`，模型可用 `auto`，API 金鑰來自 OmniRoute 儀表板 |
 | 本地 — Ollama / LM Studio / vLLM | 自行執行模型時免費 | 隱私保護、無 token 計費、OpenAI 相容本地端點 |
 
 免費層有限速且經常變化，因此請至少新增一個備用路由，並避免將敏感上下文傳送給可能用您的提示詞進行訓練的提供商（Wisp 的去識別化功能仍然適用）。完整的連接指南和注意事項，請參閱 [Wisp 文件網站](Wisp%20Website/Wisp%20Docs.html) 中的**免費 API 來源**頁面。

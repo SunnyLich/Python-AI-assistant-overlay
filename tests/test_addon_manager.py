@@ -148,6 +148,72 @@ def test_addon_events_intents_and_notifications(tmp_path, monkeypatch):
     manager.on_shutdown()
 
 
+def test_text_annotation_hook_requires_explicit_permission_and_sanitizes(tmp_path, monkeypatch):
+    """Verify text annotation addons are permission-gated and sanitized."""
+    addons_dir = tmp_path / "addons"
+    addons_dir.mkdir()
+    specs = {
+        "allowed": 'ui = ["text_annotations"]',
+        "blocked": 'ui = ["settings"]',
+        "broad": "ui = true",
+    }
+    for addon_id, ui_permission in specs.items():
+        folder = addons_dir / addon_id
+        folder.mkdir()
+        (folder / "addon.toml").write_text(
+            textwrap.dedent(
+                f"""
+                [addon]
+                id = "{addon_id}"
+                name = "{addon_id}"
+                entry = "__init__.py"
+
+                [permissions]
+                {ui_permission}
+                """
+            ).strip(),
+            encoding="utf-8",
+        )
+        (folder / "__init__.py").write_text(
+            textwrap.dedent(
+                """
+                def get_text_annotations(payload):
+                    assert "context" not in payload
+                    return [
+                        {"start": 0, "end": 4, "color": "#00ffaa", "tooltip": "visible"},
+                        {"start": 5, "end": 9, "color": "not-a-color", "source": "addon:fake"},
+                        {"start": 999, "end": 1000},
+                    ]
+                """
+            ).strip(),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(addon_store, "_STORE_PATH", tmp_path / "addons.json")
+    monkeypatch.setattr(am.addon_store, "_STORE_PATH", tmp_path / "addons.json")
+
+    manager = am.AddonManager(addons_dir)
+    manager.load_all()
+
+    annotations = manager.get_text_annotations(
+        {
+            "text": "CUDA test",
+            "context": "secret hidden context",
+            "message_id": "m1",
+            "conversation_id": "c1",
+            "surface": "chat",
+            "role": "assistant",
+        }
+    )
+
+    assert len(annotations) == 2
+    assert {item["source"] for item in annotations} == {"addon:allowed"}
+    assert annotations[0]["color"] == "#00ffaa"
+    assert annotations[1]["color"] == "#ffd166"
+    assert all(item["message_id"] == "m1" for item in annotations)
+    assert all(item["conversation_id"] == "c1" for item in annotations)
+    manager.on_shutdown()
+
+
 def test_addon_enable_and_settings_round_trip(tmp_path, monkeypatch):
     """Verify addon enable and settings round trip behavior."""
     manager, store_path = _make_manager(tmp_path, monkeypatch)

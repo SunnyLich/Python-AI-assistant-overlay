@@ -3222,6 +3222,108 @@ Continue?</source>
       <source>STT overlap (s)</source>
       <translation>STT 重叠（秒）</translation>
     </message>
+    <message>
+      <source>Install Kokoro GPU support</source>
+      <translation>安装 Kokoro GPU 支持</translation>
+    </message>
+    <message>
+      <source>Kokoro is installed, but the selected GPU device needs a CUDA-enabled Torch install.</source>
+      <translation>Kokoro 已安装，但所选 GPU 设备需要安装启用 CUDA 的 Torch。</translation>
+    </message>
+    <message>
+      <source>Kokoro is installed with CPU support.</source>
+      <translation>Kokoro 已安装 CPU 支持。</translation>
+    </message>
+    <message>
+      <source>Kokoro is installed with GPU support ({device}).</source>
+      <translation>Kokoro 已安装 GPU 支持（{device}）。</translation>
+    </message>
+    <message>
+      <source>Kokoro is installed with CPU-only Torch. Auto detected a CUDA-capable system, but Kokoro will use CPU until GPU support is installed.</source>
+      <translation>Kokoro 已安装仅支持 CPU 的 Torch。自动模式检测到系统支持 CUDA，但在安装 GPU 支持前 Kokoro 会使用 CPU。</translation>
+    </message>
+    <message>
+      <source>Kokoro is not installed. The selected device will install GPU support and may download several GB.</source>
+      <translation>Kokoro 未安装。所选设备会安装 GPU 支持，并可能下载数 GB 数据。</translation>
+    </message>
+    <message>
+      <source>Wisp will upgrade Kokoro's optional package layer with GPU support.
+
+</source>
+      <translation>Wisp 会将 Kokoro 的可选包层升级为支持 GPU。
+
+</translation>
+    </message>
+    <message>
+      <source>Wisp will install Kokoro into its user-writable optional packages folder.
+
+</source>
+      <translation>Wisp 会将 Kokoro 安装到用户可写的可选包文件夹中。
+
+</translation>
+    </message>
+    <message>
+      <source>kokoro&gt;=0.9.4, soundfile, CUDA-enabled Torch, English speech model</source>
+      <translation>kokoro&gt;=0.9.4、soundfile、启用 CUDA 的 Torch、英语语音模型</translation>
+    </message>
+    <message>
+      <source>kokoro&gt;=0.9.4, soundfile, English speech model</source>
+      <translation>kokoro&gt;=0.9.4、soundfile、英语语音模型</translation>
+    </message>
+    <message>
+      <source>The GPU install may download several GB and can take a long time. It requires an NVIDIA GPU and compatible driver. </source>
+      <translation>GPU 安装可能会下载数 GB 数据，并且可能需要很长时间。它需要 NVIDIA GPU 和兼容的驱动程序。 </translation>
+    </message>
+    <message>
+      <source>{action_note}Packages: {package_label}
+Estimated storage: up to about 2 GB for CPU, or several GB for GPU if speech dependencies are missing. {storage_note}First use may also download the Kokoro model cache.
+
+Current Kokoro settings:
+Voice: {voice}
+Language code: {lang_code}
+Device: {device}
+Speed: {speed}
+Sample rate: {sample_rate} Hz
+Volume: {volume}
+
+On Windows, Kokoro may also need eSpeak NG installed separately if Test TTS reports a phoneme/espeak error.
+
+Continue?</source>
+      <translation>{action_note}包：{package_label}
+预计存储空间：CPU 最多约 2 GB；如果缺少语音依赖，GPU 可能需要数 GB。{storage_note}首次使用还可能下载 Kokoro 模型缓存。
+
+当前 Kokoro 设置：
+语音：{voice}
+语言代码：{lang_code}
+设备：{device}
+速度：{speed}
+采样率：{sample_rate} Hz
+音量：{volume}
+
+在 Windows 上，如果 Test TTS 报告音素/espeak 错误，Kokoro 可能还需要单独安装 eSpeak NG。
+
+继续？</translation>
+    </message>
+    <message>
+      <source>Kokoro GPU support installed and local voice is ready.</source>
+      <translation>Kokoro GPU 支持已安装，本地语音已准备好。</translation>
+    </message>
+    <message>
+      <source>Kokoro installed and local voice is ready.</source>
+      <translation>Kokoro 已安装，本地语音已准备好。</translation>
+    </message>
+    <message>
+      <source>Kokoro installed, but local voice preparation failed: {exc}. Connect to the internet and click Test TTS once to finish setup.</source>
+      <translation>Kokoro 已安装，但本地语音准备失败：{exc}。请连接互联网并点击一次 Test TTS 来完成设置。</translation>
+    </message>
+    <message>
+      <source>preparing local voice assets</source>
+      <translation>正在准备本地语音资源</translation>
+    </message>
+    <message>
+      <source>Preparing local voice... {detail}</source>
+      <translation>正在准备本地语音……{detail}</translation>
+    </message>
   </context>
   <context>
     <name>Wisp</name>
@@ -4413,5 +4515,4 @@ Continue?</source>
     </message>
   </context>
 </TS>
-
 

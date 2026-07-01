@@ -26,6 +26,7 @@ secrets.*
 MACOS_NATIVE_PLAN.md
 FLOWS_SPLIT_PLAN.md
 AUTO_AGENT_TOOL_CAPABILITY_PLAN.md
+TEXT_ANNOTATION_ADDON_PLAN.md
 docs/OS_TEST_CHECKLIST.md
 # Memory (vector store + fallback JSON; contains personal user data)
 memory/*

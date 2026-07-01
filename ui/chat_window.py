@@ -53,7 +53,7 @@ from core.assistant_text import ThoughtStreamParser, merge_segment_iterables
 from core.conversation_store import store as _conversation_store
 from core.conversation_store.store import GENERAL_PROJECT_ID as _GENERAL_PROJECT_ID
 from runtime.supervisor import tool_modes
-from ui.chat_rendering import _assistant_segments_to_html, _assistant_text_to_html
+from ui.chat_rendering import _assistant_segments_to_html, _assistant_text_to_html, _user_text_to_html
 from ui.i18n import t
 from ui.shared.window_utils import enable_standard_window_controls, fit_window_to_screen
 
@@ -1677,6 +1677,7 @@ class ChatWindow(QWidget):
                 display_text,
                 msg["role"],
                 _conversation_store.first_image_base64_from_message(msg),
+                annotations=msg.get("annotations"),
                 created_at=msg.get("created_at") or conv.get("created_at"),
                 conversation_index=idx,
                 message_index=msg_idx,
@@ -2189,6 +2190,7 @@ class ChatWindow(QWidget):
         role: str,
         image_b64: str | None = None,
         *,
+        annotations: object = None,
         created_at: str | None = None,
         conversation_index: int | None = None,
         message_index: int | None = None,
@@ -2198,7 +2200,9 @@ class ChatWindow(QWidget):
         display_text = _truncate_for_display(text, _CHAT_RENDER_CHAR_LIMIT, "chat display")
         lbl = _MessageTextView(bg, self._font_scale)
         if role == "assistant":
-            lbl.setHtml(_assistant_text_to_html(display_text))
+            lbl.setHtml(_assistant_text_to_html(display_text, annotations=annotations))
+        elif annotations:
+            lbl.setHtml(_user_text_to_html(display_text, annotations))
         else:
             lbl.setPlainText(display_text)
 

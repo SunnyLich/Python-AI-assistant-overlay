@@ -3222,6 +3222,108 @@ Continuer ?</translation>
       <source>STT overlap (s)</source>
       <translation>Chevauchement STT (s)</translation>
     </message>
+    <message>
+      <source>Install Kokoro GPU support</source>
+      <translation>Installer le support GPU pour Kokoro</translation>
+    </message>
+    <message>
+      <source>Kokoro is installed, but the selected GPU device needs a CUDA-enabled Torch install.</source>
+      <translation>Kokoro est installé, mais le périphérique GPU sélectionné nécessite une installation de Torch avec CUDA.</translation>
+    </message>
+    <message>
+      <source>Kokoro is installed with CPU support.</source>
+      <translation>Kokoro est installé avec le support CPU.</translation>
+    </message>
+    <message>
+      <source>Kokoro is installed with GPU support ({device}).</source>
+      <translation>Kokoro est installé avec le support GPU ({device}).</translation>
+    </message>
+    <message>
+      <source>Kokoro is installed with CPU-only Torch. Auto detected a CUDA-capable system, but Kokoro will use CPU until GPU support is installed.</source>
+      <translation>Kokoro est installé avec Torch CPU uniquement. Auto a détecté un système compatible CUDA, mais Kokoro utilisera le CPU tant que le support GPU n'est pas installé.</translation>
+    </message>
+    <message>
+      <source>Kokoro is not installed. The selected device will install GPU support and may download several GB.</source>
+      <translation>Kokoro n'est pas installé. Le périphérique sélectionné installera le support GPU et peut télécharger plusieurs Go.</translation>
+    </message>
+    <message>
+      <source>Wisp will upgrade Kokoro's optional package layer with GPU support.
+
+</source>
+      <translation>Wisp mettra à niveau la couche de paquets optionnels de Kokoro avec le support GPU.
+
+</translation>
+    </message>
+    <message>
+      <source>Wisp will install Kokoro into its user-writable optional packages folder.
+
+</source>
+      <translation>Wisp installera Kokoro dans son dossier de paquets optionnels accessible en écriture.
+
+</translation>
+    </message>
+    <message>
+      <source>kokoro&gt;=0.9.4, soundfile, CUDA-enabled Torch, English speech model</source>
+      <translation>kokoro&gt;=0.9.4, soundfile, Torch avec CUDA, modèle vocal anglais</translation>
+    </message>
+    <message>
+      <source>kokoro&gt;=0.9.4, soundfile, English speech model</source>
+      <translation>kokoro&gt;=0.9.4, soundfile, modèle vocal anglais</translation>
+    </message>
+    <message>
+      <source>The GPU install may download several GB and can take a long time. It requires an NVIDIA GPU and compatible driver. </source>
+      <translation>L'installation GPU peut télécharger plusieurs Go et prendre beaucoup de temps. Elle nécessite un GPU NVIDIA et un pilote compatible. </translation>
+    </message>
+    <message>
+      <source>{action_note}Packages: {package_label}
+Estimated storage: up to about 2 GB for CPU, or several GB for GPU if speech dependencies are missing. {storage_note}First use may also download the Kokoro model cache.
+
+Current Kokoro settings:
+Voice: {voice}
+Language code: {lang_code}
+Device: {device}
+Speed: {speed}
+Sample rate: {sample_rate} Hz
+Volume: {volume}
+
+On Windows, Kokoro may also need eSpeak NG installed separately if Test TTS reports a phoneme/espeak error.
+
+Continue?</source>
+      <translation>{action_note}Paquets : {package_label}
+Stockage estimé : jusqu'à environ 2 Go pour le CPU, ou plusieurs Go pour le GPU si des dépendances vocales manquent. {storage_note}La première utilisation peut aussi télécharger le cache du modèle Kokoro.
+
+Paramètres Kokoro actuels :
+Voix : {voice}
+Code de langue : {lang_code}
+Périphérique : {device}
+Vitesse : {speed}
+Fréquence d'échantillonnage : {sample_rate} Hz
+Volume : {volume}
+
+Sous Windows, Kokoro peut aussi nécessiter l'installation séparée d'eSpeak NG si Test TTS signale une erreur de phonème/espeak.
+
+Continuer ?</translation>
+    </message>
+    <message>
+      <source>Kokoro GPU support installed and local voice is ready.</source>
+      <translation>Le support GPU de Kokoro est installé et la voix locale est prête.</translation>
+    </message>
+    <message>
+      <source>Kokoro installed and local voice is ready.</source>
+      <translation>Kokoro est installé et la voix locale est prête.</translation>
+    </message>
+    <message>
+      <source>Kokoro installed, but local voice preparation failed: {exc}. Connect to the internet and click Test TTS once to finish setup.</source>
+      <translation>Kokoro est installé, mais la préparation de la voix locale a échoué : {exc}. Connectez-vous à Internet et cliquez une fois sur Test TTS pour terminer la configuration.</translation>
+    </message>
+    <message>
+      <source>preparing local voice assets</source>
+      <translation>préparation des ressources de voix locale</translation>
+    </message>
+    <message>
+      <source>Preparing local voice... {detail}</source>
+      <translation>Préparation de la voix locale... {detail}</translation>
+    </message>
   </context>
   <context>
     <name>Wisp</name>
@@ -4413,5 +4515,4 @@ Continuer ?</translation>
     </message>
   </context>
 </TS>
-
 

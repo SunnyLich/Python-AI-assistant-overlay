@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from core.system.paths import REPO_ROOT
+from core.system.paths import ASSETS_DIR, REPO_ROOT
 
 APP_NAME = "Wisp"
 MACOS_LAUNCH_AGENT_ID = "com.wisp.launcher"
@@ -69,6 +69,8 @@ def _linux_desktop_text() -> str:
         f"Name={APP_NAME}",
         "Comment=Start Wisp when you sign in",
         "Exec=" + " ".join(_desktop_quote(part) for part in _command()),
+        f"Icon={ASSETS_DIR / 'app.png'}",
+        "StartupWMClass=Wisp",
         f"Path={REPO_ROOT}",
         "Terminal=false",
         "X-GNOME-Autostart-enabled=true",

@@ -39,6 +39,8 @@ class BuildScriptTests(unittest.TestCase):
         self.assertIn('SPEC_NAME="WispMac.spec"', script)
         self.assertIn('MACOS_LOCK_FILE="$ROOT/requirements-macos.lock"', script)
         self.assertIn('if [[ "$(uname -s)" != "Darwin" ]]', script)
+        self.assertIn('require_file "$ICON_ICNS_PATH" "assets/app.icns"', script)
+        self.assertIn('require_file "$ICON_PNG_PATH" "assets/app.png"', script)
         self.assertIn('"$PYTHON" -m PyInstaller --noconfirm "$SPEC"', script)
         self.assertIn('Built app bundle: $ROOT/dist/$APP_NAME.app', script)
 
@@ -83,6 +85,7 @@ class BuildScriptTests(unittest.TestCase):
             'Path = (Join-Path $Root "assets"); Name = "assets"',
             'Path = (Join-Path $Root "ui\\locales"); Name = "ui\\locales"',
             'Require-PackagingFile -Path $IconSourcePng -Name "assets\\doll\\idle.png"',
+            'Require-PackagingFile -Path $IconPngPath -Name "assets\\app.png"',
         ]
         for snippet in required_windows_inputs:
             with self.subTest(snippet=snippet):
@@ -104,6 +107,7 @@ class BuildScriptTests(unittest.TestCase):
             'require_dir "$ROOT/assets" "assets"',
             'require_dir "$ROOT/ui/locales" "ui/locales"',
             'require_file "$ICON_SOURCE_PNG" "assets/doll/idle.png"',
+            'require_file "$ICON_PNG_PATH" "assets/app.png"',
         ]
         for snippet in required_posix_inputs:
             with self.subTest(snippet=snippet):
@@ -191,6 +195,18 @@ class BuildScriptTests(unittest.TestCase):
             with self.subTest(spec=spec_name):
                 spec = (ROOT / "packaging" / spec_name).read_text(encoding="utf-8")
                 self.assertIn('pyproject.toml', spec)
+
+    def test_specs_configure_platform_app_icons(self) -> None:
+        windows = (ROOT / "packaging" / "Wisp.spec").read_text(encoding="utf-8")
+        linux = (ROOT / "packaging" / "WispLinux.spec").read_text(encoding="utf-8")
+        macos = (ROOT / "packaging" / "WispMac.spec").read_text(encoding="utf-8")
+
+        self.assertIn('APP_ICON_ICO = ROOT / "assets" / "app.ico"', windows)
+        self.assertIn("icon=str(APP_ICON_ICO) if APP_ICON_ICO.exists() else None", windows)
+        self.assertIn('APP_ICON_ICO = ROOT / "assets" / "app.ico"', linux)
+        self.assertIn("icon=str(APP_ICON_ICO) if APP_ICON_ICO.exists() else None", linux)
+        self.assertIn('APP_ICON_ICNS = ROOT / "assets" / "app.icns"', macos)
+        self.assertIn("icon=str(APP_ICON_ICNS) if APP_ICON_ICNS.exists() else None", macos)
 
     def test_specs_bundle_mcp_bridge_as_default_addon(self) -> None:
         for spec_name in ("Wisp.spec", "WispLinux.spec", "WispMac.spec"):

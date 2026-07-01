@@ -17,6 +17,7 @@ def _repo_root() -> Path:
 
 ROOT = _repo_root()
 sys.path.insert(0, str(ROOT / "runtime" / "brain"))
+APP_ICON_ICNS = ROOT / "assets" / "app.icns"
 
 LITEPARSE_DATAS, LITEPARSE_BINARIES, LITEPARSE_HIDDENIMPORTS = collect_all("liteparse")
 LANGUAGE_TAGS_DATAS, LANGUAGE_TAGS_BINARIES, LANGUAGE_TAGS_HIDDENIMPORTS = collect_all("language_tags")
@@ -114,7 +115,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="Wisp.app",
-    icon=None,
+    icon=str(APP_ICON_ICNS) if APP_ICON_ICNS.exists() else None,
     bundle_identifier="app.wisp.desktop",
     info_plist={
         "CFBundleName": "Wisp",

@@ -612,6 +612,19 @@ class FlowController:
             text = f"Warming up {label}..."
             self._safe_call(self.ui, "ui.reply.notice", {"text": text, "timeout_ms": 0}, timeout=30.0)
             return
+        if status.startswith("preparing ") and item == "tts":
+            self._safe_call(
+                self.ui,
+                "ui.reply.notice",
+                {
+                    "text": t("Preparing local voice... {detail}").format(
+                        detail=status.removeprefix("preparing ")
+                    ),
+                    "timeout_ms": 0,
+                },
+                timeout=30.0,
+            )
+            return
         if status.startswith("error:"):
             self._safe_call(
                 self.ui,

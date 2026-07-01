@@ -47,6 +47,7 @@ BUILD_REQUIREMENTS_FILE="$ROOT/requirements-build.lock"
 SPEC="$ROOT/packaging/$SPEC_NAME"
 DIST_BIN="$ROOT/dist/$APP_NAME/$APP_NAME"
 ICON_PATH="$ROOT/assets/app.ico"
+ICON_PNG_PATH="$ROOT/assets/app.png"
 ICON_SOURCE_PNG="$ROOT/assets/doll/idle.png"
 
 cd "$ROOT"
@@ -87,6 +88,7 @@ require_dir "$ROOT/ui/locales" "ui/locales"
 if [[ ! -f "$ICON_PATH" ]]; then
     require_file "$ICON_SOURCE_PNG" "assets/doll/idle.png"
 fi
+require_file "$ICON_PNG_PATH" "assets/app.png"
 
 python_version() {
     "$1" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")' 2>/dev/null || true

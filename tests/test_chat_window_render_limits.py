@@ -78,6 +78,7 @@ def test_chat_model_messages_excludes_timestamp_metadata():
             "content": "hello",
             "id": "m2",
             "updated_at": "2026-06-19T15:52:17+00:00",
+            "annotations": [{"start": 0, "end": 5, "tooltip": "display only"}],
             "file_context": [{"tool": "read_file", "path": "a.py"}],
         },
     ]

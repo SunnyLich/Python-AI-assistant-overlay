@@ -132,6 +132,33 @@ class TtsConnectionTests(unittest.TestCase):
              patch("core.tts._stream_kokoro", side_effect=AssertionError("unexpected Kokoro warmup")):
             self.assertIsNone(tts.prewarm())
 
+    def test_prepare_kokoro_assets_downloads_model_and_voice(self):
+        """Verify Kokoro asset preparation fetches the model files before synthesis."""
+        calls = []
+
+        fake_hf = types.ModuleType("huggingface_hub")
+
+        def fake_download(*, repo_id, filename):
+            calls.append((repo_id, filename))
+            return f"cache/{filename}"
+
+        fake_hf.hf_hub_download = fake_download
+
+        with patch.dict(sys.modules, {"huggingface_hub": fake_hf}):
+            paths = tts.prepare_kokoro_assets(voice="af_heart")
+
+        self.assertEqual(
+            calls,
+            [
+                ("hexgrad/Kokoro-82M", "config.json"),
+                ("hexgrad/Kokoro-82M", "kokoro-v1_0.pth"),
+                ("hexgrad/Kokoro-82M", "voices/af_heart.pt"),
+            ],
+        )
+        self.assertEqual(paths["config"], "cache/config.json")
+        self.assertEqual(paths["model"], "cache/kokoro-v1_0.pth")
+        self.assertEqual(paths["voice:af_heart"], "cache/voices/af_heart.pt")
+
     def test_kokoro_connection_uses_local_pipeline(self):
         """Verify Kokoro connection uses the local Python pipeline."""
         calls = []

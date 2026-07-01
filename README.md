@@ -171,7 +171,7 @@ For source builds and advanced setups, `.env.example` documents the available co
 
 Wisp is free, and you can keep your model costs at zero too. Several providers offer free-tier examples, free monthly credits, or no-cost rate-limited access. Wisp reaches most of them through its OpenAI-compatible client — a few have a dedicated provider value, and the rest work through the custom endpoint. Choose the provider and add the key in **Settings → LLM**.
 
-These examples were reviewed on **June 27, 2026** against provider docs, Z.AI docs, npm metadata, and OpenRouter's free LLM API comparison. Free tiers change often, so confirm current limits, credit amounts, and eligibility on the provider's own pricing page before you depend on them.
+These examples were reviewed on **June 27, 2026** against provider docs, Z.AI docs, npm metadata, and OpenRouter's free LLM API comparison; OmniRoute was checked against its README on **July 1, 2026**. Free tiers change often, so confirm current limits, credit amounts, and eligibility on the provider's own pricing page before you depend on them.
 
 | Provider | What's free | Good for |
 | --- | --- | --- |
@@ -193,6 +193,7 @@ These examples were reviewed on **June 27, 2026** against provider docs, Z.AI do
 | Baseten | Trial or evaluation credits for hosted inference | Use Wisp's custom endpoint because Baseten URLs are deployment-specific |
 | Puter.js | Front-end JS access to many models with no API key of your own | Browser apps and demos; not a Wisp backend provider |
 | [FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi) (self-hosted) | Open-source MIT gateway you run yourself; pools the free tiers of ~16 providers (Google, Groq, Cerebras, Mistral, OpenRouter, GitHub Models, and more) behind one OpenAI-compatible endpoint with automatic failover | One token for many free backends; point Wisp's custom endpoint at your deployment (`LLM_PROVIDER=custom`, `CUSTOM_BASE_URL=http://localhost:3001/v1`) |
+| [OmniRoute](https://github.com/diegosouzapw/OmniRoute) (local gateway) | Open-source router you run locally; aggregates many provider accounts and free tiers behind one OpenAI-compatible endpoint with routing, fallback, and optional compression | Route Wisp through OmniRoute by using the custom endpoint (`LLM_PROVIDER=custom`, `CUSTOM_BASE_URL=http://localhost:20128/v1`, model such as `auto`, and the API key from OmniRoute's dashboard) |
 | Local — Ollama / LM Studio / vLLM | Free whenever you run the model yourself | Privacy, no token billing, OpenAI-compatible local endpoints |
 
 Free tiers are rate-limited and change often, so add at least one fallback route, avoid sending sensitive context to providers that may train on your prompts, and treat trial, non-commercial, or agent-specific offers as evaluation-only unless the provider says otherwise. For the full how-to-connect guide and caveats, see the **Free API sources** page in the [Wisp documentation site](Wisp%20Website/Wisp%20Docs.html).

@@ -84,6 +84,8 @@ class AddonHost:
             return self._on_event(str(params.get("event") or ""), params.get("payload") or {})
         if method == "get_settings":
             return self._call_list_hook("get_settings")
+        if method == "get_text_annotations":
+            return self._text_annotations(params)
         if method == "get_tools":
             return self._tools()
         if method == "execute_tool":
@@ -104,6 +106,7 @@ class AddonHost:
             "on_event",
             "get_tools",
             "get_settings",
+            "get_text_annotations",
         )
         return [name for name in hooks if hasattr(self.module, name)]
 
@@ -277,6 +280,14 @@ class AddonHost:
             raise ValueError(f"addon tool not found or not executable: {name}")
         result = executor(inputs or {})
         return result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+
+    def _text_annotations(self, params: dict[str, Any]) -> list[Any]:
+        """Return display-only text annotations from an addon hook."""
+        fn = getattr(self.module, "get_text_annotations", None)
+        if not callable(fn):
+            return []
+        result = fn(params or {})
+        return result if isinstance(result, list) else []
 
     def _call_hook(self, hook: str, *args: Any) -> Any:
         """Call hook."""

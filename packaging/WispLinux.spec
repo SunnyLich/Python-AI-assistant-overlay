@@ -17,6 +17,7 @@ def _repo_root() -> Path:
 
 ROOT = _repo_root()
 sys.path.insert(0, str(ROOT / "runtime" / "brain"))
+APP_ICON_ICO = ROOT / "assets" / "app.ico"
 
 # LiteParse ships a loose pdfium shared library that its native extension
 # loads at runtime; collect the package explicitly or the frozen app panics
@@ -110,7 +111,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(ROOT / "assets" / "app.ico") if (ROOT / "assets" / "app.ico").exists() else None,
+    icon=str(APP_ICON_ICO) if APP_ICON_ICO.exists() else None,
 )
 
 coll = COLLECT(

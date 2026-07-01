@@ -14,6 +14,7 @@ import subprocess
 import threading
 import re
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from PySide6.QtWidgets import (
@@ -2795,6 +2796,7 @@ class SettingsDialog(QDialog):
             "Where local Kokoro TTS runs. Auto uses CUDA when Torch can see an NVIDIA GPU and falls back to CPU."
         )
         self._fields["KOKORO_DEVICE"] = kokoro_device
+        kokoro_device.currentIndexChanged.connect(lambda _idx: self._refresh_kokoro_install_status())
         self._fields["KOKORO_SPEED"] = QLineEdit()
         self._fields["KOKORO_SPEED"].setPlaceholderText("1.0")
         kokoro_speed_tip = "Speech speed multiplier. 1.0 is normal."
@@ -3061,6 +3063,52 @@ class SettingsDialog(QDialog):
             for module_name in ("kokoro", "en_core_web_sm")
         )
 
+    def _kokoro_install_mode(self) -> str:
+        """Return the CPU/GPU install mode implied by the selected Kokoro device."""
+        try:
+            from core import optional_deps
+
+            return optional_deps.kokoro_install_mode_for_device(_get(self._fields["KOKORO_DEVICE"]))
+        except Exception:
+            return "cpu"
+
+    def _kokoro_torch_status(self) -> dict[str, object]:
+        """Return Torch status for the Kokoro optional package layer."""
+        try:
+            from core import optional_deps
+
+            return optional_deps.kokoro_torch_status()
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "installed": False,
+                "version": "",
+                "cuda_version": "",
+                "cuda_available": False,
+                "device": "",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+    def _kokoro_needs_gpu_install(self) -> bool:
+        """Return whether the selected Kokoro device needs CUDA Torch support."""
+        if not self._kokoro_installed():
+            return False
+        selected = _get(self._fields["KOKORO_DEVICE"]).strip().lower()
+        if selected == "cpu":
+            return False
+        torch_status = self._kokoro_torch_status()
+        if bool(torch_status.get("cuda_available")):
+            return False
+        if selected == "cuda":
+            return True
+        if selected == "auto":
+            try:
+                from core import optional_deps
+
+                return optional_deps.system_cuda_available()
+            except Exception:
+                return False
+        return False
+
     def _refresh_elevenlabs_install_status(self) -> None:
         """Refresh ElevenLabs install button and status copy."""
         label = getattr(self, "_elevenlabs_install_status_lbl", None)
@@ -3086,32 +3134,80 @@ class SettingsDialog(QDialog):
         button = getattr(self, "_kokoro_install_btn", None)
         if not isinstance(label, QLabel) or not isinstance(button, QPushButton):
             return
-        if self._kokoro_installed():
+        installed = self._kokoro_installed()
+        mode = self._kokoro_install_mode()
+        torch_status = self._kokoro_torch_status() if installed else {}
+        needs_gpu = self._kokoro_needs_gpu_install()
+        if installed and needs_gpu:
+            button.setEnabled(True)
+            button.setText(t("Install Kokoro GPU support"))
+            selected = _get(self._fields["KOKORO_DEVICE"]).strip().lower()
+            if selected == "cuda":
+                self._set_test_status(
+                    label,
+                    "warn",
+                    "Kokoro is installed, but the selected GPU device needs a CUDA-enabled Torch install.",
+                )
+            else:
+                self._set_test_status(
+                    label,
+                    "warn",
+                    "Kokoro is installed with CPU-only Torch. Auto detected a CUDA-capable system, but Kokoro will use CPU until GPU support is installed.",
+                )
+        elif installed:
             button.setEnabled(False)
             button.setText(t("Kokoro installed"))
-            self._set_test_status(label, True, "Kokoro is installed.")
+            if bool(torch_status.get("cuda_available")):
+                device = str(torch_status.get("device") or "CUDA device")
+                self._set_test_status(label, True, f"Kokoro is installed with GPU support ({device}).")
+            else:
+                self._set_test_status(label, True, "Kokoro is installed with CPU support.")
         else:
             button.setEnabled(True)
-            button.setText(t("Install Kokoro"))
-            self._set_test_status(label, "warn", "Kokoro is not installed.")
+            button.setText(t("Install Kokoro GPU support") if mode == "gpu" else t("Install Kokoro"))
+            if mode == "gpu":
+                self._set_test_status(
+                    label,
+                    "warn",
+                    "Kokoro is not installed. The selected device will install GPU support and may download several GB.",
+                )
+            else:
+                self._set_test_status(label, "warn", "Kokoro is not installed.")
 
     def _install_kokoro(self) -> None:
         """Confirm and install optional Kokoro dependencies into Wisp's Python."""
         from core import optional_deps
 
-        if self._kokoro_installed():
+        installed = self._kokoro_installed()
+        needs_gpu = self._kokoro_needs_gpu_install()
+        if installed and not needs_gpu:
             self._refresh_kokoro_install_status()
             return
         voice = _get(self._fields["KOKORO_VOICE"]).strip() or "af_heart"
         lang_code = _get(self._fields["KOKORO_LANG_CODE"]).strip() or "a"
         device = _get(self._fields["KOKORO_DEVICE"]).strip() or "auto"
+        mode = optional_deps.kokoro_install_mode_for_device(device)
+        package_label = t(
+            "kokoro>=0.9.4, soundfile, CUDA-enabled Torch, English speech model"
+            if mode == "gpu"
+            else "kokoro>=0.9.4, soundfile, English speech model"
+        )
+        storage_note = t(
+            "The GPU install may download several GB and can take a long time. It requires an NVIDIA GPU and compatible driver. "
+        ) if mode == "gpu" else ""
+        action_note = t(
+            "Wisp will upgrade Kokoro's optional package layer with GPU support.\n\n"
+            if needs_gpu
+            else "Wisp will install Kokoro into its user-writable optional packages folder.\n\n"
+        )
         speed = _get(self._fields["KOKORO_SPEED"]).strip() or "1.0"
         sample_rate = _get(self._fields["KOKORO_SAMPLE_RATE"]).strip() or "24000"
         volume = _get(self._fields["TTS_VOLUME"]).strip() or "1.0"
         message = t(
-            "Wisp will install Kokoro into its user-writable optional packages folder.\n\n"
-            "Packages: kokoro>=0.9.4, soundfile, English speech model\n"
-            "Estimated storage: up to about 2 GB if speech dependencies are missing; less if they are already installed. "
+            "{action_note}"
+            "Packages: {package_label}\n"
+            "Estimated storage: up to about 2 GB for CPU, or several GB for GPU if speech dependencies are missing. "
+            "{storage_note}"
             "First use may also download the Kokoro model cache.\n\n"
             "Current Kokoro settings:\n"
             "Voice: {voice}\n"
@@ -3123,6 +3219,9 @@ class SettingsDialog(QDialog):
             "On Windows, Kokoro may also need eSpeak NG installed separately if Test TTS reports a phoneme/espeak error.\n\n"
             "Continue?"
         ).format(
+            action_note=action_note,
+            package_label=package_label,
+            storage_note=storage_note,
             voice=voice,
             lang_code=lang_code,
             device=device,
@@ -3143,12 +3242,46 @@ class SettingsDialog(QDialog):
         self._install_optional_tts_package(
             test_key="kokoro_install",
             display_name="Kokoro",
-            packages=list(optional_deps.KOKORO_INSTALL_PACKAGES),
+            packages=optional_deps.kokoro_install_packages(device),
             button_attr="_kokoro_install_btn",
             status_attr="_kokoro_install_status_lbl",
-            success_message="Kokoro installed. Click Test TTS to download/load the voice.",
+            success_message=(
+                "Kokoro GPU support installed and local voice is ready."
+                if mode == "gpu"
+                else "Kokoro installed and local voice is ready."
+            ),
             thread_name="kokoro-install",
+            post_install=lambda progress, write_log: self._prepare_kokoro_after_install(
+                voice=voice,
+                progress=progress,
+                write_log=write_log,
+            ),
         )
+
+    @staticmethod
+    def _prepare_kokoro_after_install(
+        *,
+        voice: str,
+        progress: Callable[[str], None],
+        write_log: Callable[[str], None],
+    ) -> tuple[bool, str]:
+        """Download Kokoro runtime assets after pip install succeeds."""
+        try:
+            from core import tts
+
+            progress("Installing Kokoro: preparing local voice assets.")
+            write_log("[kokoro install] Preparing Kokoro model and voice assets.")
+            paths = tts.prepare_kokoro_assets(voice=voice)
+            for name, path in sorted(paths.items()):
+                write_log(f"[kokoro install] Prepared {name}: {path}")
+            return True, "Kokoro installed and local voice is ready."
+        except Exception as exc:  # noqa: BLE001
+            write_log(f"[kokoro install] Voice preparation failed: {type(exc).__name__}: {exc}")
+            return (
+                False,
+                "Kokoro installed, but local voice preparation failed: "
+                f"{exc}. Connect to the internet and click Test TTS once to finish setup.",
+            )
 
     def _install_elevenlabs(self) -> None:
         """Confirm and install optional ElevenLabs dependencies into Wisp's Python."""
@@ -3192,6 +3325,7 @@ class SettingsDialog(QDialog):
         status_attr: str,
         success_message: str,
         thread_name: str,
+        post_install: Callable[[Callable[[str], None], Callable[[str], None]], tuple[bool, str]] | None = None,
     ) -> None:
         """Install optional TTS packages into Wisp's user package folder."""
         button = getattr(self, button_attr, None)
@@ -3298,6 +3432,29 @@ class SettingsDialog(QDialog):
             if returncode == 0:
                 importlib.invalidate_caches()
                 optional_deps.add_optional_packages_to_path()
+                if post_install is not None:
+                    prepare_started_at = time.monotonic()
+                    prepare_stop = threading.Event()
+
+                    def _prepare_heartbeat() -> None:
+                        while not prepare_stop.wait(20.0):
+                            elapsed = int(time.monotonic() - prepare_started_at)
+                            _progress(
+                                f"Installing {display_name}: preparing local voice assets for "
+                                f"{_format_duration(elapsed)}. Log: {log_path}."
+                            )
+
+                    threading.Thread(
+                        target=_prepare_heartbeat,
+                        daemon=True,
+                        name=f"{display_name.lower()}-prepare-heartbeat",
+                    ).start()
+                    try:
+                        ok, message = post_install(_progress, _write_log)
+                    finally:
+                        prepare_stop.set()
+                    if not ok:
+                        return False, message
                 print(f"{log_prefix} Completed successfully.", flush=True)
                 _write_log(f"{log_prefix} Completed successfully.")
                 return True, success_message
@@ -7380,6 +7537,7 @@ def _translate_status_message(message: str) -> str:
         (r"^Microphone permission: (?P<value>.+)\.$", "Microphone permission: {value}."),
         (r"^LLM test failed: (?P<message>.+)$", "LLM test failed: {message}"),
         (r"^Kokoro install failed: (?P<message>.+)$", "Kokoro install failed: {message}"),
+        (r"^Kokoro is installed with GPU support \((?P<device>.+)\)\.$", "Kokoro is installed with GPU support ({device})."),
         (r"^Installing Kokoro: (?P<detail>.+)\.$", "Installing Kokoro: {detail}."),
         (r"^LLM route uses (?P<provider>.+) but you are not logged in\.$", "LLM route uses {provider} but you are not logged in."),
     )

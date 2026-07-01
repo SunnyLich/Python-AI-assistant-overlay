@@ -4388,17 +4388,13 @@ def main() -> int:
     os.environ.setdefault("WISP_MACOS_PY_UI_HOST", "1")
     real_out = _protect_stdout()
 
-    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
+    from ui.shared.app_icon import install_app_icon, set_windows_app_user_model_id
 
+    set_windows_app_user_model_id()
     app = QApplication(sys.argv)
-    app.setApplicationName("Wisp Python UI")
-    app.setApplicationDisplayName("Wisp")
+    install_app_icon(app)
     app.setQuitOnLastWindowClosed(False)
-
-    icon_path = Path(root) / "assets" / "app.ico"
-    if icon_path.exists():
-        app.setWindowIcon(QIcon(str(icon_path)))
     try:
         from ui.shared.theme import apply_app_theme
         from ui.i18n import install as install_i18n

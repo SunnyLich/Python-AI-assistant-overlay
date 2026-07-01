@@ -22,9 +22,11 @@ full LLM response is available — this is the lowest-latency path.
 """
 from __future__ import annotations
 import config
+import importlib.util
 import inspect
 import io
 import os
+import sys
 import threading
 import time
 import wave
@@ -55,6 +57,8 @@ _GPT_SOVITS_DTYPE = "int16"
 # Kokoro returns float audio at 24 kHz; Wisp plays signed 16-bit PCM.
 _KOKORO_SAMPLE_RATE = 24000
 _KOKORO_DTYPE = "int16"
+_KOKORO_REPO_ID = "hexgrad/Kokoro-82M"
+_KOKORO_MODEL_FILENAME = "kokoro-v1_0.pth"
 
 
 def playback_format(provider: str | None = None) -> tuple[int, int, str]:
@@ -90,6 +94,9 @@ _kokoro_pipeline = None
 _kokoro_pipeline_lang = ""
 _kokoro_pipeline_device = ""
 _kokoro_lock = threading.RLock()
+_kokoro_stage_lock = threading.Lock()
+_kokoro_stage = ""
+_kokoro_stage_started_at = 0.0
 _KOKORO_LOCK_TIMEOUT_SECONDS = 15.0
 
 
@@ -105,6 +112,56 @@ def _kokoro_diag(message: str) -> None:
             handle.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}\n")
     except Exception:
         pass
+
+
+def _set_kokoro_stage(stage: str) -> None:
+    """Remember the current Kokoro startup/synthesis stage for diagnostics."""
+    global _kokoro_stage, _kokoro_stage_started_at
+    with _kokoro_stage_lock:
+        _kokoro_stage = stage
+        _kokoro_stage_started_at = time.monotonic() if stage else 0.0
+
+
+def _kokoro_busy_message() -> str:
+    """Return a useful error when another Kokoro call owns the model lock."""
+    with _kokoro_stage_lock:
+        stage = _kokoro_stage
+        started_at = _kokoro_stage_started_at
+    detail = ""
+    if stage:
+        age = max(0.0, time.monotonic() - started_at) if started_at else 0.0
+        detail = f" Current stage: {stage} ({age:.0f}s)."
+    return f"Kokoro is still warming up.{detail} Try again when local speech is ready."
+
+
+def _kokoro_module_origin(module_name: str) -> str:
+    """Return where Python would import *module_name* from, for packaged diagnostics."""
+    try:
+        module = sys.modules.get(module_name)
+        if module is not None:
+            spec = getattr(module, "__spec__", None)
+            return str(getattr(spec, "origin", None) or getattr(module, "__file__", None) or "<loaded>")
+        spec = importlib.util.find_spec(module_name)
+        return str(getattr(spec, "origin", "") or "<not found>") if spec is not None else "<not found>"
+    except Exception as exc:  # noqa: BLE001
+        return f"<lookup failed: {type(exc).__name__}: {exc}>"
+
+
+def _kokoro_runtime_context() -> str:
+    """Return concise frozen/dev context for Kokoro diagnostics."""
+    try:
+        from core import optional_deps
+
+        optional_dir = str(optional_deps.OPTIONAL_PACKAGES_DIR)
+    except Exception as exc:  # noqa: BLE001
+        optional_dir = f"<unavailable: {type(exc).__name__}: {exc}>"
+    return (
+        f"frozen={bool(getattr(sys, 'frozen', False))} "
+        f"executable={sys.executable!r} "
+        f"base_dir={getattr(config, 'BASE_DIR', '')!r} "
+        f"optional_dir={optional_dir!r} "
+        f"kokoro_origin={_kokoro_module_origin('kokoro')}"
+    )
 
 
 def _get_cartesia_ws():
@@ -153,8 +210,11 @@ def prewarm():
     if config.TTS_PROVIDER.lower() == "cartesia":
         _get_cartesia_ws()
     elif config.TTS_PROVIDER.lower() == "kokoro":
+        _kokoro_diag(f"Kokoro prewarm requested {_kokoro_runtime_context()}")
         if not kokoro_installed():
+            _kokoro_diag("Kokoro prewarm skipped: package is not importable.")
             return
+        prepare_kokoro_assets()
         for chunk in _stream_kokoro("ok"):
             if chunk:
                 break
@@ -314,15 +374,81 @@ def kokoro_installed() -> bool:
     try:
         from core import optional_deps
 
-        return optional_deps.is_importable("kokoro")
-    except Exception:
+        optional_deps.add_optional_packages_to_path()
+        importlib.invalidate_caches()
+        available = importlib.util.find_spec("kokoro") is not None
+        _kokoro_diag(
+            "Kokoro import check "
+            f"available={available} optional_dir={str(optional_deps.OPTIONAL_PACKAGES_DIR)!r} "
+            f"origin={_kokoro_module_origin('kokoro')}"
+        )
+        return available
+    except ValueError as exc:
+        # Some tests and embedded runtimes can have a preloaded module without a
+        # usable __spec__. Treat that as importable and let the real import path
+        # report any later failure.
+        if "kokoro.__spec__" in str(exc) and sys.modules.get("kokoro") is not None:
+            _kokoro_diag("Kokoro import check available=True origin=<preloaded module without spec>")
+            return True
+        _kokoro_diag(f"Kokoro import check failed: {type(exc).__name__}: {exc}")
         return False
+    except Exception:
+        _kokoro_diag("Kokoro import check failed.")
+        return False
+
+
+def prepare_kokoro_assets(voice: str | None = None) -> dict[str, str]:
+    """Download Kokoro's model/config/voice files before first synthesis."""
+    resolved_voice = (voice or getattr(config, "KOKORO_VOICE", "af_heart") or "af_heart").strip()
+    if not resolved_voice:
+        raise ValueError("KOKORO_VOICE is not configured.")
+    if "," in resolved_voice:
+        voices = [part.strip() for part in resolved_voice.split(",") if part.strip()]
+    else:
+        voices = [resolved_voice]
+    if not voices:
+        raise ValueError("KOKORO_VOICE is not configured.")
+
+    from core import optional_deps
+
+    _set_kokoro_stage("preparing Kokoro model assets")
+    optional_deps.add_optional_packages_to_path(prepend=True)
+    importlib.invalidate_caches()
+    try:
+        from huggingface_hub import hf_hub_download  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "Kokoro support is not installed. Open Settings > Voice and click Install Kokoro."
+        ) from exc
+
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    _kokoro_diag(f"Kokoro asset prepare starting voice={resolved_voice!r} {_kokoro_runtime_context()}")
+    paths: dict[str, str] = {}
+    try:
+        _set_kokoro_stage("downloading Kokoro config")
+        paths["config"] = hf_hub_download(repo_id=_KOKORO_REPO_ID, filename="config.json")
+        _kokoro_diag(f"Kokoro config ready path={paths['config']!r}")
+        _set_kokoro_stage("downloading Kokoro model weights")
+        paths["model"] = hf_hub_download(repo_id=_KOKORO_REPO_ID, filename=_KOKORO_MODEL_FILENAME)
+        _kokoro_diag(f"Kokoro model ready path={paths['model']!r}")
+        for name in voices:
+            if name.endswith(".pt"):
+                paths[f"voice:{name}"] = name
+                continue
+            _set_kokoro_stage(f"downloading Kokoro voice {name!r}")
+            key = f"voice:{name}"
+            paths[key] = hf_hub_download(repo_id=_KOKORO_REPO_ID, filename=f"voices/{name}.pt")
+            _kokoro_diag(f"Kokoro voice ready voice={name!r} path={paths[key]!r}")
+        return paths
+    finally:
+        _set_kokoro_stage("")
 
 
 def _reset_kokoro_pipeline() -> None:
     """Discard the cached Kokoro pipeline so language changes apply."""
     global _kokoro_pipeline, _kokoro_pipeline_lang, _kokoro_pipeline_device
     if not _kokoro_lock.acquire(timeout=1.0):
+        _kokoro_diag(f"Kokoro reset skipped: {_kokoro_busy_message()}")
         return
     try:
         _kokoro_pipeline = None
@@ -390,12 +516,14 @@ def _build_kokoro_pipeline(KPipeline, *, lang_code: str, device: str):
         f"Building Kokoro pipeline lang={lang_code!r} requested_device={device!r} "
         f"passes_device={accepts_device}"
     )
+    _set_kokoro_stage(f"building pipeline lang={lang_code!r} device={device!r}")
     try:
         pipeline = KPipeline(**kwargs)
     except TypeError:
         if "device" not in kwargs:
             raise
         kwargs.pop("device")
+        _set_kokoro_stage(f"building pipeline lang={lang_code!r} device=<default>")
         pipeline = KPipeline(**kwargs)
         _kokoro_diag("Installed Kokoro does not accept device=; using its default backend.")
         return pipeline, "default"
@@ -405,6 +533,7 @@ def _build_kokoro_pipeline(KPipeline, *, lang_code: str, device: str):
         fallback = dict(kwargs)
         fallback["device"] = "cpu"
         _kokoro_diag(f"Kokoro failed on {kwargs['device']}: {exc}; falling back to CPU.")
+        _set_kokoro_stage(f"building pipeline lang={lang_code!r} device='cpu'")
         return KPipeline(**fallback), "cpu"
     effective_device = kwargs.get("device", "default")
     _kokoro_diag(f"Kokoro pipeline ready on device={effective_device!r}")
@@ -416,11 +545,17 @@ def _import_kokoro_pipeline():
     try:
         from core import optional_deps
 
+        _set_kokoro_stage("adding optional package path")
         optional_deps.add_optional_packages_to_path(prepend=True)
+        importlib.invalidate_caches()
+        _kokoro_diag(f"Kokoro import starting {_kokoro_runtime_context()}")
+        _set_kokoro_stage("importing kokoro.KPipeline")
         from kokoro import KPipeline  # type: ignore
 
+        _kokoro_diag(f"Kokoro import ready origin={_kokoro_module_origin('kokoro')}")
         return KPipeline
     except ImportError as exc:
+        _kokoro_diag(f"Kokoro import failed: {type(exc).__name__}: {exc}")
         raise RuntimeError(
             "Kokoro support is not installed. Open Settings > Voice and click Install Kokoro."
         ) from exc
@@ -431,9 +566,10 @@ def _get_kokoro_pipeline():
     global _kokoro_pipeline, _kokoro_pipeline_lang, _kokoro_pipeline_device
     lang_code = (getattr(config, "KOKORO_LANG_CODE", "a") or "a").strip()
     if not _kokoro_lock.acquire(timeout=_KOKORO_LOCK_TIMEOUT_SECONDS):
-        raise RuntimeError("Kokoro is still warming up. Try again when local speech is ready.")
+        raise RuntimeError(_kokoro_busy_message())
     try:
         if _kokoro_pipeline is None or _kokoro_pipeline_lang != lang_code:
+            _set_kokoro_stage(f"preparing pipeline lang={lang_code!r}")
             KPipeline = _import_kokoro_pipeline()
             device = _resolve_kokoro_device()
             _kokoro_pipeline, device = _build_kokoro_pipeline(KPipeline, lang_code=lang_code, device=device)
@@ -444,6 +580,7 @@ def _get_kokoro_pipeline():
         if (
             _kokoro_pipeline_device != device
         ):
+            _set_kokoro_stage(f"rebuilding pipeline for device={device!r}")
             KPipeline = _import_kokoro_pipeline()
             _kokoro_pipeline, device = _build_kokoro_pipeline(KPipeline, lang_code=lang_code, device=device)
             _kokoro_pipeline_device = device
@@ -480,24 +617,28 @@ def _stream_kokoro(text: str) -> Generator[bytes, None, None]:
     if not text.strip():
         return
     if not _kokoro_lock.acquire(timeout=_KOKORO_LOCK_TIMEOUT_SECONDS):
-        raise RuntimeError("Kokoro is still warming up. Try again when local speech is ready.")
+        raise RuntimeError(_kokoro_busy_message())
     try:
+        _set_kokoro_stage("getting pipeline")
         pipeline = _get_kokoro_pipeline()
         voice = (getattr(config, "KOKORO_VOICE", "af_heart") or "af_heart").strip()
         speed = float(getattr(config, "KOKORO_SPEED", 1.0) or 1.0)
         split_pattern = getattr(config, "KOKORO_SPLIT_PATTERN", r"\n+")
         target_rate = int(getattr(config, "KOKORO_SAMPLE_RATE", _KOKORO_SAMPLE_RATE) or _KOKORO_SAMPLE_RATE)
         _kokoro_diag(f"Kokoro synthesis starting text_chars={len(text)} voice={voice!r} speed={speed}")
+        _set_kokoro_stage(f"synthesizing first chunk voice={voice!r}")
         generator = pipeline(text, voice=voice, speed=speed, split_pattern=split_pattern)
         saw_audio = False
         for _graphemes, _phonemes, audio in generator:
             if not saw_audio:
                 _kokoro_diag("Kokoro synthesis yielded first audio chunk")
+                _set_kokoro_stage("streaming synthesized audio")
                 saw_audio = True
             chunk = _float_audio_to_pcm16(audio, source_rate=_KOKORO_SAMPLE_RATE, target_rate=target_rate)
             if chunk:
                 yield chunk
     finally:
+        _set_kokoro_stage("")
         _kokoro_lock.release()
 
 

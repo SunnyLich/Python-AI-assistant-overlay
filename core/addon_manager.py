@@ -451,6 +451,33 @@ class AddonManager:
                     notifications.append({"addon_id": addon.id, **item})
         return notifications
 
+    def get_text_annotations(self, payload: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Return sanitized display-only annotations from permitted addons."""
+        request = _safe_text_annotation_payload(payload or {})
+        text = request.get("text", "")
+        annotations: list[dict[str, Any]] = []
+        if not text:
+            return annotations
+        from ui.text_annotations import MAX_ANNOTATIONS, normalize_range_annotations
+
+        remaining = MAX_ANNOTATIONS
+        for addon in self._enabled_addons():
+            if remaining <= 0:
+                break
+            if addon.host is None or not _has_text_annotation_permission(addon):
+                continue
+            result = _call_host(addon, "get_text_annotations", request, timeout=2.0)
+            raw_items = result if isinstance(result, list) else []
+            normalized = normalize_range_annotations(raw_items, text, surface=request.get("surface", "chat"), limit=remaining)
+            for annotation in normalized:
+                item = dict(annotation.__dict__)
+                item["source"] = f"addon:{addon.id}"
+                item["message_id"] = item.get("message_id") or request.get("message_id", "")
+                item["conversation_id"] = item.get("conversation_id") or request.get("conversation_id", "")
+                annotations.append(item)
+            remaining = MAX_ANNOTATIONS - len(annotations)
+        return annotations
+
     def mod_names(self) -> list[str]:
         """Handle mod names for addon manager."""
         return [m.name for m in self._mods]
@@ -834,6 +861,24 @@ def _has_ui_permission(addon: LoadedAddon, feature: str) -> bool:
     if isinstance(ui, list):
         return feature in {str(item) for item in ui}
     return ui is True or str(ui).lower() == "true"
+
+
+def _has_text_annotation_permission(addon: LoadedAddon) -> bool:
+    """Return whether an addon explicitly opted into visible text annotations."""
+    ui = addon.manifest.permissions.get("ui")
+    return isinstance(ui, list) and "text_annotations" in {str(item) for item in ui}
+
+
+def _safe_text_annotation_payload(payload: dict[str, Any]) -> dict[str, str]:
+    """Return the visible text metadata an annotation addon may inspect."""
+    allowed = {
+        "text",
+        "surface",
+        "role",
+        "message_id",
+        "conversation_id",
+    }
+    return {key: str(payload.get(key) or "") for key in allowed}
 
 
 def _normalize_intent(addon_id: str, item: dict[str, Any]) -> dict[str, Any] | None:
